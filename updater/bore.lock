@@ -1,0 +1,21 @@
+# Cachy-Void BORE patch trust anchor — architecture.md §8.3.
+#
+# LOCAL, HUMAN-OWNED. This file is committed and edited ONLY by an operator at
+# approval time (trust-on-first-use). It is NEVER fetched over the network and
+# NEVER self-updated by the machine — engine/trust.py reads it and verifies the
+# fetched patch artifact against the sha256 pinned here.
+#
+# To add/bump a series: fetch the patch at `pinned_commit`, sha256 it, review the
+# diff, then fill `sha256` and stamp `approved`. Until then the placeholder hash
+# below (all zeros) is format-valid but will never match a real patch.
+
+[repo]
+url           = "https://github.com/firelzrd/bore-scheduler"
+pinned_commit = "0000000000000000000000000000000000000000"
+
+[[patch]]
+series       = "6.12"
+file         = "patches/stable/linux-6.12-bore/0001-linux6.12.y-bore6.0.0.patch"
+sha256       = "0000000000000000000000000000000000000000000000000000000000000000"
+bore_version = "6.0.0"
+approved     = "UNAPPROVED — fill sha256 and stamp before use"

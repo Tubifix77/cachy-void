@@ -1,0 +1,10 @@
+# Cachy-Void health daemon service configuration — architecture.md §8.7.
+# Sourced by /etc/sv/cachy-health/run. Rendered by deploy.sh (@USER@/@ENGINE@).
+#
+# CACHY_USER   — unprivileged user the daemon runs as (holds the §4 sudoers
+#                grants for grub-set-default/grub-reboot so it can roll back).
+# CACHY_ENGINE — install dir of the mirrored engine (cachy_void_update.py + engine/).
+# CACHY_CONFIG — path to updater.toml.
+CACHY_USER=@USER@
+CACHY_ENGINE=@ENGINE@
+CACHY_CONFIG=/etc/cachy-void/updater.toml

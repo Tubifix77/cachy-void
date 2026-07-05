@@ -1,0 +1,4 @@
+#!/bin/sh
+# Cachy-Void health daemon log service — architecture.md §8.7 (runit svlogd).
+# Captures the supervised daemon's stdout/stderr into timestamped, rotated logs.
+exec svlogd -tt /var/log/cachy-health

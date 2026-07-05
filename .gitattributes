@@ -1,0 +1,5 @@
+# This project targets Void Linux; all text is normalized to LF so shell scripts
+# and Python authored on any platform stay executable on the target.
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf

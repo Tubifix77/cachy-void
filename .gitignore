@@ -1,0 +1,9 @@
+# Python bytecode (generated when running the test suite)
+__pycache__/
+*.py[cod]
+
+# Local runtime state / build artifacts (never committed)
+*.bak
+*.pre-cachy.*
+hostdir/
+masterdir*/

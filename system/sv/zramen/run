@@ -1,0 +1,14 @@
+#!/bin/sh
+# Cachy-Void zram swap service — architecture.md §3.2 (runit run script).
+#
+# OVERRIDE NOTE: Void's `zramen` package ships its own /etc/sv/zramen/run. The
+# supported path (§3.2) is to install that package and use our companion `conf`.
+# This template is provided for hosts that prefer a self-contained service; if
+# used, it replaces the package's run script.
+exec 2>&1
+[ -r ./conf ] && . ./conf
+export ZRAM_ALG ZRAM_SIZE ZRAM_PRIO
+zramen make
+# zram is set up once; hold the supervised process open so runit keeps the
+# service 'up' (teardown happens in ./finish on `sv down`).
+exec sleep infinity

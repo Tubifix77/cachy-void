@@ -1,0 +1,16 @@
+#!/bin/sh
+# Cachy-Void post-boot health daemon — architecture.md §8.7 (runit run script).
+#
+# Drops privileges to the unprivileged updater user via chpst; the daemon
+# reaches root only through the narrow §4 sudoers grants when it must roll back.
+# In a virtualized/WSL or bootloader-less workspace the daemon logs metrics and
+# exits 0 with no supervisor changes (dual-mode degradation, §8.7).
+exec 2>&1
+[ -r ./conf ] && . ./conf
+
+: "${CACHY_USER:=root}"
+: "${CACHY_ENGINE:=/usr/libexec/cachy-void-updater}"
+: "${CACHY_CONFIG:=/etc/cachy-void/updater.toml}"
+
+exec chpst -u "$CACHY_USER" \
+    python3 "$CACHY_ENGINE/cachy_void_update.py" --health-daemon --config "$CACHY_CONFIG"

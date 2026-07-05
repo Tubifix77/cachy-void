@@ -1,0 +1,6 @@
+#!/bin/sh
+# Cachy-Void zram teardown — architecture.md §3.2 (runit finish script).
+# Runs on `sv down`; releases the zram swap device cleanly.
+exec 2>&1
+[ -r ./conf ] && . ./conf
+zramen toss

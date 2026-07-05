@@ -1,0 +1,23 @@
+# Cachy-Void global compiler profile — architecture.md §1.1
+#
+# Sourced by xbps-src from the root of the void-packages checkout.
+# Rendered and installed by deploy.sh into <void-packages>/etc/conf. This file
+# is git-untracked inside void-packages (invariant I1). Re-running deploy.sh
+# overwrites it.
+
+# Hardware-targeted, aggressive optimization (§1.1, §1.2).
+# The -march target below defaults to x86-64-v3. Use x86-64-v4 ONLY on CPUs
+# implementing the full AVX-512 v4 subset (Zen 4/5). The whole local repo must
+# share one ABI level.
+XBPS_CFLAGS="-march=@MARCH@ -O3 -pipe"
+XBPS_CXXFLAGS="${XBPS_CFLAGS}"
+XBPS_FFLAGS="-march=@MARCH@ -O3 -pipe"
+
+# Build parallelism (deploy.sh defaults this to the build host's nproc).
+XBPS_MAKEJOBS=@MAKEJOBS@
+
+# Mandatory: -O3 rebuild cycles are expensive (§1.1).
+XBPS_CCACHE=yes
+
+# Permit building restricted (nonfree) overlay targets, e.g. nvidia (§7.2).
+XBPS_ALLOW_RESTRICTED=yes
