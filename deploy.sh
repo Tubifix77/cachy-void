@@ -35,9 +35,10 @@ readonly MANIFEST="$STATE_DIR/deploy.manifest"
 readonly TS="$(date +%Y%m%d%H%M%S)"
 readonly TAB=$'\t'
 
-# Packages this deliverable is responsible for (§3.2 zram, §3.3 controllers).
+# Packages this deliverable installs (§3.2 zram). Game controllers need no
+# package on Void — the kernel + elogind seat uaccess handle standard pads, and
+# Steam ships its own rules (§3.3); there is no game-devices-udev package.
 readonly PKG_ZRAM="zramen"
-readonly PKG_CONTROLLERS="game-devices-udev"
 
 # Fixed install location for the mirrored Python engine (§6/§8.9).
 readonly CACHY_ENGINE="/usr/libexec/cachy-void-updater"
@@ -402,9 +403,8 @@ do_install() {
     log "[5/8] mirror the updater engine into $CACHY_ENGINE (§6/§8.9)"
     install_engine
 
-    log "[6/8] packages (§3.2 zram, §3.3 controllers)"
+    log "[6/8] package: zram (§3.2)"
     ensure_pkg "$PKG_ZRAM"
-    ensure_pkg "$PKG_CONTROLLERS" optional
 
     log "[7/8] runit services: zram (§3.2) + cachy-health (§8.7)"
     install_file "$SYS_DIR/sv/zramen/conf" /etc/sv/zramen/conf 0644 root root

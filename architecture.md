@@ -182,7 +182,7 @@ sudo xbps-install zramen
 sudo ln -s /etc/sv/zramen /var/service/
 ```
 
-Configure in the service's `conf` file: compressor `zstd`, size ≈ 100% of RAM (zstd's ~3:1 ratio makes this safe), priority above any disk swap. Variable names per `zramen`'s docs — verify against the installed version. Disk swap partitions may coexist at lower priority but are not required.
+Configure in the service's `conf` file using the variable names the `zramen` package actually ships (verified against `zramen-1.0.1_1`): `ZRAM_COMP_ALGORITHM=zstd` (best ratio; package default `lz4`), `ZRAM_SIZE=100` — a **percent** of RAM, not a fraction (package default 25) — and, critically, `ZRAM_MAX_SIZE` raised above its 4096 MiB default so 100% is not silently capped at 4 GiB. `ZRAM_PRIORITY` sits above any disk swap (package default 32767). Disk swap partitions may coexist at lower priority but are not required. (An earlier draft used `ZRAM_ALG`/`ZRAM_PRIO`/a `1.0` fraction — all unrecognized by zramen; that is retired.)
 
 ### 3.3 Udev rules
 
@@ -194,7 +194,7 @@ ACTION=="add|change", KERNEL=="sd[a-z]|mmcblk[0-9]*", ATTR{queue/rotational}=="0
 ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"
 ```
 
-**Game controllers:** install Void's `game-devices-udev` package (uaccess rules for gamepads/wheels) instead of hand-maintaining rules.
+**Game controllers:** there is **no** `game-devices-udev` package on Void (an earlier draft wrongly named one — retired). Standard controllers (Xbox/PS/generic HID) are handled by the kernel plus `elogind` seat management, which grants `uaccess` to the active seat's input devices; the Steam client installs its own device rules as well. Ship a `60-controllers.rules` in the overlay *only* for exotic devices (arcade sticks, Steam Controller) that need explicit rules — never depend on a package that does not exist.
 
 **Input latency policy:**
 
