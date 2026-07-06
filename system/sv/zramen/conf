@@ -1,12 +1,16 @@
 # Cachy-Void zram configuration — architecture.md §3.2
 #
-# Installed to /etc/sv/zramen/conf by deploy.sh and sourced by the zramen
-# runit service. Pairs with vm.swappiness=100 (§3.1): a large zstd-compressed
-# swap keeps the page cache hot under memory pressure.
+# Installed to /etc/sv/zramen/conf by deploy.sh and sourced by the zramen runit
+# service. Pairs with vm.swappiness=100 (§3.1): a large zstd-compressed swap
+# keeps the page cache hot under memory pressure.
 #
-# NOTE: these variable names follow the zramen package's documented interface
-# and MUST be verified against the installed version (`cat /etc/sv/zramen/run`),
-# per the explicit caveat in architecture.md §3.2.
-export ZRAM_ALG=zstd     # zstd: best ratio (~3:1) at acceptable CPU cost
-export ZRAM_SIZE=1.0     # fraction of physical RAM (1.0 ≈ 100%, safe at ~3:1)
-export ZRAM_PRIO=100     # above any disk swap so zram is used first
+# Variable names verified against the Void package zramen-1.0.1_1 (its shipped
+# conf lists these exact names; the earlier ZRAM_ALG/ZRAM_PRIO/fraction-size
+# guesses were wrong).
+export ZRAM_COMP_ALGORITHM=zstd   # best ratio (~3:1); package default is lz4
+export ZRAM_SIZE=100              # PERCENT of physical RAM (package default is 25)
+export ZRAM_MAX_SIZE=65536        # hard cap in MiB. The package default of 4096
+                                  # would silently cap zram at 4 GiB, defeating
+                                  # ZRAM_SIZE=100; raised here (bump above 64 GiB
+                                  # only on hosts with more RAM than that).
+export ZRAM_PRIORITY=100          # swap priority above any disk swap (pkg default 32767)
