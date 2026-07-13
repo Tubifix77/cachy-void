@@ -514,9 +514,10 @@ do_install() {
     log "[8/8] apply runtime state"
     install_grub_settings
     if ! $DRY_RUN && live; then
+        # bbr module must be present BEFORE sysctl applies tcp_congestion_control
+        modprobe tcp_bbr 2>/dev/null || warn "could not load tcp_bbr now (built into linux-cachy; harmless on stock kernel until reboot)"
         sysctl --system >/dev/null 2>&1 || warn "sysctl --system reported errors (some keys may be unsupported on the running kernel)"
         udevadm control --reload && udevadm trigger || warn "udev reload failed"
-        modprobe tcp_bbr 2>/dev/null || warn "could not load tcp_bbr now (built into linux-cachy; harmless on stock kernel until reboot)"
     fi
 
     ok "install complete (ledger tag: $DEPLOY_TAG)."

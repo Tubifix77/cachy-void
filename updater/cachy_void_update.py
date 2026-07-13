@@ -728,7 +728,14 @@ def main(argv: Optional[Sequence[str]] = None, *,
             return cmd_rollback(config, out=out)
         if args.health_daemon:
             outcome = build_health_daemon(config, out=out).run_loop()
-            return EXIT_OK if outcome in (DEGRADED, HEALTHY) else EXIT_KERNEL
+            if outcome == DEGRADED:
+                # Under runit an immediate clean exit means respawn-spin (§8.7
+                # inert-safe): park quietly instead; sv down still terminates us.
+                out("health-daemon: degraded environment — parking with no "
+                    "supervisor changes (sv down to stop).")
+                while True:
+                    time.sleep(3600)
+            return EXIT_OK if outcome == HEALTHY else EXIT_KERNEL
         if xbps is None:
             xbps = build_xbps(config)
         if args.check:
