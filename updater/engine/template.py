@@ -232,19 +232,33 @@ def _assert_regen(staging: Path, series: str, new_pkgname: str,
 def detect_march(cpuinfo_path: str = "/proc/cpuinfo") -> str:
     """Recommend the ``etc/conf`` ``-march`` level from host CPU flags (§1.2).
 
-    Returns ``x86-64-v4`` only when the full AVX-512 v4 subset is present
-    (avx512f/bw/cd/dq/vl), else ``x86-64-v3``. This feeds the *userland* compiler
-    profile in ``etc/conf`` (§1.1/§1.2); the kernel template stays stock (§2.4).
+    Ladder — the highest level the host can *prove* wins:
+
+        x86-64-v4   full AVX-512 subset (avx512f/bw/cd/dq/vl)
+        x86-64-v3   avx2 + fma + bmi2   (Haswell / Zen 1 and newer)
+        x86-64-v2   sse4_2 + popcnt     (Nehalem+; e.g. Ivy Bridge has NO AVX2)
+        x86-64      anything older
+
+    v3 binaries fault with SIGILL on v2-only hosts (real deployment targets
+    exist — pre-Haswell laptops), so absence of proof always degrades, never
+    upgrades: an unreadable cpuinfo recommends the v2 safe floor. This feeds the
+    *userland* profile in ``etc/conf`` (§1.1/§1.2); the kernel stays stock (§2.4).
     """
     try:
         with open(cpuinfo_path, encoding="utf-8") as fh:
             text = fh.read()
     except OSError:
-        return "x86-64-v3"
+        return "x86-64-v2"   # cannot prove v3; v2 is the safe floor for any
+                             # gaming-relevant x86_64 host (Nehalem, 2008+)
     flags: set[str] = set()
     for line in text.splitlines():
         if line.startswith("flags") and ":" in line:
             flags = set(line.split(":", 1)[1].split())
             break
-    v4 = {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"}
-    return "x86-64-v4" if v4.issubset(flags) else "x86-64-v3"
+    if {"avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl"} <= flags:
+        return "x86-64-v4"
+    if {"avx2", "fma", "bmi2"} <= flags:
+        return "x86-64-v3"
+    if {"sse4_2", "popcnt"} <= flags:
+        return "x86-64-v2"
+    return "x86-64"

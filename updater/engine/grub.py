@@ -206,8 +206,9 @@ def detect_boot_layout(*,
                           "operations (kernel staging is a no-op here)")
     if not exists(grub_cfg):
         return BootLayout(MODE_SKIP,
-                          f"{grub_cfg} not found: virtualized or non-GRUB boot; "
-                          "skipping boot operations")
+                          f"{grub_cfg} not found: virtualized, non-GRUB, or a "
+                          "foreign boot manager (e.g. another distro's GRUB owns "
+                          "boot in a multi-boot setup); skipping boot operations")
 
     # The saved-default check comes FIRST: without it, grub-set-default writes
     # are silently ignored and no manual fallback pinning is possible either.

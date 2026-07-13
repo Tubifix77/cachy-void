@@ -56,6 +56,7 @@ XBPS_CCACHE=yes           # mandatory: -O3 rebuild cycles are expensive
 - Default is **`x86-64-v3`** (AVX2, FMA3, BMI2 — every gaming-relevant CPU since Haswell/Zen 1).
 - Use **`x86-64-v4`** only if the CPU implements the full AVX-512 v4 subset (`avx512f/bw/cd/dq/vl`). Check: `grep -o 'avx512vl' /proc/cpuinfo | head -1`. In practice: Zen 4/Zen 5 qualify; Intel 12th–14th gen desktop does **not** (AVX-512 fused off).
 - The choice is host-wide and set once in `etc/conf`. Do not mix: the local binpkg repo must contain one ABI level.
+- **Pre-Haswell hosts are `x86-64-v2` only.** No AVX2 (Ivy Bridge and older — real deployment targets exist) ⇒ v3 binaries fault with SIGILL. Deploy such hosts with `deploy.sh --march x86-64-v2`. `detect_march()` (§8.4 module) implements the full ladder — v4 → v3 (`avx2+fma+bmi2`) → v2 (`sse4_2+popcnt`) → baseline — and never recommends a level the host cannot prove; undeterminable hosts get the v2 safe floor.
 
 ### 1.3 Rules and caveats
 

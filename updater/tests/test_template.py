@@ -211,12 +211,22 @@ class DetectMarchTests(unittest.TestCase):
         full = "fpu avx2 avx512f avx512bw avx512cd avx512dq avx512vl"
         self.assertEqual(detect_march(self._cpuinfo(full)), "x86-64-v4")
 
-    def test_partial_avx512_is_v3(self):
-        partial = "fpu avx2 avx512f avx512vl"    # missing bw/cd/dq
+    def test_partial_avx512_with_v3_features_is_v3(self):
+        partial = "fpu avx2 fma bmi2 avx512f avx512vl"    # missing bw/cd/dq
         self.assertEqual(detect_march(self._cpuinfo(partial)), "x86-64-v3")
 
-    def test_no_cpuinfo_defaults_v3(self):
-        self.assertEqual(detect_march("/no/such/cpuinfo"), "x86-64-v3")
+    def test_no_avx2_is_v2_not_v3(self):
+        # Real deployment target: Ivy Bridge (i3-3110M) — AVX but no AVX2.
+        # Recommending v3 here would produce SIGILL binaries.
+        ivy = "fpu sse4_1 sse4_2 popcnt avx"
+        self.assertEqual(detect_march(self._cpuinfo(ivy)), "x86-64-v2")
+
+    def test_ancient_cpu_is_baseline(self):
+        self.assertEqual(detect_march(self._cpuinfo("fpu sse2 sse3")), "x86-64")
+
+    def test_no_cpuinfo_degrades_to_v2_floor(self):
+        # Absence of proof must degrade, never upgrade (no SIGILL by default).
+        self.assertEqual(detect_march("/no/such/cpuinfo"), "x86-64-v2")
 
 
 if __name__ == "__main__":
