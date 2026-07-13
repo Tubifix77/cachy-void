@@ -77,3 +77,56 @@ safe sandbox:
   GitHub, pull them down to the **Asus GR8 mini-PC** in the living room, and
   deploy the physical kernel compilation and system adjustments directly to bare
   metal.
+
+---
+
+## 5. Two Deployment Routes for the First Real Target (LXQt laptop)
+
+Defined 2026-07-06 after surveying the first bare-metal Void+DE install: a
+dual-boot laptop — Ivy Bridge i3 (**x86-64-v2 ceiling**, no AVX2), GT 730M on
+the `nvidia470` legacy driver, LXQt on X11, and Void booted by *the other
+distro's* GRUB through a manual `vmlinuz-current` symlink (Void has no
+bootloader of its own).
+
+### Route A — the testing route (Cachy-Void is the subject)
+
+Use the box as the real-hardware testbed for everything WSL cannot exercise.
+Success = the engine survives contact with reality; findings feed fixes.
+
+- `deploy.sh` on a real runit PID 1: `zramen` and `cachy-health` actually
+  supervised, sudoers boundary in real use.
+- The updater end-to-end against a live pkgdb: queue algebra with real
+  subpackages, the O-term takeover, `xcheckrestart` service cycling.
+- The first real kernel circuit: synthesize `linux-cachy` from `base_series
+  6.12`, G1/G2 gates on a real configure, an overnight `--march x86-64-v2`
+  build on the slow 2c/4t CPU — and the high-value question: does the
+  **nvidia470 DKMS module build against a BORE-patched kernel**? (That answer
+  transfers directly to the GTX 750 Ti box — same 470 driver family.)
+- Boot topology: validates the foreign-GRUB `MODE_SKIP` degradation for real.
+  §8.6 one-shot staging and the §8.7 confirm verdicts remain **untestable on
+  this box** unless a later, deliberate opt-in phase gives Void its own GRUB.
+- Expectation management: this route validates *mechanics*, not headline
+  performance — v2 + `-O3` on Ivy Bridge yields modest compile-level gains.
+
+### Route B — the optimized route (the box is the subject)
+
+Adopt Cachy-Void's ideas so the LXQt install is game-optimized in its own
+right. Only proven pieces graduate here.
+
+- Immediate wins, low risk: `zramen` zstd swap (the single biggest QoL item on
+  7.6 GiB RAM), the gaming sysctl profile, per-medium I/O scheduler rules.
+- A **v2-rebuilt** userland allowlist trimmed to what this CPU can compile in
+  reasonable time: `gamemode`, `SDL2`, `mangohud` first; `mesa` overnight;
+  `wine` last (or never — upstream binaries remain the fallback by design).
+- `linux-cachy` 6.12 (BORE + 1000 Hz + full preemption) — old 2c/4t hardware
+  feels scheduler-latency wins the most. Boot stays manual via the symlink
+  flip, which doubles as a trivially safe fallback.
+- Optimus polish: PRIME render offload on 470, consolidate audio to
+  pipewire(-pulse), and leave LXQt itself untouched — this box exercises §2's
+  **non-Plasma fallback path** (wallpaper only) exactly as designed.
+
+### Sequencing
+
+Shared trunk first (`deploy.sh --march x86-64-v2` + zram + sysctl), then the
+routes diverge. Route A findings gate what Route B adopts: a kernel that
+proves itself in testing graduates to the daily driver.
