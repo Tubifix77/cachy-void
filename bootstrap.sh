@@ -42,7 +42,11 @@ die()  { printf '%serror: %s%s\n' "$C_ERR" "$*" "$C_OFF" >&2; exit 1; }
 step "Environment checks"
 [ "$(id -u)" -ne 0 ] || die "run as your regular user, not root (this script uses sudo where needed)"
 command -v sudo >/dev/null 2>&1 || die "sudo is required but not installed"
-sudo -v || die "sudo access is required to provision the system"
+# Try non-interactive first: `sudo -v` alone fails under the default
+# verifypw=all policy when the user has BOTH a NOPASSWD rule and a passworded
+# %wheel entry — even though actual sudo commands would run fine (real-hardware
+# finding). Fall back to an interactive prompt for keyboard runs.
+sudo -n true 2>/dev/null || sudo -v || die "sudo access is required to provision the system"
 BUILD_USER="$(id -un)"
 ok "running as $BUILD_USER with sudo access"
 
