@@ -153,10 +153,18 @@ class Xbps:
 
     # -- repository queries (srcpkg/binpkg by repo) --------------------
     def repo_ver(self, name: str) -> Optional[str]:
-        """First non-empty pkgver of ``name`` across local repos ``R``, else None."""
+        """First non-empty pkgver of ``name`` across local repos ``R``, else None.
+
+        Real-hardware finding (Medion kickoff): without ``-R`` xbps-query answers
+        from the INSTALLED pkgdb and silently ignores ``--repository``, making
+        every installed package look locally built (false O-term, dead M-term).
+        ``-R`` selects repository mode; ``-i`` ignores configured repos so ONLY
+        the given local root is consulted.
+        """
         for repo in self.repos:
             cp = self._capture(
-                ["xbps-query", f"--repository={repo}", "-p", "pkgver", name],
+                ["xbps-query", "-R", "-i", f"--repository={repo}",
+                 "-p", "pkgver", name],
                 check=False,
             )
             ver = cp.stdout.strip()

@@ -101,7 +101,10 @@ class QueryTests(unittest.TestCase):
 
     def test_repo_ver_first_matching_repo(self):
         def h(args, cwd):
-            # name present only in the second repo
+            # Regression (real-hardware): repo queries MUST be repository-mode
+            # and ignore configured repos, else xbps answers from the pkgdb.
+            self.assertIn("-R", args)
+            self.assertIn("-i", args)
             if "--repository=/r1" in args:
                 return cp(args, returncode=2, stdout="")
             if "--repository=/r2" in args:
