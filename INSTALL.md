@@ -102,9 +102,14 @@ Key flags:
 | `--with-grub` | Adds `usbcore.autosuspend=-1` to the kernel cmdline **and** sets `GRUB_DEFAULT=saved` (required for one-shot kernel boot-testing). |
 | `--march ARCH` | Compiler ABI level (default `x86-64-v3`; use `x86-64-v4` only on full-AVX-512 CPUs such as Zen 4/5). |
 | `--jobs N` | Build parallelism (default: `nproc`). |
+| `--tag NAME` | Ledger tag for this run (`core` default; use `test`/`opt` per route — see §9). |
+| `--root DIR` | Offline mode: operate on a *mounted* Void tree from a rescue distro (see §11). |
+| `--log` | Print the change ledger (type, tag, timestamp, target). |
 | `--simulate` | Lay down files but skip runit service enablement (auto-enabled on WSL2/virtualized hosts). |
 | `--dry-run` | Print planned actions without changing anything. |
 | `--uninstall` | Revert every change (see §9). |
+| `--uninstall-tag NAME` | Revert only the changes recorded under one tag. |
+| `--uninstall-item PATH` | Revert a single ledger item (exact target path/name). |
 
 `deploy.sh` is idempotent and fully reversible: every change is recorded in a
 manifest, pre-existing files are backed up before being replaced, and the
@@ -220,14 +225,41 @@ supervisor or GRUB changes.
 
 ---
 
-## 9. Uninstalling
+## 9. Change Ledger, Rollback & Clean Teardown
 
-`deploy.sh` reverts everything it did — restores backed-up files, removes the
-mirrored engine and services, and removes only the packages it installed:
+Every change `deploy.sh` makes is recorded in a tagged, timestamped ledger **on
+the target system**: `/var/lib/cachy-void/deploy.manifest`. Paths in the ledger
+are logical in-Void paths, so the same ledger drives rollbacks both live and
+from a rescue distro (§11). Pre-existing files are backed up once and restored
+on rollback.
 
 ```bash
-sudo ./deploy.sh --uninstall
+sudo ./deploy.sh --log                                         # inspect the ledger
+sudo ./deploy.sh --uninstall                                   # revert everything
+sudo ./deploy.sh --uninstall-tag test                          # revert one tag only
+sudo ./deploy.sh --uninstall-item /etc/sysctl.d/99-cachy-gaming.conf   # one item
 ```
+
+**Tag discipline (recommended):** tag every run by purpose — `--tag core` for
+the shared baseline (zram, sysctl, engine), `--tag test` for experiment-only
+changes, `--tag opt` for keepers. Ending an experiment phase is then one
+command: `--uninstall-tag test` removes the scars and leaves the benefits.
+
+**What the ledger does not cover** (each has its own reversal path):
+
+- *Packages the updater rebuilt/took over* — revert any package to the upstream
+  mirror binary: `sudo xbps-install -f <pkg>` after removing (or commenting)
+  `/etc/xbps.d/00-cachy-overlay.conf`. Check a package's origin with
+  `xbps-query -p repository <pkg>`.
+- *The custom kernel* — `sudo xbps-remove linux-cachy linux-cachy-headers`,
+  clean stale kernels with `vkpurge list` / `vkpurge rm <ver>`, and make sure
+  your bootloader points at a stock kernel first.
+- *Build litter* — the `void-packages` checkout accumulates gigabytes in
+  `hostdir/` (binpkgs, ccache, sources) and `masterdir*/`. Remove those dirs
+  (or the whole checkout) when done testing; they are pure cache.
+- *Updater state/logs* — `/var/lib/cachy-void/` and
+  `~/.local/state/cachy-void/` are removed by the full `--uninstall`; delete
+  the log dir manually if you only rolled back a tag.
 
 Runtime kernel parameters applied via sysctl persist until the next reboot.
 
@@ -240,3 +272,46 @@ boot-testing) cannot be exercised without real hardware and a real runit PID 1.
 On WSL2/virtualized profiles `deploy.sh` auto-enables `--simulate` and the health
 daemon degrades to logging-only, so the software engine, compiler pipeline, and
 script logic can be validated safely, but kernel staging is a no-op there.
+
+---
+
+## 11. Offline Recovery from a Rescue Distro (dual-boot)
+
+If the Void install will not boot (or is simply offline), every ledger
+operation works from a second distro on the same machine — e.g. a dual-boot
+Debian reachable over SSH. `--root` maps all logical paths onto the mounted
+tree; the ledger read is the *same file* the live system wrote.
+
+```bash
+# as root on the rescue distro:
+mount /dev/sdXN /mnt/void                    # the Void root partition
+git clone https://github.com/Tubifix77/cachy-void.git && cd cachy-void
+./deploy.sh --root /mnt/void --log           # what has Cachy-Void changed?
+./deploy.sh --root /mnt/void --uninstall-tag test    # targeted rollback
+./deploy.sh --root /mnt/void --uninstall     # or: full revert to stock
+umount /mnt/void
+```
+
+Notes and limits:
+
+- **Package operations are skipped offline** (the rescue distro has no `xbps`).
+  Handle packages from a chroot instead:
+
+  ```bash
+  for d in dev proc sys; do mount --rbind /$d /mnt/void/$d; done
+  cp /etc/resolv.conf /mnt/void/etc/           # only needed for installs
+  chroot /mnt/void xbps-remove -y linux-cachy  # Void's own xbps runs inside
+  ```
+
+- **Unbootable kernel:** boot the previous kernel from your boot menu. On a
+  setup where another distro's GRUB loads Void via `vmlinuz-current`-style
+  symlinks, re-point the symlink on the mounted tree:
+  `ln -sf vmlinuz-<good-ver> /mnt/void/boot/vmlinuz-current` (same for the
+  initramfs), then reboot.
+- **Pure inspection without any risk of writes:** even `mount -o ro` can replay
+  an ext4 journal. To only *read* a possibly-dirty Void partition, use
+  `debugfs -R 'cat /etc/os-release' /dev/sdXN` (from `e2fsprogs`) — it never
+  mounts and never writes.
+- Offline service enablement links into `/etc/runit/runsvdir/default/` (the
+  handbook's path for a system that is not booted); it takes effect on the next
+  Void boot.

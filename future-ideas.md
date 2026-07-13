@@ -130,3 +130,14 @@ right. Only proven pieces graduate here.
 Shared trunk first (`deploy.sh --march x86-64-v2` + zram + sysctl), then the
 routes diverge. Route A findings gate what Route B adopts: a kernel that
 proves itself in testing graduates to the daily driver.
+
+### Ledger discipline (agreed 2026-07-13)
+
+Every change to the box is recorded in deploy.sh's tagged ledger so it can be
+rolled back **individually**, per **route**, or wholesale — live, or offline
+from the dual-boot Debian over SSH via `deploy.sh --root /mnt/void …` even if
+Void no longer boots (INSTALL.md §9/§11). Tags: `core` = shared trunk,
+`test` = Route A experiment-only, `opt` = Route B keepers. **Route A exits with
+`--uninstall-tag test` plus the §9 teardown checklist** (revert overlay
+packages, remove build litter) — the box ends with only benefits: no scars,
+no deadweight, no litter.
