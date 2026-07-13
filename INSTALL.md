@@ -100,7 +100,7 @@ Key flags:
 | `--user NAME` | The unprivileged updater user (gets the sudoers grants). |
 | `--void-packages DIR` | Path to your `void-packages` checkout. |
 | `--with-grub` | Adds `usbcore.autosuspend=-1` to the kernel cmdline **and** sets `GRUB_DEFAULT=saved` (required for one-shot kernel boot-testing). |
-| `--march ARCH` | Compiler ABI level (default `x86-64-v3`; use `x86-64-v4` only on full-AVX-512 CPUs such as Zen 4/5). |
+| `--march ARCH` | Compiler ABI level. Default: **auto-detected** from `/proc/cpuinfo` via the §1.2 ladder (v4 → v3 → v2 → baseline), so pre-Haswell CPUs get `x86-64-v2` automatically instead of SIGILL-ing on v3 binaries. Pass explicitly to override (e.g. when provisioning a disk for a different machine via `--root`). |
 | `--jobs N` | Build parallelism (default: `nproc`). |
 | `--tag NAME` | Ledger tag for this run (`core` default; use `test`/`opt` per route — see §9). |
 | `--root DIR` | Offline mode: operate on a *mounted* Void tree from a rescue distro (see §11). |

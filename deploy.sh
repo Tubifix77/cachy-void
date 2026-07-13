@@ -71,7 +71,7 @@ UN_ITEM=""                # --uninstall-item filter
 UPDATER_USER="${SUDO_USER:-}"
 CHOWN_USER=""             # resolved owner for user-owned dirs (see do_install)
 VOID_PACKAGES="${VOID_PACKAGES:-}"
-MARCH="x86-64-v3"
+MARCH=""                  # empty = auto-detect via the §1.2 ladder (see detect_march)
 MAKEJOBS=""
 MANIFEST=""               # physical manifest path; finalized in main()
 
@@ -131,6 +131,19 @@ parse_args() {
 
 require_root() {
     [ "$(id -u)" -eq 0 ] || die "must run as root — try: sudo $0 $*"
+}
+
+# detect_march — §1.2 ladder, mirrors engine/template.py detect_march(): the
+# highest ABI level this host can PROVE wins; absence of proof degrades, never
+# upgrades (v3 binaries SIGILL on pre-Haswell CPUs — real targets exist).
+detect_march() {
+    local f v="x86-64"
+    f=" $(grep -m1 '^flags' /proc/cpuinfo 2>/dev/null | cut -d: -f2) "
+    [[ "$f" == *" sse4_2 "* && "$f" == *" popcnt "* ]] && v="x86-64-v2"
+    [[ "$f" == *" avx2 "* && "$f" == *" fma "* && "$f" == *" bmi2 "* ]] && v="x86-64-v3"
+    [[ "$f" == *" avx512f "* && "$f" == *" avx512bw "* && "$f" == *" avx512cd "* \
+       && "$f" == *" avx512dq "* && "$f" == *" avx512vl "* ]] && v="x86-64-v4"
+    printf '%s' "$v"
 }
 
 # Detect a virtualized/sandbox profile with no runit PID 1 (WSL2). In that case
@@ -452,6 +465,15 @@ do_install() {
         fi
     fi
     [ -n "$MAKEJOBS" ] || MAKEJOBS="$(nproc)"
+    if [ -z "$MARCH" ]; then
+        MARCH="$(detect_march)"
+        if [ -n "$ROOT" ]; then
+            warn "auto-detected -march=$MARCH from THIS host's CPU — pass --march"
+            warn "  explicitly if the target machine's CPU differs from this one"
+        else
+            log "auto-detected -march=$MARCH (override with --march)"
+        fi
+    fi
     resolve_void_packages
     PARTIAL=false
 
@@ -506,7 +528,7 @@ Next steps / notes:
   * The health daemon runs as: chpst -u $UPDATER_USER $CACHY_ENGINE/cachy_void_update.py --health-daemon
   * zram conf uses the verified zramen-1.0.1 names (ZRAM_COMP_ALGORITHM,
     ZRAM_SIZE=percent, ZRAM_MAX_SIZE, ZRAM_PRIORITY) — see /etc/sv/zramen/conf.
-  * For pre-Haswell CPUs (no AVX2) re-run with: --march x86-64-v2 (see §1.2).
+  * -march was '$MARCH' (auto-detected via the §1.2 ladder unless --march was given).
   * USB autosuspend (§3.3) is opt-in: re-run with --with-grub to apply it.
   * Inspect the change ledger any time:  sudo $0 --log
   * Roll back everything:                sudo $0 --uninstall
