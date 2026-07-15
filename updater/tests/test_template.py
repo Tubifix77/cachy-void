@@ -14,8 +14,7 @@ from engine.template import (
     TemplateSynthesisError, EXIT_HALT, _assert_regen,
 )
 
-UPSTREAM_TEMPLATE = """\
-# Template file for 'linux6.12'
+UPSTREAM_TEMPLATE = r"""# Template file for 'linux6.12'
 pkgname=linux6.12
 version=6.12.35
 revision=1
@@ -27,6 +26,11 @@ homepage="https://www.kernel.org"
 distfiles="https://cdn.kernel.org/linux-${version}.tar.xz"
 checksum=1111111111111111111111111111111111111111111111111111111111111111
 subpackages="linux6.12-headers linux6.12-dbg"
+
+do_configure() {
+	sed -i -e "s|^\(CONFIG_LOCALVERSION=\).*|\1\"_${revision}\"|" .config
+	: configure
+}
 
 do_install() {
 	: install
@@ -115,9 +119,10 @@ class SynthesizeTests(unittest.TestCase):
         self.assertEqual(res.checksum_lines,
                          [l for l in UPSTREAM_TEMPLATE.splitlines()
                           if l.startswith("checksum=")])
-        # unique release string (finding #8): BOTH sides suffixed coherently
+        # unique release string (finding #8/#11): BOTH template levers suffixed
+        # coherently — packaging (_kernver) AND the kernel's own release setter.
         self.assertIn('_kernver="${version}_${revision}-cachy"', template)
-        self.assertIn('CONFIG_LOCALVERSION="_1-cachy"', dot)
+        self.assertIn(r'\1\"_${revision}-cachy\"', template)
 
     def test_subpackage_symlinks_created(self):
         # xbps-src resolves subpackages via sibling symlinks; regen must create
@@ -164,6 +169,19 @@ class SynthesizeTests(unittest.TestCase):
             synthesize(void_packages=root, series="6.12",
                        patch_bytes=PATCH, fragment_text=FRAGMENT)
         self.assertIn("ASSERT-D", str(ctx.exception))
+
+    def test_missing_localversion_setter_fails_assert_d(self):
+        # Without the configure-time CONFIG_LOCALVERSION setter the built kernel
+        # release cannot be made to match _kernver -> refuse (finding #11).
+        root = Path(tempfile.mkdtemp())
+        stripped = "\n".join(l for l in UPSTREAM_TEMPLATE.splitlines()
+                             if "CONFIG_LOCALVERSION" not in l) + "\n"
+        _mk_upstream(root, template=stripped)
+        with self.assertRaises(TemplateSynthesisError) as ctx:
+            synthesize(void_packages=root, series="6.12",
+                       patch_bytes=PATCH, fragment_text=FRAGMENT)
+        self.assertIn("ASSERT-D", str(ctx.exception))
+        self.assertIn("LOCALVERSION", str(ctx.exception))
 
     def test_missing_upstream_template_raises(self):
         empty = Path(tempfile.mkdtemp())

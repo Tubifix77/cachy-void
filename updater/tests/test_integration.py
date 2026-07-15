@@ -16,8 +16,7 @@ from unittest import mock
 import cachy_void_update as cli
 from engine import grub, trust
 
-UPSTREAM_TEMPLATE = """\
-# Template file for 'linux6.12'
+UPSTREAM_TEMPLATE = r"""# Template file for 'linux6.12'
 pkgname=linux6.12
 version=6.12.35
 revision=1
@@ -29,6 +28,10 @@ homepage="https://www.kernel.org"
 distfiles="https://cdn.kernel.org/linux-${version}.tar.xz"
 checksum=1111111111111111111111111111111111111111111111111111111111111111
 subpackages="linux6.12-headers linux6.12-dbg"
+
+do_configure() {
+	sed -i -e "s|^\(CONFIG_LOCALVERSION=\).*|\1\"_${revision}\"|" .config
+}
 
 linux6.12-headers_package() { short_desc+=" - headers"; }
 linux6.12-dbg_package() { short_desc+=" - dbg"; }

@@ -248,40 +248,43 @@ def synthesize(*, void_packages: str | os.PathLike, series: str,
 
 RELEASE_SUFFIX = "-cachy"
 
+# The packaging side: _kernver drives /boot names, the module dir the template
+# cd's into, and the kernel hooks version.
 _KERNVER_LINE_RE = re.compile(r'^(_kernver="\$\{version\}_\$\{revision\})(")', re.M)
-_LOCALVERSION_RE = re.compile(r'^(CONFIG_LOCALVERSION=")([^"]*)(")', re.M)
+# The kernel side: Void kernel templates FORCE CONFIG_LOCALVERSION="_${revision}"
+# onto .config at configure time (a sed that overrides the dotconfig), and that
+# is what sets the kernel's own release string (uname -r, modules_install dir).
+# The suffix must go HERE, coupled with _kernver, or the two disagree and
+# do_install cd's into a modules dir make never created (real-hardware #11).
+_LV_SETTER_RE = re.compile(r'(CONFIG_LOCALVERSION=[^\n]*?_\$\{revision\})(\\?")')
 
 
 def _apply_release_suffix(staging: Path, new_pkgname: str) -> None:
-    """Make the kernel release string unique: 6.12.95_1 -> 6.12.95_1-cachy.
+    """Make the kernel release unique & self-consistent: ...95_1 -> ...95_1-cachy.
 
-    Two coupled edits, both mandatory (finding #8): the template's ``_kernver``
-    drives every install path (/boot names, module dir, kernel hooks), and the
-    dotconfig's ``CONFIG_LOCALVERSION`` drives what the kernel believes at
-    runtime (uname -r, module loading). They MUST agree or modules land in a
-    dir the booted kernel never looks at.
+    Both edits live in the TEMPLATE (found by looking at build ground truth, not
+    deduction): ``_kernver`` (packaging paths) and the configure-time
+    ``CONFIG_LOCALVERSION`` setter (the kernel's real release). Editing the
+    dotconfig is futile — the setter clobbers it. Both must carry the suffix or
+    packaging and the built kernel disagree.
     """
     tpl_path = staging / "template"
     text = tpl_path.read_text(encoding="utf-8")
-    text, n_tpl = _KERNVER_LINE_RE.subn(rf"\1{RELEASE_SUFFIX}\2", text)
-    if n_tpl != 1:
+
+    text, n_kv = _KERNVER_LINE_RE.subn(rf"\1{RELEASE_SUFFIX}\2", text)
+    if n_kv != 1:
         raise TemplateSynthesisError(
-            "ASSERT-D failed: expected exactly one _kernver=\"${version}_"
-            f"${{revision}}\" line to suffix, found {n_tpl}")
+            'ASSERT-D failed: expected exactly one _kernver="${version}_'
+            f'${{revision}}" line, found {n_kv}')
+
+    text, n_lv = _LV_SETTER_RE.subn(rf"\1{RELEASE_SUFFIX}\2", text)
+    if n_lv != 1:
+        raise TemplateSynthesisError(
+            'ASSERT-D failed: expected exactly one configure-time '
+            'CONFIG_LOCALVERSION="_${revision}" setter to suffix, found '
+            f'{n_lv} — the built kernel release would not match _kernver')
+
     tpl_path.write_text(text, encoding="utf-8")
-
-    dot_path = staging / "files" / "x86_64-dotconfig"
-    dot = dot_path.read_text(encoding="utf-8")
-
-    def _fix(m: re.Match) -> str:
-        return f'{m.group(1)}{m.group(2)}{RELEASE_SUFFIX}{m.group(3)}'
-
-    dot, n_dot = _LOCALVERSION_RE.subn(_fix, dot, count=1)
-    if n_dot != 1:
-        raise TemplateSynthesisError(
-            "ASSERT-D failed: CONFIG_LOCALVERSION line not found in dotconfig "
-            "(release suffix cannot be applied coherently)")
-    dot_path.write_text(dot, encoding="utf-8")
 
 
 def _assert_regen(staging: Path, series: str, new_pkgname: str,
