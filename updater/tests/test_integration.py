@@ -21,6 +21,7 @@ UPSTREAM_TEMPLATE = """\
 pkgname=linux6.12
 version=6.12.35
 revision=1
+_kernver="${version}_${revision}"
 short_desc="Linux kernel (${version%.*} series)"
 maintainer="x <x@example.com>"
 license="GPL-2.0-only"
@@ -33,7 +34,7 @@ linux6.12-headers_package() { short_desc+=" - headers"; }
 linux6.12-dbg_package() { short_desc+=" - dbg"; }
 """
 
-DOTCONFIG = "CONFIG_FOO=y\n"
+DOTCONFIG = 'CONFIG_LOCALVERSION="_1"\nCONFIG_FOO=y\n'
 FRAGMENT = "CONFIG_SCHED_BORE=y\n"
 PATCH = b"--- a/x\n+++ b/x\n@@ bore @@\n"
 PATCH_SHA = hashlib.sha256(PATCH).hexdigest()

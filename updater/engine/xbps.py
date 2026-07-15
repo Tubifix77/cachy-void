@@ -151,6 +151,11 @@ class Xbps:
         """Repository an installed binpkg came from (``-p repository``)."""
         return self._capture(["xbps-query", "-p", "repository", binpkg]).stdout.strip()
 
+    def files(self, binpkg: str) -> list[str]:
+        """Installed file list (``xbps-query -f``), one path per line."""
+        cp = self._capture(["xbps-query", "-f", binpkg])
+        return [ln.strip() for ln in cp.stdout.splitlines() if ln.strip()]
+
     # -- repository queries (srcpkg/binpkg by repo) --------------------
     def repo_ver(self, name: str) -> Optional[str]:
         """First non-empty pkgver of ``name`` across local repos ``R``, else None.

@@ -19,6 +19,7 @@ UPSTREAM_TEMPLATE = """\
 pkgname=linux6.12
 version=6.12.35
 revision=1
+_kernver="${version}_${revision}"
 short_desc="Linux kernel and modules (${version%.*} series)"
 maintainer="x <x@example.com>"
 license="GPL-2.0-only"
@@ -46,7 +47,7 @@ linux6.12-dbg_package() {
 }
 """
 
-DOTCONFIG = "CONFIG_FOO=y\nCONFIG_BAR=m\n"
+DOTCONFIG = 'CONFIG_LOCALVERSION="_1"\nCONFIG_FOO=y\nCONFIG_BAR=m\n'
 FRAGMENT = "CONFIG_SCHED_BORE=y\n# CONFIG_HZ_250 is not set\n"
 PATCH = b"--- a/x\n+++ b/x\n@@ bore @@\n"
 
@@ -106,12 +107,17 @@ class SynthesizeTests(unittest.TestCase):
         self.assertEqual((fork / "patches" / "0001-bore.patch").read_bytes(), PATCH)
         # fragment appended to the dotconfig
         dot = (fork / "files" / "x86_64-dotconfig").read_text(encoding="utf-8")
-        self.assertTrue(dot.startswith(DOTCONFIG))
+        # base config preserved (LOCALVERSION line is deliberately rewritten)
+        self.assertIn("CONFIG_FOO=y", dot)
+        self.assertIn("CONFIG_BAR=m", dot)
         self.assertIn("CONFIG_SCHED_BORE=y", dot)
         # checksum inherited byte-for-byte (ASSERT-C)
         self.assertEqual(res.checksum_lines,
                          [l for l in UPSTREAM_TEMPLATE.splitlines()
                           if l.startswith("checksum=")])
+        # unique release string (finding #8): BOTH sides suffixed coherently
+        self.assertIn('_kernver="${version}_${revision}-cachy"', template)
+        self.assertIn('CONFIG_LOCALVERSION="_1-cachy"', dot)
 
     def test_subpackage_symlinks_created(self):
         # xbps-src resolves subpackages via sibling symlinks; regen must create
@@ -146,6 +152,18 @@ class SynthesizeTests(unittest.TestCase):
         dot = (self.tmp / "srcpkgs" / "linux-cachy" / "files"
                / "x86_64-dotconfig").read_text(encoding="utf-8")
         self.assertEqual(dot.count("CONFIG_SCHED_BORE=y"), 1)
+
+    def test_missing_kernver_line_fails_assert_d(self):
+        # A template without the _kernver line cannot get a unique release
+        # string -> refuse rather than rebuild a colliding kernel (finding #8).
+        root = Path(tempfile.mkdtemp())
+        stripped = UPSTREAM_TEMPLATE.replace(
+            '_kernver="${version}_${revision}"\n', "")
+        _mk_upstream(root, template=stripped)
+        with self.assertRaises(TemplateSynthesisError) as ctx:
+            synthesize(void_packages=root, series="6.12",
+                       patch_bytes=PATCH, fragment_text=FRAGMENT)
+        self.assertIn("ASSERT-D", str(ctx.exception))
 
     def test_missing_upstream_template_raises(self):
         empty = Path(tempfile.mkdtemp())

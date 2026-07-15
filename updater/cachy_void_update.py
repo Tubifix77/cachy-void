@@ -377,7 +377,7 @@ def _stage_kernel(config: Config, xbps, out, run, layout=None) -> int:
                 "relying on automatic rollback.")
             return EXIT_KERNEL
 
-        cand_kver = split_pkgver(xbps.inst_pkgver(KERNEL_TARGET))[1]
+        cand_kver = _kernel_release_of(xbps, KERNEL_TARGET)
         store = grub.KernelStateStore(config.kernel_state_path)
         state = store.load()
         known = (state.get("known_good") or {}).get("kver") or _uname_r(run)
@@ -411,6 +411,19 @@ def _stage_kernel(config: Config, xbps, out, run, layout=None) -> int:
     except (XbpsError, ParseError, OSError) as exc:
         out(f"error: kernel staging aborted: {exc}")
         return EXIT_KERNEL
+
+
+def _kernel_release_of(xbps, pkg: str) -> str:
+    """Kernel release string from the package's installed vmlinuz filename.
+
+    Finding #8: the release carries a uniqueness suffix (§8.4), so it is NOT
+    derivable from pkgver — the file list is the ground truth.
+    """
+    for path in xbps.files(pkg):
+        token = path.split()[0] if path else ""
+        if "/boot/vmlinuz-" in token:
+            return token.rsplit("/boot/vmlinuz-", 1)[1]
+    raise XbpsError(f"{pkg}: no /boot/vmlinuz-* found in its file list")
 
 
 def _uname_r(run) -> Optional[str]:

@@ -212,6 +212,14 @@ def synthesize(*, void_packages: str | os.PathLike, series: str,
         dotconfig.write_text(base + fragment_text.rstrip("\n") + "\n",
                              encoding="utf-8")
 
+        # UNIQUE RELEASE STRING (real-hardware finding #8): the stock kernel at
+        # the same version owns /boot/vmlinuz-<ver>_<rev> and /usr/lib/modules/
+        # <ver>_<rev> — and xbps does NOT refuse the file collision, it silently
+        # takes ownership and overwrites the stock kernel (destroying the boot
+        # fallback). Suffix both the template's _kernver and the dotconfig's
+        # CONFIG_LOCALVERSION so our kernel installs strictly side-by-side.
+        _apply_release_suffix(staging, new_pkgname)
+
         _assert_regen(staging, series, new_pkgname, upstream_checksums)
 
         # Atomic swap: replace any existing fork in a single rename.
@@ -236,6 +244,44 @@ def synthesize(*, void_packages: str | os.PathLike, series: str,
             subpackages=subs)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+RELEASE_SUFFIX = "-cachy"
+
+_KERNVER_LINE_RE = re.compile(r'^(_kernver="\$\{version\}_\$\{revision\})(")', re.M)
+_LOCALVERSION_RE = re.compile(r'^(CONFIG_LOCALVERSION=")([^"]*)(")', re.M)
+
+
+def _apply_release_suffix(staging: Path, new_pkgname: str) -> None:
+    """Make the kernel release string unique: 6.12.95_1 -> 6.12.95_1-cachy.
+
+    Two coupled edits, both mandatory (finding #8): the template's ``_kernver``
+    drives every install path (/boot names, module dir, kernel hooks), and the
+    dotconfig's ``CONFIG_LOCALVERSION`` drives what the kernel believes at
+    runtime (uname -r, module loading). They MUST agree or modules land in a
+    dir the booted kernel never looks at.
+    """
+    tpl_path = staging / "template"
+    text = tpl_path.read_text(encoding="utf-8")
+    text, n_tpl = _KERNVER_LINE_RE.subn(rf"\1{RELEASE_SUFFIX}\2", text)
+    if n_tpl != 1:
+        raise TemplateSynthesisError(
+            "ASSERT-D failed: expected exactly one _kernver=\"${version}_"
+            f"${{revision}}\" line to suffix, found {n_tpl}")
+    tpl_path.write_text(text, encoding="utf-8")
+
+    dot_path = staging / "files" / "x86_64-dotconfig"
+    dot = dot_path.read_text(encoding="utf-8")
+
+    def _fix(m: re.Match) -> str:
+        return f'{m.group(1)}{m.group(2)}{RELEASE_SUFFIX}{m.group(3)}'
+
+    dot, n_dot = _LOCALVERSION_RE.subn(_fix, dot, count=1)
+    if n_dot != 1:
+        raise TemplateSynthesisError(
+            "ASSERT-D failed: CONFIG_LOCALVERSION line not found in dotconfig "
+            "(release suffix cannot be applied coherently)")
+    dot_path.write_text(dot, encoding="utf-8")
 
 
 def _assert_regen(staging: Path, series: str, new_pkgname: str,

@@ -43,7 +43,7 @@ class FakeXbps:
 
     def __init__(self, *, installed=(), src_map=None, inst_ver=None, repo_ver=None,
                  local_updates=(), sort_ok=True, origins=None,
-                 configure_rc=0, build_rc=0):
+                 configure_rc=0, build_rc=0, files_map=None):
         self._installed = list(installed)
         self._src_map = dict(src_map or {})
         self._inst_ver = dict(inst_ver or {})
@@ -53,6 +53,7 @@ class FakeXbps:
         self._origins = dict(origins or {})
         self._configure_rc = configure_rc
         self._build_rc = build_rc
+        self._files_map = dict(files_map or {})
         self.configure_calls: list[str] = []
         self.build_calls: list[str] = []
         self.clean_calls: list[str] = []
@@ -67,6 +68,9 @@ class FakeXbps:
 
     def origin(self, b):
         return self._origins.get(b, "/vp/hostdir/binpkgs")
+
+    def files(self, b):
+        return list(self._files_map.get(b, []))
 
     def configure(self, pkg):
         self.configure_calls.append(pkg)
@@ -288,7 +292,8 @@ class CommitCommandTests(unittest.TestCase):
                       src_map={"linux-cachy": "linux-cachy"},
                       inst_ver={"linux-cachy": "linux-cachy-6.12.35_1"},
                       repo_ver={"linux-cachy": "linux-cachy-6.12.35_1"},
-                      local_updates=["linux-cachy"])
+                      local_updates=["linux-cachy"],
+                      files_map={"linux-cachy": ["/boot/vmlinuz-6.12.35_1"]})
         out = Sink()
         run, calls = self._runstub()
         rc = cli.cmd_commit(xb, self._cfg(["linux-cachy"], void_packages=vp),
@@ -329,7 +334,8 @@ class CommitCommandTests(unittest.TestCase):
         xb = FakeXbps(installed=[],                      # kernel NOT installed
                       src_map={},
                       inst_ver={"linux-cachy": "linux-cachy-6.12.35_1"},
-                      repo_ver={})                        # no binpkg yet -> M
+                      repo_ver={},                        # no binpkg yet -> M
+                      files_map={"linux-cachy": ["/boot/vmlinuz-6.12.35_1"]})
         out = Sink()
         run, calls = self._runstub()
         rc = cli.cmd_commit(xb, self._cfg(["linux-cachy"], void_packages=vp),
