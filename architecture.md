@@ -1,6 +1,6 @@
 # Cachy-Void — Architecture & Build Specification
 
-**Status: AUTHORITATIVE.** This document is the sole source of truth for the Cachy-Void project. If code, configs, or other docs disagree with this file, this file wins. Last revised: 2026-07-05.
+**Status: AUTHORITATIVE.** This document is the sole source of truth for the Cachy-Void project. If code, configs, or other docs disagree with this file, this file wins. Last revised: 2026-07-15.
 
 ---
 
@@ -355,6 +355,7 @@ exec snooze -H 5 -M 30 /usr/local/bin/cachy-void-update --yes
 - **Failed install (exit 51):** XBPS transactions are per-run atomic at the package level. Run `xbps-pkgdb -a` to verify pkgdb integrity, then `sudo xbps-install -Su` from upstream mirrors to converge to a consistent state. The upstream binary always exists as the fallback for every overlay package.
 - **Bad kernel:** boot the previous kernel from the GRUB menu (it is always still installed, §2.5), then `vkpurge rm <bad-ver>` and rebuild. If the overlay repo itself is suspect, `sudo xbps-install -f linux<series>` from upstream restores a stock kernel.
 - **Nuke the overlay entirely:** remove `/etc/xbps.d/00-cachy-overlay.conf`, then `sudo xbps-install -Suf` of the affected targets from upstream mirrors. The base system was never anything but stock Void — this always converges.
+- **Roll back a bad userland deploy (btrfs hosts):** if pre-deploy snapshots are enabled (§9.5), restore the pre-deploy snapshot — `sudo btrfs subvolume set-default <id> <mount>` then reboot, or select it via grub-btrfs. A convenience over the always-converges path above, never a replacement for it.
 
 ---
 
@@ -685,7 +686,7 @@ The fragment's runtime copy is installed by `deploy.sh` at `/etc/cachy-void/cach
 
 Preflight (soft failures degrade to `grub.mode = "manual"`; hard errors → exit 70):
 
-- `findmnt -no FSTYPE --target /boot/grub` ∈ {ext2, ext3, ext4, vfat}. GRUB cannot rewrite `grubenv` on btrfs/zfs/LVM/RAID — there, a one-shot entry is never consumed and would boot-loop into the candidate; oneshot mode is **forbidden** on those filesystems.
+- `findmnt -no FSTYPE --target /boot/grub` ∈ {ext2, ext3, ext4, vfat}. GRUB cannot rewrite `grubenv` on btrfs/zfs/LVM/RAID — there, a one-shot entry is never consumed and would boot-loop into the candidate; oneshot mode is **forbidden** on those filesystems. See §9.3 for the recommended host layout that keeps `oneshot` available.
 - `GRUB_DEFAULT=saved` present in `/etc/default/grub`. The sanctioned edit that establishes it is performed **once, by `deploy.sh --with-grub`** (root context, backed up, manifest-tracked, reversible) — never at staging time; staging only *verifies*. If absent, the layout is **`manual-unsafe`**: `grub-set-default` writes would be silently ignored and the newest installed kernel typically becomes the default, so staging **refuses** (exit 70) and names the remedy. This supersedes the earlier "set it during preflight" wording — the updater process never edits bootloader config.
 - Resolve GRUB refs (below) for candidate and known-good; any ambiguity → exit 70.
 
@@ -789,3 +790,86 @@ require_network = true     # battery H4
 ```
 
 CLI verbs: `cachy-void-update kernel status | ack | approve-patch` — `approve-patch` prints the §8.3(3) diff and the exact `bore.lock` lines to change; it never edits the lockfile itself. Exit code 70 per §4.8. The daemon runs under runit as `cachy-health` and is also directly invokable as `cachy-void-update --health-daemon` (used by the service `run` script). New deliverables: `system/sv/cachy-health/`, `system/sv/zramen/run`, `updater/bore.lock`, `overlay/config/cachy-fragment.config` (§6).
+
+---
+
+## 9. Host Filesystem Recommendation & Pre-Deploy Snapshots
+
+The root filesystem is chosen at Void install time, upstream of this overlay, so cachy-void does not mandate it. But the choice interacts with two flagship behaviors — the kernel one-shot rollback (§8.6) and the pre-deploy snapshot (§9.5) — so the project makes a recommendation and states one hard constraint. This section is normative for the recommendation and the snapshot step; the host FS itself remains the operator's decision.
+
+### 9.1 Recommended layout — decided
+
+```
+ESP            /boot/efi   vfat            # firmware requirement
+/boot          ext4                        # grubenv-writable — see §9.3
+btrfs pool     zstd
+  ├── @        /                           # snapshot target (§9.5)
+  ├── @home    /home
+  └── @snap    /.cachy-snapshots           # dedicated subvol, NOT nested under @
+```
+
+**Recommendation: btrfs for `/` (and `/home`); keep `/boot` on ext4 (or vfat).**
+
+Rationale — *symmetry of safety*, not speed. cachy-void's kernel half already ships automatic rollback (§8.6: a bad kernel is un-booted by the next power cycle with zero interaction). Its userland half — the overlay rebuild and Stage 4 deploy (§7) — has no undo beyond converge-from-upstream (§5). btrfs closes that asymmetry: a read-only snapshot taken immediately before Stage 4 (§9.5) makes a broken overlay deploy a rollback, giving userland the *same safety class* the kernel already has. The whole product then tells one coherent story — *every change we make, kernel and userland, is reversible.*
+
+Precedent: the ancestor project defaults to btrfs+zstd with snapshot-boot integration (`limine-snapper-sync`) for exactly this "reboot into a pre-update state in seconds" workflow. *(Verified against the CachyOS wiki, 2026-07-15: btrfs is the CachyOS installer default with ZSTD compression and Snapper snapshots; CachyOS switched its default to btrfs from XFS.)* cachy-void reaches the same recovery outcome the runit-native way (no systemd, no snapper timers): manual/`snooze`-driven snapshots plus grub-btrfs for snapshot boot entries.
+
+**Honesty guardrails (normative — the recommendation MUST NOT be oversold):**
+
+- **Not a performance recommendation.** On an SSD, ext4/btrfs/f2fs game-load times are a wash; the gaming wins live entirely in §1–§3 (compiler profile, scheduler, sysctl). btrfs is recommended for *recovery* and must be framed as such in all user-facing docs. zstd transparent compression can trim I/O on slower SATA SSDs, but it costs CPU, and that cost *compounds with the zstd zram of §3.2* on the pre-Haswell hosts this project explicitly supports (§1.2 v2 floor). Recommend `compress=zstd:1` on old CPUs, not CachyOS's default level 3.
+- **Adoption asymmetry favors btrfs for an *upgrade* package.** An existing ext4 install can migrate in place with `btrfs-convert`, which keeps a rollback image of the original ext4 until the operator deletes it. f2fs has **no** in-place converter — adopting it means full backup + reformat + restore. For a tool that bolts onto systems people already run, that friction is decisive. (User-facing docs MUST still say "back up before converting"; `btrfs-convert` is best-effort and a live conversion of an unbacked-up rig is an unsupported path.)
+- **f2fs remains a legitimate operator choice** for a deliberately disposable, reinstall-on-break lab host — leanest flash-native Void build, at the cost of the entire snapshot safety layer. cachy-void supports it (in-tree, §9.4) but does not recommend it, because "reinstall on break" contradicts the overlay's reversible-by-design philosophy.
+
+### 9.2 Excluded: ZFS (decided)
+
+ZFS is **not** a supported root FS for a cachy-void host, for reasons stronger than the RAM/complexity budget usually cited:
+
+- **Out-of-tree module vs. a custom kernel.** cachy-void's entire purpose is compiling bespoke `linux-cachy` kernels (§2, §8). ZFS is an out-of-tree module that must be rebuilt against *every* such kernel or the pool will not import — a boot-critical failure surface placed directly across the project's main activity. The host already carries one out-of-tree module (nvidia, non-boot-critical under PRIME offload); a second one holding root is how a kernel bump yields an unbootable machine.
+- **grubenv-hostile (§8.6).** ZFS is on the one-shot's forbidden-filesystem list, so it also forfeits the kernel-rollback feature this section is built around.
+
+### 9.3 The hard constraint — grubenv writability (cross-ref §8.6)
+
+Whatever the root FS, **`/boot/grub` MUST be grubenv-writable (ext2/3/4 or vfat)** or the kernel one-shot degrades to `manual` mode (§8.6): still safe — the known-good default is pinned and the operator selects the candidate in the GRUB menu — but no longer a zero-interaction power-cycle. Consequences:
+
+- **Recommended layout (separate ext4 `/boot`)** → `oneshot` preserved. Best experience.
+- **Whole-disk btrfs including `/boot/grub`** → *supported but degraded* to `manual`. Never below `manual` (never `manual-unsafe`) as long as `GRUB_DEFAULT=saved` holds (established once by `deploy.sh --with-grub`, §8.6). This is the price of the simpler single-filesystem layout; document it, do not forbid it.
+
+### 9.4 In-tree + kernel-config constraints (normative)
+
+- The root FS driver MUST be a mainline **in-tree** filesystem (btrfs, f2fs, ext4, xfs). This re-confirms §9.2's ZFS exclusion at the config level: the overlay cannot ship a rollback story that depends on an out-of-tree module surviving every custom-kernel build.
+- `linux-cachy`'s config (§2.4) MUST keep `CONFIG_BTRFS_FS` enabled whenever btrfs is the root or snapshot FS. Void's dracut pulls the module into the initramfs for a btrfs root automatically, so `=m` suffices; a future minimal-config pass that compiles it out entirely yields a kernel that **builds green then cannot mount root**. The root FS driver is sacred — if a root-FS-symbol assertion is added to the §2.4 fragment, the **G2 gate (§8.5)** is its natural guardian (same mechanism that already catches silent `oldconfig` drops).
+
+### 9.5 Pre-deploy snapshot (new updater step)
+
+Optional, btrfs-only, opt-in. Grants the Stage 4 userland deploy the rollback the kernel already has. Consistent with the §7.6 doctrine, the snapshot is a **witness/rollback artifact, never control flow** — the updater never *reads* it to decide anything.
+
+Config additions to `updater.toml` (extends §4.1 / §8.9):
+
+```toml
+[snapshot]
+enable = "auto"              # "auto" → active iff the deploy subvol is btrfs;
+                             #   true forces (errors if not btrfs); false disables
+subvol = "/"                 # subvolume snapshotted before deploy
+dir    = "/.cachy-snapshots" # a DEDICATED subvol, not nested under `subvol`
+keep   = 5                   # retain the last N pre-deploy snapshots
+```
+
+Behavior — runs inside Stage 4, **immediately before** the `xbps-install -Suy` of §7.7, and only when `Q_deploy ≠ ∅`:
+
+1. Resolve `findmnt -no FSTYPE --target <subvol>`. Not btrfs and `enable=="auto"` → **skip with a logged notice, never fail**. Not btrfs and `enable==true` → **exit 53** (the operator asked for a net that cannot exist).
+2. `sudo btrfs subvolume snapshot -r <subvol> <dir>/deploy-<run_id>` — read-only, keyed by the §7.6 `run_id` so the snapshot ties back to the journal.
+3. Prune oldest to `keep`.
+4. Snapshot command failure with snapshots enabled ⇒ **abort before any mutation (I4)**, **exit 54** — never deploy without the requested net.
+
+The snapshot is deliberately **not** taken on the kernel path: the kernel has its own one-shot (§8.6), and the kernel image lives under `/boot` (outside the `/` subvol) anyway, so double-covering it is both redundant and ineffective.
+
+Privilege (extends the §4 sudoers boundary): adds exactly `btrfs subvolume snapshot -r *`, `btrfs subvolume delete *` (prune), and `btrfs subvolume list *` (prune enumeration) to `/etc/sudoers.d/cachy-void` — the minimal set, nothing broader.
+
+New exit codes (extends §4.8 / §7.8):
+
+| Exit | Condition | System state afterwards |
+|---|---|---|
+| 53 | `[snapshot] enable=true` but deploy subvol is not btrfs | untouched |
+| 54 | pre-deploy snapshot command failed | untouched (aborted before deploy) |
+
+Deliverables (extends §6): the `[snapshot]` block in `updater.toml`; the three btrfs grants in `system/sudoers.d/cachy-void`; the snapshot logic in `engine/` (naturally `journal.py`-adjacent, but it writes no control state). grub-btrfs is an optional operator install, not a cachy-void dependency.
