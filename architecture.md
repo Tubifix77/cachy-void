@@ -117,8 +117,11 @@ CONFIG_LRU_GEN=y
 CONFIG_LRU_GEN_ENABLED=y
 CONFIG_TRANSPARENT_HUGEPAGE=y
 CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS=y
-# Network: BBR built in and default (no module-load ordering issues)
+# Network: BBR built in and default (no module-load ordering issues).
+# DEFAULT_TCP_CONG is a DERIVED string — the DEFAULT_BBR choice symbol must be
+# set, or oldconfig silently reverts to cubic (G2-caught, first real kernel run)
 CONFIG_TCP_CONG_BBR=y
+CONFIG_DEFAULT_BBR=y
 CONFIG_DEFAULT_TCP_CONG="bbr"
 CONFIG_NET_SCH_FQ=y
 ```
