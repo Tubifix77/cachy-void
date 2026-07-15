@@ -4,18 +4,14 @@
 # approval time (trust-on-first-use). It is NEVER fetched over the network and
 # NEVER self-updated by the machine — engine/trust.py reads it and verifies the
 # fetched patch artifact against the sha256 pinned here.
-#
-# To add/bump a series: fetch the patch at `pinned_commit`, sha256 it, review the
-# diff, then fill `sha256` and stamp `approved`. Until then the placeholder hash
-# below (all zeros) is format-valid but will never match a real patch.
 
 [repo]
 url           = "https://github.com/firelzrd/bore-scheduler"
-pinned_commit = "0000000000000000000000000000000000000000"
+pinned_commit = "16bf5baebbb42cdba393c501ba9c2af5f84e4749"
 
 [[patch]]
 series       = "6.12"
-file         = "patches/stable/linux-6.12-bore/0001-linux6.12.y-bore6.0.0.patch"
-sha256       = "0000000000000000000000000000000000000000000000000000000000000000"
-bore_version = "6.0.0"
-approved     = "UNAPPROVED — fill sha256 and stamp before use"
+file         = "patches/stable/linux-6.12-bore/0001-linux6.12.37-bore-6.6.3.patch"
+sha256       = "7d93927e6c0ada25046bb40433a29ee4e41068cd9f1b16020cca357e961b6350"
+bore_version = "6.6.3"
+approved     = "2026-07-15 boas (chat approval; stable channel; authored vs 6.12.37, G1 arbitrates vs 6.12.95)"
