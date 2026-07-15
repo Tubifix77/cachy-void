@@ -117,12 +117,12 @@ CONFIG_LRU_GEN=y
 CONFIG_LRU_GEN_ENABLED=y
 CONFIG_TRANSPARENT_HUGEPAGE=y
 CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS=y
-# Network: BBR built in and default (no module-load ordering issues).
-# DEFAULT_TCP_CONG is a DERIVED string — the DEFAULT_BBR choice symbol must be
-# set, or oldconfig silently reverts to cubic (G2-caught, first real kernel run)
+# Network: BBR built IN (=y, vs stock =m) so no module-load ordering issue.
+# The *default* congestion control is a Kconfig CHOICE; a dotconfig append
+# cannot flip a choice already satisfied by cubic (oldconfig drops it — G2-caught
+# on the first real kernel run), so the runtime default is set by the §3.1
+# sysctl net.ipv4.tcp_congestion_control=bbr instead, not by a kernel choice.
 CONFIG_TCP_CONG_BBR=y
-CONFIG_DEFAULT_BBR=y
-CONFIG_DEFAULT_TCP_CONG="bbr"
 CONFIG_NET_SCH_FQ=y
 ```
 
