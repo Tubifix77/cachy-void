@@ -308,6 +308,15 @@ Notes and limits:
   symlinks, re-point the symlink on the mounted tree:
   `ln -sf vmlinuz-<good-ver> /mnt/void/boot/vmlinuz-current` (same for the
   initramfs), then reboot.
+- **DKMS collateral after kernel-package surgery:** removing a kernel package
+  whose *release string* is shared with another installed kernel (the very
+  collision the `-cachy` suffix exists to prevent) runs the pre-remove dkms
+  hook for the shared release — deleting driver modules (e.g. nvidia) for the
+  *surviving* kernel too, while the running session keeps its in-memory copy
+  and hides the damage. After any same-version kernel remove/reinstall, verify
+  `ls /var/lib/dkms/` and rebuild if empty:
+  `sudo xbps-reconfigure -f nvidia470-dkms && sudo xbps-reconfigure -f linux6.12`
+  (the second regenerates the initramfs). Never reboot before checking.
 - **Pure inspection without any risk of writes:** even `mount -o ro` can replay
   an ext4 journal. To only *read* a possibly-dirty Void partition, use
   `debugfs -R 'cat /etc/os-release' /dev/sdXN` (from `e2fsprogs`) — it never
