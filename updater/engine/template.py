@@ -131,6 +131,35 @@ class SynthesisResult:
     pkgver: str                # "version_revision" inherited from upstream
     srcpkg_dir: Path           # final srcpkgs/linux-cachy path
     checksum_lines: list[str]  # inherited checksum lines (ASSERT-C witness)
+    subpackages: list[str] = None  # sibling symlinks created (headers, dbg, …)
+
+
+_SUBPKG_FN_RE = re.compile(r"^([A-Za-z0-9][\w+.-]*)_package\(\)", re.M)
+
+
+def _link_subpackages(srcpkgs: Path, final: Path, new_pkgname: str) -> list[str]:
+    """Create srcpkgs/<sub> -> <new_pkgname> for every <sub>_package() function.
+
+    Void's xbps-src identifies subpackages by these functions and resolves each
+    through a sibling symlink; the symlinks live beside the template dir, so they
+    are created after the atomic swap and refreshed idempotently.
+    """
+    text = (final / "template").read_text(encoding="utf-8")
+    subs = sorted({m.group(1) for m in _SUBPKG_FN_RE.finditer(text)
+                   if m.group(1) != new_pkgname})
+    for sub in subs:
+        link = srcpkgs / sub
+        if link.is_symlink():
+            if os.readlink(link) == new_pkgname:
+                continue
+            link.unlink()
+        elif link.is_dir():
+            raise TemplateSynthesisError(
+                f"{link} exists as a real directory, not our subpackage symlink")
+        elif link.exists():
+            link.unlink()
+        os.symlink(new_pkgname, link)   # relative, matches Void convention
+    return subs
 
 
 def synthesize(*, void_packages: str | os.PathLike, series: str,
@@ -192,11 +221,19 @@ def synthesize(*, void_packages: str | os.PathLike, series: str,
             os.replace(final, doomed)
         os.replace(staging, final)
 
+        # §7.1/§8.4: xbps-src derives subpackages from the <pkgname>-<sub>_package()
+        # functions and REQUIRES a sibling symlink srcpkgs/<sub> -> <pkgname> for
+        # each (upstream ships these; a bare dir copy does not). Without them the
+        # build compiles fully and then dies at packaging: "nonexistent file:
+        # srcpkgs/<pkgname>-<sub>/template" (real-hardware finding, first kernel).
+        subs = _link_subpackages(srcpkgs, final, new_pkgname)
+
         version, revision = XbpsTemplateEditor(new_text).parse_pkgver()
         return SynthesisResult(
             pkgver=f"{version}_{revision}",
             srcpkg_dir=final,
-            checksum_lines=upstream_checksums)
+            checksum_lines=upstream_checksums,
+            subpackages=subs)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

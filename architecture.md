@@ -639,6 +639,10 @@ REGEN(series):
   ASSERT-B: W/template defines pkgname=linux-cachy AND linux-cachy-headers_package()
   ASSERT-C: checksum= lines byte-identical to upstream's (we add no distfiles)
   atomically replace srcpkgs/linux-cachy with W; commit to overlay branch
+  LINK: for each <sub>_package() function, create the sibling symlink
+        srcpkgs/<sub> -> linux-cachy (xbps-src resolves subpackages through
+        these; without them the kernel COMPILES then dies at packaging with
+        "nonexistent file: srcpkgs/linux-cachy-dbg/template" — first-kernel find)
 ```
 
 Any assertion failure → **AWAIT_HUMAN_TEMPLATE** with the offending diff attached. No `xgensum` exists in this flow — ASSERT-C proves checksums are inherited. (The dotconfig append relies on kconfig's documented behavior that later entries win during `oldconfig`; the resulting warnings are expected noise.)

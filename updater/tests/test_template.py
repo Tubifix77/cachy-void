@@ -113,6 +113,29 @@ class SynthesizeTests(unittest.TestCase):
                          [l for l in UPSTREAM_TEMPLATE.splitlines()
                           if l.startswith("checksum=")])
 
+    def test_subpackage_symlinks_created(self):
+        # xbps-src resolves subpackages via sibling symlinks; regen must create
+        # srcpkgs/<sub> -> linux-cachy for each *_package() (real-hardware find:
+        # the kernel compiled all night then died for lack of these).
+        res = synthesize(void_packages=self.tmp, series="6.12",
+                         patch_bytes=PATCH, fragment_text=FRAGMENT)
+        self.assertEqual(res.subpackages,
+                         ["linux-cachy-dbg", "linux-cachy-headers"])
+        srcpkgs = self.tmp / "srcpkgs"
+        for sub in ("linux-cachy-headers", "linux-cachy-dbg"):
+            link = srcpkgs / sub
+            self.assertTrue(link.is_symlink(), f"{sub} must be a symlink")
+            import os as _os
+            self.assertEqual(_os.readlink(link), "linux-cachy")
+
+    def test_regen_is_idempotent_for_symlinks(self):
+        synthesize(void_packages=self.tmp, series="6.12",
+                   patch_bytes=PATCH, fragment_text=FRAGMENT)
+        # second pass must not choke on the now-existing symlinks
+        res2 = synthesize(void_packages=self.tmp, series="6.12",
+                          patch_bytes=PATCH, fragment_text=FRAGMENT)
+        self.assertIn("linux-cachy-headers", res2.subpackages)
+
     def test_idempotent_regeneration(self):
         first = synthesize(void_packages=self.tmp, series="6.12",
                            patch_bytes=PATCH, fragment_text=FRAGMENT)
