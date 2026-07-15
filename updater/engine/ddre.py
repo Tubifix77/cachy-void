@@ -72,7 +72,8 @@ class BuildOrder:
 # --------------------------------------------------------------------------
 def build_queue(xbps: XbpsLike, targets: Sequence[str],
                 blacklist: Sequence[str],
-                local_repos: Sequence[str] = ()) -> QueuePlan:
+                local_repos: Sequence[str] = (),
+                always_build: Sequence[str] = ()) -> QueuePlan:
     """Compute (Q_build, Q_deploy) from live queries (§7.3).
 
         S(I)         = { srcpkg_of(b) : b installed } - {None}
@@ -83,12 +84,20 @@ def build_queue(xbps: XbpsLike, targets: Sequence[str],
             or whose subpackages are at divergent versions (orphan recovery)
         O = installed targets already at the repo version but still
             originating from a non-overlay repo (interrupted §4.6 takeover)
-        Q_build  = ((L | M) & S(I) & targets) - blacklist
+        K = always_build members with L|M evidence, EXEMPT from the S(I) gate
+        Q_build  = (((L | M) & S(I) & targets) - blacklist) | K
         Q_deploy = Q_build | (((P | O) & S(I)) - blacklist)
 
     ``local_repos`` is the overlay repo root set ``R``; without it the O term
     is inert (origin cannot be classified), which callers other than the CLI
     may use for pure build-planning.
+
+    ``always_build`` is the §7.3 K-exemption: packages the overlay *introduces*
+    rather than takes over (linux-cachy) bypass the installed-gate — otherwise
+    the first kernel could never enter the queue (real-hardware finding: the
+    integration fixture had pre-installed the kernel, masking this hole). The
+    no-widen rule stays absolute for everything else; the deliberate first
+    install happens in Stage 4 (§8.6, with -headers per §2.5).
     """
     tset = set(targets) - set(blacklist)     # blacklist beats allowlist
     black = set(blacklist)
@@ -126,7 +135,8 @@ def build_queue(xbps: XbpsLike, targets: Sequence[str],
                 xbps.origin(b) not in repo_set for b in inst_bins[t]):
             O.add(t)                         # takeover never completed
 
-    q_build = ((L | M) & s_i & tset) - black
+    K = {t for t in (set(always_build) & tset) if t in L or t in M}
+    q_build = (((L | M) & s_i & tset) - black) | K
     q_deploy = q_build | (((P | O) & s_i) - black)
     return QueuePlan(sorted(q_build), sorted(q_deploy))
 

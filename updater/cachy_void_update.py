@@ -174,6 +174,18 @@ def _sudo(run) -> Callable[[Sequence[str]], subprocess.CompletedProcess]:
 # ==========================================================================
 # Kernel-side helpers (KISM wiring, §8)
 # ==========================================================================
+def _always_build(config: Config) -> list[str]:
+    """§7.3 K-exemption: queue the kernel even though it is not installed —
+    but only once its template actually exists (post-synthesis)."""
+    if not config.kernel_enable:
+        return []
+    try:
+        tpl = config.void_packages / "srcpkgs" / KERNEL_TARGET / "template"
+        return [KERNEL_TARGET] if tpl.is_file() else []
+    except OSError:
+        return []
+
+
 def _kernel_report(config: Config, xbps, out) -> None:
     """§8.2 bump classification — informational (template regen §8.4 is a
     human step for now). Never fails the run."""
@@ -449,7 +461,7 @@ def cmd_check(xbps, config: Config, out=print) -> int:
     """Stage 2 — compute and print the queue. Read-only (§7.3/§7.4)."""
     try:
         plan = build_queue(xbps, config.targets, config.blacklist,
-                           config.repo_strs)
+                           config.repo_strs, always_build=_always_build(config))
         if not plan.q_build and not plan.q_deploy:
             out("queue empty — nothing to build or deploy.")
             _kernel_report(config, xbps, out)
@@ -527,7 +539,7 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
 
     try:
         plan = build_queue(xbps, config.targets, config.blacklist,
-                           config.repo_strs)
+                           config.repo_strs, always_build=_always_build(config))
         if not plan.q_build and not plan.q_deploy:
             out("queue empty — nothing to do.")
             return EXIT_OK
@@ -621,7 +633,20 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
     # §8.6 kernel staging (F1/F7: real staging inside a GrubError boundary)
     rc_kernel = EXIT_OK
     if config.kernel_enable and KERNEL_TARGET in q_deploy:
-        rc_kernel = _stage_kernel(config, xbps, out, run, layout=stage_layout)
+        if KERNEL_TARGET not in set(xbps.installed()):
+            # §7.3 K-exemption completes here — the single sanctioned widen:
+            # the kernel is INTRODUCED, with headers (§2.5) so dkms modules
+            # (nvidia) build against it during install.
+            out(f"kernel: first install of {KERNEL_TARGET} + headers (§8.6)")
+            repo_args = [f"--repository={r}" for r in config.repos]
+            cp = run(["sudo", "xbps-install", "-y", *repo_args,
+                      KERNEL_TARGET, f"{KERNEL_TARGET}-headers"])
+            if cp.returncode != 0:
+                out("error: kernel first-install failed — staging skipped "
+                    "(userspace deploy is intact)")
+                rc_kernel = EXIT_KERNEL
+        if rc_kernel == EXIT_OK:
+            rc_kernel = _stage_kernel(config, xbps, out, run, layout=stage_layout)
 
     journal.finish()
     out("commit complete." if rc_kernel == EXIT_OK

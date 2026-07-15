@@ -205,6 +205,23 @@ class QueueAlgebraTests(unittest.TestCase):
         plan = build_queue(xb, targets=["gamemode"], blacklist=[])
         self.assertEqual(plan.q_deploy, [])
 
+    def test_K_exemption_queues_uninstalled_kernel(self):
+        # linux-cachy is INTRODUCED, not taken over: with always_build it must
+        # enter the queue despite not being installed (regression: first real
+        # kernel run queued nothing because S(I) gated it out).
+        xb = FakeXbps(
+            installed=["mesa"], src_map={"mesa": "mesa"},
+            inst_ver={"mesa": "1.0_1"}, repo_ver={"mesa": "1.0_1"},
+            local_updates=[],                      # kernel comes via M-term
+        )
+        plan = build_queue(xb, targets=["linux-cachy", "mesa"], blacklist=[],
+                           always_build=["linux-cachy"])
+        self.assertEqual(plan.q_build, ["linux-cachy"])
+        self.assertEqual(plan.q_deploy, ["linux-cachy"])
+        # without the exemption the gate holds:
+        plan2 = build_queue(xb, targets=["linux-cachy", "mesa"], blacklist=[])
+        self.assertEqual(plan2.q_build, [])
+
     def test_full_pkgver_forms_are_normalized_before_vercmp(self):
         # The real facade returns FULL pkgvers ("mesa-dri-1.0_1"); subpackage
         # name components must never enter version comparison.

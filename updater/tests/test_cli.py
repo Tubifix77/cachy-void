@@ -307,6 +307,46 @@ class CommitCommandTests(unittest.TestCase):
         self.assertEqual(state["known_good"]["kver"], "6.12.34_1")
         self.assertIn("6.12.34_1", state["known_good"]["grub_ref"])
 
+    def test_kernel_first_install_widens_with_headers(self):
+        # K-exemption end-to-end: kernel NOT installed, template exists ->
+        # queued, G2 passes, built, then Stage 4 installs it + headers before
+        # staging (the single sanctioned widen).
+        vp = self.tmp / "vp"
+        (vp / "srcpkgs" / "linux-cachy").mkdir(parents=True)
+        (vp / "srcpkgs" / "linux-cachy" / "template").write_text(
+            "pkgname=linux-cachy\nversion=6.12.35\nrevision=1\n",
+            encoding="utf-8")
+        dot = vp / "masterdir-x86_64" / "builddir" / "linux-6.12.35"
+        dot.mkdir(parents=True)
+        (dot / ".config").write_text("CONFIG_SCHED_BORE=y\n", encoding="utf-8")
+        (self.tmp / "fragment.config").write_text("CONFIG_SCHED_BORE=y\n",
+                                                  encoding="utf-8")
+        grub_cfg = self.tmp / "grub.cfg"
+        grub_cfg.write_text(GRUB_CFG, encoding="utf-8")   # has 6.12.35 + .34
+        layout = grub_mod.BootLayout(grub_mod.MODE_ONESHOT, "test",
+                                     grub_cfg=str(grub_cfg))
+
+        xb = FakeXbps(installed=[],                      # kernel NOT installed
+                      src_map={},
+                      inst_ver={"linux-cachy": "linux-cachy-6.12.35_1"},
+                      repo_ver={})                        # no binpkg yet -> M
+        out = Sink()
+        run, calls = self._runstub()
+        rc = cli.cmd_commit(xb, self._cfg(["linux-cachy"], void_packages=vp),
+                            assume_yes=True, dry_run=False, out=out, run=run,
+                            stage_layout=layout)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertEqual(xb.build_calls, ["linux-cachy"])
+        installs = [c for c in calls if c[:2] == ["sudo", "xbps-install"]
+                    and "linux-cachy" in c]
+        self.assertTrue(installs, "kernel first-install must run")
+        self.assertIn("linux-cachy-headers", installs[0])
+        sudo_cmds = [c for c in calls if c[0] == "sudo"]
+        self.assertTrue(any("grub-reboot" in c for c in sudo_cmds))
+        state = json.loads(
+            (self.tmp / "state" / "kernel" / "kernel-state.json").read_text())
+        self.assertEqual(state["state"], "STAGED")
+
     def test_manual_unsafe_layout_refuses_staging_exit_70(self):
         # F3: an unsafe layout must refuse (exit 70), deploy stays intact.
         layout = grub_mod.BootLayout(grub_mod.MODE_MANUAL_UNSAFE,
