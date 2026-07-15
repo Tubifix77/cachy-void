@@ -643,6 +643,18 @@ REGEN(series):
         srcpkgs/<sub> -> linux-cachy (xbps-src resolves subpackages through
         these; without them the kernel COMPILES then dies at packaging with
         "nonexistent file: srcpkgs/linux-cachy-dbg/template" — first-kernel find)
+  SUFFIX (ASSERT-D): suffix the release string coherently on BOTH sides —
+        template `_kernver="${version}_${revision}-cachy"` AND dotconfig
+        `CONFIG_LOCALVERSION="_<rev>-cachy"` — so the fork installs strictly
+        side-by-side with the same-version stock kernel. MANDATORY, not
+        cosmetic: xbps's file-conflict check is transaction-scoped and does
+        NOT refuse taking over an already-installed package's paths (it
+        silently overwrote the stock kernel on the first real install —
+        finding #8; cf. github.com/void-linux/xbps issue #287). Prior art:
+        CachyOS/linux-tkg kernels all carry uname suffixes (-cachyos, -bore)
+        for exactly this reason. Consequence: the kernel RELEASE (uname -r,
+        the kver in §8.1 state) is pkgver+suffix and MUST be derived from the
+        package's installed vmlinuz filename, never from pkgver.
 ```
 
 Any assertion failure → **AWAIT_HUMAN_TEMPLATE** with the offending diff attached. No `xgensum` exists in this flow — ASSERT-C proves checksums are inherited. (The dotconfig append relies on kconfig's documented behavior that later entries win during `oldconfig`; the resulting warnings are expected noise.)
