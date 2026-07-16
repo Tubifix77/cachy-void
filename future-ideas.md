@@ -215,3 +215,33 @@ whole build/deploy in one `--commit`.
   nvidia470 (Kepler) → X11/**Openbox** (already in the allowlist), not
   Sway/Wayland (no viable Wayland on 470 legacy; Explicit Sync needs 555+).
   gamescope is also dubious on the 470 legacy driver.
+
+### 6c. Extractions from geminichat.md (genesis brainstorm), audited 2026-07-16
+
+Read the full 4,591-line genesis transcript; ~everything in it is already
+realized in the spec/updater. Net-new worth keeping:
+
+- **Make Void own GRUB (efibootmgr + os-prober)** — geminichat.md L4326-4391 has
+  a concrete no-reinstall procedure: `efibootmgr -o <void>,<rest>` to reorder the
+  UEFI boot order, then `xbps-install os-prober` + `grub-mkconfig` so Void's GRUB
+  absorbs the other OSes. This is the **missing precondition for §8.6 one-shot
+  staging** (Void needs its own grubenv-writable GRUB with `GRUB_DEFAULT=saved`)
+  — i.e. exactly why staging SKIPPED on the Medion's foreign Debian GRUB. TODO:
+  write it up as an INSTALL.md "multi-boot: give Void the bootloader" *opt-in*
+  section. Deliberately NOT done on the Medion — Debian-owns-GRUB is the escape
+  hatch there.
+- **Alternative global allocator (jemalloc/scudo via LD_PRELOAD)** — L23-26, a
+  real CachyOS lever raised but never decided. Leaning REJECT for the base
+  overlay (LD_PRELOAD-ing a global allocator is invasive / un-Void); at most an
+  opt-in per-game launch tweak. Decide explicitly rather than leave it dangling.
+- **TUI installer + three-tier menu** — L4477 / L4534-4542: a lightweight TUI
+  (not only the heavy GUI in §3) offering Core-only / Plasma+theme / **Hyprland**
+  (minimalist Wayland). Folds into the GUI roadmap item. (Hyprland/Wayland is for
+  newer GPUs, not the 470-legacy testbed.)
+
+Audit also CONFIRMED stale: §1's KDE-Plasma/Wayland/Explicit-Sync lock-in was
+argued from GTX-750-Ti/Maxwell assumptions that don't hold for the nvidia470/
+Kepler reality — keep the DE detected/optional, never locked (see §6b caveat).
+The transcript still contains, in plain text, ideas we deliberately RETIRED
+(linux-tkg/XanMod, `xbps-pkgdb repolock/repounlock`, remote-fetched bore.lock +
+minisign, the musl-breaks-games scare) — do not mine those back out of it.
