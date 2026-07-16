@@ -10,16 +10,22 @@
 
 ---
 
-## 1. Aesthetic direction — "tactical industrial grunge"
+## 1. Aesthetic direction — low-key, matte, restrained
 
 Cachy-Void fuses two philosophies:
 
 - **Void** — systems-first minimalism: honest, transparent, flat, imposes no identity, quiet.
 - **CachyOS** — a performance ethos: tuned, instant, purposeful.
 
-The visual read: *"grunge — same vein as punk, but calmer."* In practice that means
-**matte, worn, industrial, low-sheen, understated** — a low-visibility tactical
-terminal, not a gamer rig.
+The target feel is **low-key and modern** — quiet, matte, understated. The palette
+(charcoal + muted army-green + oxblood) lends a calm, low-visibility character, like an
+instrument panel dimmed for night use — not a gamer rig.
+
+> **On the word "grunge":** it surfaced earlier only as an *analogy for energy level* —
+> grunge is to punk what this is meant to be to something louder: the calmed-down,
+> restrained member of the same family. It is **not** a call for a literal grunge *look*.
+> Cachy-Void is **not** grungy — no distressed, worn, torn, or decayed textures, no dirt,
+> no noise. It stays clean, flat, and quiet. **Restraint, not grunge, is the thesis.**
 
 **Design rules (the tie-breakers when a choice is unclear):**
 
@@ -103,7 +109,7 @@ truly needed, derive a *muted* amber — never a bright one — and add it here 
 
 ```ini
 [%General]
-comment=Cachy-Void tactical grunge
+comment=Cachy-Void low-key
 version=1.0
 
 [GeneralColors]
@@ -122,7 +128,7 @@ tooltip.color=#8a2f32
 tooltip.text.color=#abb2bf
 
 [Hacks]
-# rugged, instant-response feel
+# clean, instant-response feel
 respect_darkness=true
 ```
 

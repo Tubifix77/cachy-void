@@ -174,9 +174,9 @@ because most of it is already built:
   "main menu" is ambiguous — a *GRUB* theme is awkward on the test box because it
   boots via the other distro's GRUB (a hand-added `40_custom` entry), so the safe
   target is desktop wallpaper / SDDM / DE-menu icon, not GRUB. **→ now expanded
-  into [`branding.md`](branding.md)** (palette, "tactical industrial grunge"
-  direction, and a curated per-component theming plan: Kvantum/Rofi/Picom/Plank/
-  Conky/wallpaper).
+  into [`branding.md`](branding.md)** (palette, a low-key/matte/restrained
+  direction — "grunge" was only an energy analogy, NOT a literal look — and a
+  curated per-component theming plan: Kvantum/Rofi/Picom/Plank/Conky/wallpaper).
 - **Gaming userspace layer (non-BORE runtime optimisations)** — `gamemode`
   (Feral: performance CPU governor + GPU perf + nice/ionice while a game runs) is
   already in the allowlist but not installed/enabled; make it a real component:
