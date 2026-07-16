@@ -141,3 +141,49 @@ Void no longer boots (INSTALL.md §9/§11). Tags: `core` = shared trunk,
 `--uninstall-tag test` plus the §9 teardown checklist** (revert overlay
 packages, remove build litter) — the box ends with only benefits: no scars,
 no deadweight, no litter.
+
+---
+
+## 6. Requested ideas (2026-07-16) — mapped to current status
+
+A list raised for consideration, cross-referenced against what already exists —
+because most of it is already built:
+
+**Already done / already is `cachy-void-update`:**
+
+- **zram** — DONE (architecture.md §3.2, `zramen` runit service; live on the
+  Medion: `zram0`, `vm.swappiness=100`).
+- **Everyday Void updater that preserves BORE and only recompiles when a new
+  version actually exists** — this *is* `cachy-void-update`. BORE can't be
+  clobbered: `linux-cachy` has a unique pkgname + `-cachy` release suffix and the
+  overlay is additive (I1), so upstream `linux6.12` updates never touch it. The
+  "compile only when a real new version exists" is the §8.2 bump detector →
+  §8.4 regen → build; an empty queue makes `--commit` a fast plain `-Su`.
+  (Kernel-synthesis path HW-proven 2026-07-16, rc=0.)
+- **Restart services after a Void update** — DONE 2026-07-16 (§4.7 Stage 4c:
+  `xcheckrestart` → `sv restart` for non-`restart_skip` services). Void
+  deliberately does NOT auto-restart services after xbps updates; this closes
+  that gap and the sshd-cutoff (finding #3). Built + unit-tested; pending a
+  hardware dogfood (a userspace takeover) to exercise it live.
+
+**Genuinely new (worth adding):**
+
+- **Simple branding theme** — a light, OPTIONAL visual identity: an accent
+  colour set, a wallpaper, and a menu icon/logo. Must stay DE-aware (ties into
+  §2 smart-DE detection) and opt-in (never override a user's own theme). Caveat:
+  "main menu" is ambiguous — a *GRUB* theme is awkward on the test box because it
+  boots via the other distro's GRUB (a hand-added `40_custom` entry), so the safe
+  target is desktop wallpaper / SDDM / DE-menu icon, not GRUB.
+- **Gaming userspace layer (non-BORE runtime optimisations)** — `gamemode`
+  (Feral: performance CPU governor + GPU perf + nice/ionice while a game runs) is
+  already in the allowlist but not installed/enabled; make it a real component:
+  install + enable + a launch wrapper composed with the existing `prime-run`
+  offloader (e.g. `gamemoderun prime-run %command%`). Add companions: `mangohud`
+  (perf overlay) and optionally `gamescope` (heavier — Valve microcompositor for
+  scaling / frame-limiting). This is the runtime/userspace slice of the gaming
+  overlay, complementing BORE (scheduler) and zram (memory). Candidate for a new
+  architecture.md §3.4.
+
+**Possible refinement:** a lighter "daily" updater mode/alias that runs the `-Su`
++ §4.7 service-cycle and *prompts* before any long compile, instead of doing the
+whole build/deploy in one `--commit`.
