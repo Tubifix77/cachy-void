@@ -245,3 +245,15 @@ Kepler reality — keep the DE detected/optional, never locked (see §6b caveat)
 The transcript still contains, in plain text, ideas we deliberately RETIRED
 (linux-tkg/XanMod, `xbps-pkgdb repolock/repounlock`, remote-fetched bore.lock +
 minisign, the musl-breaks-games scare) — do not mine those back out of it.
+
+**geminichat2.md (audited 2026-07-16):** essentially nothing new — L1-43 retreads
+lightweight-DE gaming ground already covered (§2/§6b/§6c); L45-128 is an
+off-topic Windows-11 Discord troubleshooting tangent, irrelevant. ONE keeper:
+- **INSTALL.md prerequisite gap** (geminichat2.md L23-27): enabling Void's
+  **multilib** repo + installing **32-bit GL/Vulkan driver libs** (e.g.
+  `mesa-dri-32bit`, or the matching 32-bit NVIDIA libs) is a hard **Steam/Proton
+  launch prerequisite** and is absent from INSTALL.md's prereqs (§1 currently
+  lists only git/xtools/base-devel). This is the *install* side; complements
+  invariant I6, which governs the *build* side (never cross-build i686 with
+  `x86-64-v*`). TODO: add to INSTALL.md after verifying the exact Void package
+  names for the target GPU (nvidia470 legacy → its own 32-bit libs).
