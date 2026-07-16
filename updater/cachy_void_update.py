@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -539,7 +540,8 @@ def cmd_sync(config: Config, out=print, run=_run) -> int:
 
 
 def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
-               out=print, run=_run, confirm=input, stage_layout=None) -> int:
+               out=print, run=_run, confirm=input, stage_layout=None,
+               service_root: Path = Path("/var/service")) -> int:
     """Stages 3-4 — build, deploy, gate & stage kernel (§4.4-§4.7, §8.5-§8.6).
 
     The kernel synthesis circuit (§8.2→§8.3→§8.4) runs first: a detected upstream
@@ -643,6 +645,11 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
         journal.fail(None, rc)
         return rc
 
+    # §4.7 Stage 4c — cycle services running replaced binaries. A bare `-Su`
+    # re-execs daemons like sshd into a half-updated state (finding #3, which
+    # dropped the ssh lifeline mid-run); a controlled `sv restart` is the fix.
+    rc_services = _cycle_services(config, out, run, service_root=service_root)
+
     # §8.6 kernel staging (F1/F7: real staging inside a GrubError boundary)
     rc_kernel = EXIT_OK
     if config.kernel_enable and KERNEL_TARGET in q_deploy:
@@ -662,9 +669,17 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
             rc_kernel = _stage_kernel(config, xbps, out, run, layout=stage_layout)
 
     journal.finish()
-    out("commit complete." if rc_kernel == EXIT_OK
-        else "commit complete — userspace deployed, kernel staging FAILED (see above).")
-    return rc_kernel
+    # Severity order: kernel staging failure (70) > service cycling partial
+    # (60) > clean. Userspace is already deployed in every branch.
+    if rc_kernel != EXIT_OK:
+        out("commit complete — userspace deployed, kernel staging FAILED (see above).")
+        return rc_kernel
+    if rc_services != EXIT_OK:
+        out("commit complete — deployed & staged; some services need a manual "
+            "restart or relogin (§4.7).")
+        return rc_services
+    out("commit complete.")
+    return EXIT_OK
 
 
 def cmd_rollback(config: Config, out=print, run=_run) -> int:
@@ -718,6 +733,113 @@ def _deploy(config: Config, deploy_bins, xbps, out, run) -> int:
                 return EXIT_INSTALL
     out(f"deployed {len(deploy_bins)} package(s).")
     return EXIT_OK
+
+
+# ==========================================================================
+# §4.7 Stage 4c — service lifecycle
+# ==========================================================================
+_PID_IN_STATUS = re.compile(r"\(pid (\d+)\)")
+
+
+def _parse_xcheckrestart(text: str) -> list[tuple[int, str]]:
+    """Parse `xcheckrestart` output into (pid, description) pairs.
+
+    xtools' xcheckrestart prints one line per process still mapping a
+    replaced/deleted binary or library: ``<pid> <exe> (<pkg>)``. The leading
+    integer is the PID; blank lines and ``-v`` LIBS detail lines are ignored.
+    """
+    flagged: list[tuple[int, str]] = []
+    for line in (text or "").splitlines():
+        head = line.strip().split(" ", 1)[0]
+        if head.isdigit():
+            flagged.append((int(head), line.strip()))
+    return flagged
+
+
+def _service_pids(service_root: Path, run) -> dict[int, str]:
+    """Map each runit service's supervised PID -> service name (§4.7 step 2).
+
+    The spec maps via ``/var/service/*/supervise/pid``, but that directory is
+    0700 root; ``sudo sv status`` reads the same ``supervise/status`` and stays
+    inside the §4.1 sudo boundary (no ``cat`` grant needed). Service *names*
+    come from the world-readable service dir itself.
+    """
+    pid_to_svc: dict[int, str] = {}
+    try:
+        names = sorted(p.name for p in service_root.iterdir())
+    except OSError:
+        return pid_to_svc
+    for svc in names:
+        st = run(["sudo", "sv", "status", svc])
+        if st.returncode != 0:
+            continue
+        m = _PID_IN_STATUS.search(st.stdout or "")
+        if m:
+            pid_to_svc[int(m.group(1))] = svc
+    return pid_to_svc
+
+
+def _cycle_services(config: Config, out, run,
+                    service_root: Path = Path("/var/service")) -> int:
+    """§4.7 Stage 4c — restart runit services running replaced binaries/libs.
+
+    Returns EXIT_OK when everything flagged was cleanly restarted (or nothing
+    was flagged), EXIT_SERVICES (60) when a matched service was deliberately
+    skipped (``restart_skip``) or a restart could not be confirmed running.
+    Matched-but-skipped services and unmatched PIDs (user session, games,
+    compositor) are *reported* — never killed (§4.7 step 4). The kernel reboot
+    notice (step 5) is owned by the §8.6 staging path, not here.
+    """
+    probe = run(["sudo", "xcheckrestart"])
+    if probe.returncode != 0:
+        out("warning: xcheckrestart unavailable/failed — cannot cycle services; "
+            "restart anything using replaced libraries manually (§4.7).")
+        return EXIT_SERVICES
+    flagged = _parse_xcheckrestart(probe.stdout)
+    if not flagged:
+        out("services: none running replaced binaries (§4.7).")
+        return EXIT_OK
+
+    pid_to_svc = _service_pids(service_root, run)
+    skip = set(config.restart_skip)
+    matched: dict[str, int] = {}
+    unmatched: list[str] = []
+    for pid, desc in flagged:
+        svc = pid_to_svc.get(pid)
+        if svc:
+            matched.setdefault(svc, pid)
+        else:
+            unmatched.append(desc)
+
+    restarted: list[str] = []
+    skipped: list[str] = []
+    incomplete: list[str] = []
+    for svc in sorted(matched):
+        if svc in skip:
+            skipped.append(svc)
+            continue
+        r = run(["sudo", "sv", "restart", svc])
+        ok = r.returncode == 0
+        if ok:
+            st = run(["sudo", "sv", "status", svc])
+            ok = st.returncode == 0 and (st.stdout or "").lstrip().startswith("run:")
+        (restarted if ok else incomplete).append(svc)
+
+    if restarted:
+        out(f"services restarted (§4.7): {', '.join(restarted)}")
+    if skipped:
+        out("services NOT auto-restarted (in restart_skip — session-fatal; "
+            f"relogin/reboot to apply): {', '.join(skipped)}")
+    if incomplete:
+        out("warning: services did not confirm 'run' after restart: "
+            f"{', '.join(incomplete)}")
+    if unmatched:
+        out(f"note: {len(unmatched)} non-service process(es) still map replaced "
+            "files (games/compositor/session) — relogin to clear:")
+        for desc in unmatched:
+            out(f"  {desc}")
+
+    return EXIT_OK if not (skipped or incomplete) else EXIT_SERVICES
 
 
 def _emit_tail(path: str, out, lines: int = 60) -> None:

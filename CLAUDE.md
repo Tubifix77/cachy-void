@@ -19,7 +19,7 @@ All code targets **Void Linux** (XBPS, `xbps-src`, runit). This development mach
 - **Additive overlay only**: never modify upstream-tracked `void-packages` files; customizations are new `srcpkgs/*` dirs or untracked `etc/conf`. This is what keeps `git pull --rebase` conflict-free.
 - **Bootstrap blacklist**: `glibc`, `musl`, `gcc`, `binutils`, `xbps`, `runit`, `base-files` are never built or replaced locally. Blacklist beats allowlist.
 - **runit only**: services via runit dirs, scheduling via `snooze`, zram via `zramen`. No systemd units/timers/zram-generator.
-- **Fail-fast, system intact**: no system mutation unless all builds succeeded; single sudo boundary (`xbps-install`, `sv`, `xbps-pkgdb` only).
+- **Fail-fast, system intact**: no system mutation unless all builds succeeded; single sudo boundary — exactly the commands enumerated in spec §4.1 (`xbps-install`, `sv`, `xcheckrestart`, `xbps-pkgdb`, and the three GRUB staging binaries `grub-set-default`/`grub-reboot`/`grub-editenv`), nothing else.
 - **Deps stay binary**: only allowlist targets compile from source; never recursively source-build dependencies.
 - **32-bit multilib stays upstream**: never cross-build i686 with `x86-64-v*` flags.
 - **No `mitigations=off`**, and `-f`/`--force` is sanctioned only for the same-pkgver overlay takeover (spec §4.6).

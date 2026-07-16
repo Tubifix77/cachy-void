@@ -211,7 +211,7 @@ Apply: `sudo udevadm control --reload && sudo udevadm trigger`.
 
 ## 4. The Automated Updater (`cachy-void-update`)
 
-A standalone Python 3 script (stdlib only: `subprocess`, `tomllib`, `logging`). It runs as the **regular build user**; root is reached exclusively through `sudo` for the exact commands in Stage 4 (single privilege boundary, I4). A sudoers fragment (`/etc/sudoers.d/cachy-void`) grants NOPASSWD for `xbps-install`, `sv`, `xbps-pkgdb`, and the three narrow GRUB staging binaries `grub-set-default`, `grub-reboot`, `grub-editenv` (§8.6) — nothing else.
+A standalone Python 3 script (stdlib only: `subprocess`, `tomllib`, `logging`). It runs as the **regular build user**; root is reached exclusively through `sudo` for the exact commands in Stage 4 (single privilege boundary, I4). A sudoers fragment (`/etc/sudoers.d/cachy-void`) grants NOPASSWD for `xbps-install`, `sv`, `xcheckrestart` (§4.7 — it must run as root to read system daemons' `/proc/*/maps`), `xbps-pkgdb`, and the three narrow GRUB staging binaries `grub-set-default`, `grub-reboot`, `grub-editenv` (§8.6) — nothing else.
 
 Operational frame:
 

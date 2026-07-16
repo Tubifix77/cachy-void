@@ -373,6 +373,165 @@ class CommitCommandTests(unittest.TestCase):
         # deploy happened before the refusal:
         self.assertTrue(any(c[:2] == ["sudo", "xbps-install"] for c in calls))
 
+    def test_commit_cycles_sshd_after_deploy(self):
+        # finding #3 end-to-end: an openssh update flagged by xcheckrestart must
+        # trigger a clean `sudo sv restart sshd` in the deploy path — instead of
+        # the bare -Su re-exec that broke new ssh connections.
+        svcroot = self.tmp / "service"
+        (svcroot / "sshd").mkdir(parents=True)
+        calls: list[list[str]] = []
+
+        def run(args, cwd=None):
+            calls.append(list(args))
+            if args[:3] == ["git", "rev-parse", "HEAD"]:
+                return cp(0, stdout="abc123\n")
+            if args[0] == "uname":
+                return cp(0, stdout="6.12.34_1\n")
+            if args[:2] == ["sudo", "xcheckrestart"]:
+                return cp(0, stdout="631 /usr/bin/sshd (openssh)\n")
+            if args[:3] == ["sudo", "sv", "status"]:
+                return cp(0, stdout="run: sshd: (pid 631) 42s\n")
+            return cp(0, stdout="")
+
+        out = Sink()
+        rc = cli.cmd_commit(self._orphaned_takeover_xbps(),
+                            self._cfg(["gamemode"]),
+                            assume_yes=True, dry_run=False, out=out, run=run,
+                            service_root=svcroot)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn(["sudo", "sv", "restart", "sshd"], calls)
+        self.assertIn("sshd", out.text())
+
+
+class ServiceCycleTests(unittest.TestCase):
+    """§4.7 Stage 4c — service lifecycle."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.svcroot = self.tmp / "service"
+        self.svcroot.mkdir()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _mk(self, *names):
+        for n in names:
+            (self.svcroot / n).mkdir()
+
+    def _run(self, *, xcr="", xcr_rc=0, status=None, restart_rc=0,
+             status_after=None):
+        """Dispatching run stub. `status` maps svc -> `sv status` line (used
+        for PID mapping and, unless overridden by `status_after`, for the
+        post-restart verification call)."""
+        status = status or {}
+        status_after = status_after or {}
+        calls: list[list[str]] = []
+        seen: dict[str, int] = {}
+
+        def run(args, cwd=None):
+            calls.append(list(args))
+            if args[:2] == ["sudo", "xcheckrestart"]:
+                return cp(xcr_rc, stdout=xcr)
+            if args[:3] == ["sudo", "sv", "status"]:
+                svc = args[3]
+                n = seen.get(svc, 0)
+                seen[svc] = n + 1
+                if n >= 1 and svc in status_after:
+                    return cp(0, stdout=status_after[svc])
+                return cp(0, stdout=status.get(svc, f"down: {svc}: 1s\n"))
+            if args[:3] == ["sudo", "sv", "restart"]:
+                return cp(restart_rc)
+            return cp(0)
+        return run, calls
+
+    def test_restarts_matched_service(self):
+        self._mk("sshd", "dbus")
+        run, calls = self._run(
+            xcr="631 /usr/bin/sshd (openssh)\n",
+            status={"sshd": "run: sshd: (pid 631) 10s\n",
+                    "dbus": "run: dbus: (pid 700) 10s\n"})
+        out = Sink()
+        rc = cli._cycle_services(_config([], restart_skip=["udevd", "dbus"]),
+                                 out, run, service_root=self.svcroot)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn(["sudo", "sv", "restart", "sshd"], calls)
+        self.assertNotIn(["sudo", "sv", "restart", "dbus"], calls)  # not flagged
+        self.assertIn("restarted", out.text())
+
+    def test_skips_restart_skip_service_exit_60(self):
+        self._mk("dbus")
+        run, calls = self._run(
+            xcr="700 /usr/bin/dbus-daemon (dbus)\n",
+            status={"dbus": "run: dbus: (pid 700) 10s\n"})
+        out = Sink()
+        rc = cli._cycle_services(_config([], restart_skip=["dbus"]),
+                                 out, run, service_root=self.svcroot)
+        self.assertEqual(rc, cli.EXIT_SERVICES)
+        self.assertNotIn(["sudo", "sv", "restart", "dbus"], calls)
+        self.assertIn("restart_skip", out.text())
+
+    def test_unmatched_pid_reported_not_fatal(self):
+        self._mk("sshd")
+        run, calls = self._run(
+            xcr="9999 /usr/bin/rome (feral-rome)\n",
+            status={"sshd": "run: sshd: (pid 631) 10s\n"})
+        out = Sink()
+        rc = cli._cycle_services(_config([]), out, run,
+                                 service_root=self.svcroot)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertFalse(any(c[:3] == ["sudo", "sv", "restart"] for c in calls))
+        self.assertIn("relogin", out.text())
+
+    def test_nothing_flagged(self):
+        run, calls = self._run(xcr="")
+        out = Sink()
+        rc = cli._cycle_services(_config([]), out, run,
+                                 service_root=self.svcroot)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertFalse(any(c[:2] == ["sudo", "sv"] for c in calls))
+        self.assertIn("none running replaced", out.text())
+
+    def test_restart_failure_is_incomplete_exit_60(self):
+        self._mk("sshd")
+        run, calls = self._run(
+            xcr="631 /usr/bin/sshd (openssh)\n",
+            status={"sshd": "run: sshd: (pid 631) 10s\n"},
+            restart_rc=1)
+        out = Sink()
+        rc = cli._cycle_services(_config([]), out, run,
+                                 service_root=self.svcroot)
+        self.assertEqual(rc, cli.EXIT_SERVICES)
+        self.assertIn("did not confirm", out.text())
+
+    def test_restart_unconfirmed_is_incomplete_exit_60(self):
+        # sv restart returns 0 but the service does not come back to `run:`.
+        self._mk("sshd")
+        run, calls = self._run(
+            xcr="631 /usr/bin/sshd (openssh)\n",
+            status={"sshd": "run: sshd: (pid 631) 10s\n"},
+            status_after={"sshd": "down: sshd: 0s, normally up\n"})
+        out = Sink()
+        rc = cli._cycle_services(_config([]), out, run,
+                                 service_root=self.svcroot)
+        self.assertEqual(rc, cli.EXIT_SERVICES)
+        self.assertIn("did not confirm", out.text())
+
+    def test_xcheckrestart_failure_warns_exit_60(self):
+        run, calls = self._run(xcr_rc=1)
+        out = Sink()
+        rc = cli._cycle_services(_config([]), out, run,
+                                 service_root=self.svcroot)
+        self.assertEqual(rc, cli.EXIT_SERVICES)
+        self.assertIn("xcheckrestart", out.text())
+        self.assertFalse(any(c[:3] == ["sudo", "sv", "restart"] for c in calls))
+
+    def test_parse_ignores_noise_and_deleted_suffix(self):
+        flagged = cli._parse_xcheckrestart(
+            "\n631 /usr/bin/sshd (deleted) (openssh)\n"
+            "  /usr/lib/libfoo.so (deleted)\n"       # -v LIBS detail line
+            "700 /usr/bin/dbus-daemon (dbus)\n")
+        self.assertEqual([p for p, _ in flagged], [631, 700])
+
 
 class ArgparseTests(unittest.TestCase):
 

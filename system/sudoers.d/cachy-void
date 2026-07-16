@@ -1,12 +1,14 @@
 # Cachy-Void updater privilege boundary — architecture.md §4.1
 #
 # The orchestrator runs as an unprivileged build user and reaches root ONLY
-# through the exact commands it invokes in Stage 4 (atomic install, runit
-# service cycling), recovery (pkgdb repair), and §8.6 kernel boot staging
-# (the three narrow GRUB binaries). Nothing else is granted.
+# through the exact commands it invokes in Stage 4 (atomic install, service
+# detection via xcheckrestart, runit service cycling via sv), recovery (pkgdb
+# repair), and §8.6 kernel boot staging (the three narrow GRUB binaries).
+# Nothing else is granted. (xcheckrestart reads every process's /proc/*/maps,
+# so it must run as root to see system daemons — §4.7.)
 #
 # Installed 0440 root:root and validated with `visudo -c` before activation.
 # The user in the grant line below is filled in by deploy.sh.
-Cmnd_Alias CACHY_VOID_UPDATE = /usr/bin/xbps-install, /usr/bin/sv, /usr/bin/xbps-pkgdb, /usr/bin/grub-set-default, /usr/bin/grub-reboot, /usr/bin/grub-editenv
+Cmnd_Alias CACHY_VOID_UPDATE = /usr/bin/xbps-install, /usr/bin/sv, /usr/bin/xcheckrestart, /usr/bin/xbps-pkgdb, /usr/bin/grub-set-default, /usr/bin/grub-reboot, /usr/bin/grub-editenv
 
 @USER@ ALL=(root) NOPASSWD: CACHY_VOID_UPDATE
