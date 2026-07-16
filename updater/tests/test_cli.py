@@ -426,6 +426,59 @@ class CommitCommandTests(unittest.TestCase):
         self.assertIn(["sudo", "sv", "restart", "sshd"], calls)
         self.assertIn("sshd", out.text())
 
+    def test_commit_snapshots_before_deploy_on_btrfs(self):
+        # §9.5: on a btrfs deploy subvol, a read-only snapshot is taken BEFORE -Suy.
+        xb = self._orphaned_takeover_xbps()
+        calls: list[list[str]] = []
+
+        def run(args, cwd=None):
+            calls.append(list(args))
+            if args[:3] == ["git", "rev-parse", "HEAD"]:
+                return cp(0, stdout="abc123\n")
+            if args[0] == "uname":
+                return cp(0, stdout="6.12.34_1\n")
+            if args[0] == "findmnt":
+                return cp(0, stdout="btrfs\n")
+            if args[:2] == ["sudo", "xbps-install"] and "-fy" in args:
+                for a in args:
+                    if a in xb._installed:
+                        xb.mark_converged(a)
+                return cp(0)
+            return cp(0, stdout="")
+
+        out = Sink()
+        rc = cli.cmd_commit(xb, self._cfg(["gamemode"]),
+                            assume_yes=True, dry_run=False, out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        snap_i = next(i for i, c in enumerate(calls)
+                      if c[:4] == ["sudo", "btrfs", "subvolume", "snapshot"])
+        su_i = next(i for i, c in enumerate(calls)
+                    if c[:2] == ["sudo", "xbps-install"] and "-Suy" in c)
+        self.assertLess(snap_i, su_i, "snapshot must precede the -Suy")
+
+    def test_commit_aborts_when_forced_snapshot_unavailable(self):
+        # §9.5: [snapshot] enable=true but subvol not btrfs -> exit 53, NO deploy.
+        xb = self._orphaned_takeover_xbps()
+        calls: list[list[str]] = []
+
+        def run(args, cwd=None):
+            calls.append(list(args))
+            if args[:3] == ["git", "rev-parse", "HEAD"]:
+                return cp(0, stdout="abc123\n")
+            if args[0] == "uname":
+                return cp(0, stdout="6.12.34_1\n")
+            if args[0] == "findmnt":
+                return cp(0, stdout="ext4\n")
+            return cp(0, stdout="")
+
+        cfg = self._cfg(["gamemode"])
+        cfg.snapshot_enable = True                      # force snapshots
+        out = Sink()
+        rc = cli.cmd_commit(xb, cfg, assume_yes=True, dry_run=False, out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_SNAPSHOT_UNAVAIL)
+        self.assertFalse(any(c[:2] == ["sudo", "xbps-install"] for c in calls),
+                         "must abort before any deploy")
+
 
 class ServiceCycleTests(unittest.TestCase):
     """§4.7 Stage 4c — service lifecycle."""

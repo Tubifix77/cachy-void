@@ -41,6 +41,7 @@ from engine.health_daemon import HealthDaemon, DaemonConfig, DEGRADED, HEALTHY  
 from engine import grub  # noqa: E402
 from engine import trust  # noqa: E402
 from engine import template  # noqa: E402
+from engine import snapshot  # noqa: E402
 
 # -- exit codes (§4.8 / §7.8 / §8) -----------------------------------------
 EXIT_OK = 0
@@ -56,6 +57,8 @@ EXIT_BUILD = 40
 EXIT_INDEX = 50
 EXIT_INSTALL = 51
 EXIT_VERIFY = 52
+EXIT_SNAPSHOT_UNAVAIL = 53
+EXIT_SNAPSHOT_FAILED = 54
 EXIT_SERVICES = 60
 EXIT_KERNEL = 70
 
@@ -78,6 +81,10 @@ class Config:
     kernel_enable: bool = True
     fragment_path: Path = Path("/etc/cachy-void/cachy-fragment.config")
     bore_lock: Optional[Path] = None      # None -> script-adjacent bore.lock
+    snapshot_enable: str | bool = "auto"  # §9.5: "auto" | True | False
+    snapshot_subvol: str = "/"
+    snapshot_dir: str = "/.cachy-snapshots"
+    snapshot_keep: int = 5
 
     @property
     def bore_lock_path(self) -> Path:
@@ -120,6 +127,7 @@ def load_config(path: str | Path) -> Config:
     pkgs = raw.get("packages", {})
     svc = raw.get("services", {})
     kern = raw.get("kernel", {})
+    snap = raw.get("snapshot", {})
     cfg = Config(
         void_packages=Path(vp),
         jobs=int(build.get("jobs", 0)),
@@ -127,6 +135,10 @@ def load_config(path: str | Path) -> Config:
         blacklist=list(pkgs.get("blacklist", [])),
         restart_skip=list(svc.get("restart_skip", [])),
         kernel_enable=bool(kern.get("enable", True)),
+        snapshot_enable=snap.get("enable", "auto"),
+        snapshot_subvol=str(snap.get("subvol", "/")),
+        snapshot_dir=str(snap.get("dir", "/.cachy-snapshots")),
+        snapshot_keep=int(snap.get("keep", 5)),
     )
     if kern.get("fragment"):
         cfg.fragment_path = Path(kern["fragment"])
@@ -630,6 +642,25 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
             _emit_tail(log_path, out)
             return EXIT_BUILD
         journal.set_pkg_status(pkg, "built", log=log_path)
+
+    # §9.5 pre-deploy snapshot — a btrfs rollback net taken IMMEDIATELY before the
+    # Stage 4 `-Suy`, and only when something will actually deploy. Witness-only
+    # (§7.6). A forced-but-unavailable (53) or a failed (54) snapshot aborts here,
+    # before any system mutation.
+    if q_deploy:
+        try:
+            snapshot.pre_deploy_snapshot(
+                enable=config.snapshot_enable, subvol=config.snapshot_subvol,
+                snap_dir=config.snapshot_dir, keep=config.snapshot_keep,
+                run_id=run_id, run=run, out=out)
+        except snapshot.SnapshotUnavailable as exc:
+            out(f"error: {exc}")
+            journal.fail(None, EXIT_SNAPSHOT_UNAVAIL)
+            return EXIT_SNAPSHOT_UNAVAIL
+        except snapshot.SnapshotFailed as exc:
+            out(f"error: {exc}")
+            journal.fail(None, EXIT_SNAPSHOT_FAILED)
+            return EXIT_SNAPSHOT_FAILED
 
     # Stage 4 — deploy (§4.5-§4.7)
     journal.set_phase("deploy")

@@ -9,6 +9,10 @@
 #
 # Installed 0440 root:root and validated with `visudo -c` before activation.
 # The user in the grant line below is filled in by deploy.sh.
-Cmnd_Alias CACHY_VOID_UPDATE = /usr/bin/xbps-install, /usr/bin/sv, /usr/bin/xcheckrestart, /usr/bin/xbps-pkgdb, /usr/bin/grub-set-default, /usr/bin/grub-reboot, /usr/bin/grub-editenv
+# §9.5 (optional btrfs snapshots) adds exactly three btrfs subvolume ops —
+# snapshot -r / delete / list — for the pre-deploy rollback net + its prune.
+Cmnd_Alias CACHY_VOID_UPDATE = /usr/bin/xbps-install, /usr/bin/sv, /usr/bin/xcheckrestart, \
+    /usr/bin/xbps-pkgdb, /usr/bin/grub-set-default, /usr/bin/grub-reboot, /usr/bin/grub-editenv, \
+    /usr/sbin/btrfs subvolume snapshot -r *, /usr/sbin/btrfs subvolume delete *, /usr/sbin/btrfs subvolume list *
 
 @USER@ ALL=(root) NOPASSWD: CACHY_VOID_UPDATE
