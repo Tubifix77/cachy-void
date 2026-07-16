@@ -85,6 +85,14 @@ class FakeXbps:
             Path(log_path).write_text("build ok\n", encoding="utf-8")
         return self._build_rc
 
+    def mark_converged(self, b, origin="/vp/hostdir/binpkgs"):
+        """Model a completed §4.6 takeover of binpkg b: origin -> overlay and
+        installed version -> repo version, so a re-query in §7.7 post-verify
+        sees a converged system (a static mock otherwise can't)."""
+        self._origins[b] = origin
+        if self._repo_ver.get(b) is not None:
+            self._inst_ver[b] = self._repo_ver[b]
+
 
 def _config(targets, blacklist=(), **kw):
     kw.setdefault("state_dir", Path("/nonexistent-cachy-state"))
@@ -221,11 +229,36 @@ class CommitCommandTests(unittest.TestCase):
         return run, calls
 
     def _orphaned_takeover_xbps(self):
+        # Full name-prefixed pkgvers, as real `xbps-query -p pkgver` returns.
         return FakeXbps(installed=["gamemode"],
                         src_map={"gamemode": "gamemode"},
-                        inst_ver={"gamemode": "1.0_1"},
-                        repo_ver={"gamemode": "1.0_1"},
+                        inst_ver={"gamemode": "gamemode-1.0_1"},
+                        repo_ver={"gamemode": "gamemode-1.0_1"},
                         origins={"gamemode": "https://upstream"})
+
+    def _takeover_run(self, xbps, *, xcheckrestart="", sv_status=""):
+        """Run stub modeling §4.6 takeover convergence: a `-fy <pkg>` install
+        flips that pkg to overlay origin/version so the §7.7 post-verify sees a
+        converged system. Optionally feeds xcheckrestart / sv-status for §4.7."""
+        calls: list[list[str]] = []
+
+        def run(args, cwd=None):
+            calls.append(list(args))
+            if args[:3] == ["git", "rev-parse", "HEAD"]:
+                return cp(0, stdout="abc123\n")
+            if args[0] == "uname":
+                return cp(0, stdout="6.12.34_1\n")
+            if args[:2] == ["sudo", "xbps-install"] and "-fy" in args:
+                for a in args:
+                    if a in xbps._installed:
+                        xbps.mark_converged(a)
+                return cp(0)
+            if args[:2] == ["sudo", "xcheckrestart"]:
+                return cp(0, stdout=xcheckrestart)
+            if args[:3] == ["sudo", "sv", "status"]:
+                return cp(0, stdout=sv_status)
+            return cp(0, stdout="")
+        return run, calls
 
     def test_deploy_only_run_prompts_and_abort_is_clean(self):
         # F5 regression: a deploy-only recovery run must NOT mutate the system
@@ -241,17 +274,19 @@ class CommitCommandTests(unittest.TestCase):
         self.assertFalse(any(c[0] == "sudo" for c in calls))
 
     def test_deploy_only_run_with_yes_deploys_takeover(self):
-        # O-term recovery end-to-end: no build, but -Su + forced takeover run.
+        # O-term recovery end-to-end: no build, but -Su + forced takeover run,
+        # and §7.7 post-verify confirms the takeover converged.
         out = Sink()
-        run, calls = self._runstub()
-        rc = cli.cmd_commit(self._orphaned_takeover_xbps(),
-                            self._cfg(["gamemode"]),
+        xb = self._orphaned_takeover_xbps()
+        run, calls = self._takeover_run(xb)
+        rc = cli.cmd_commit(xb, self._cfg(["gamemode"]),
                             assume_yes=True, dry_run=False, out=out, run=run)
         self.assertEqual(rc, cli.EXIT_OK)
         self.assertTrue(any(c[:2] == ["sudo", "xbps-install"] and "-Suy" in c
                             for c in calls))
         self.assertTrue(any("-fy" in c and "gamemode" in c
                             for c in calls if c[0] == "sudo"))
+        self.assertIn("post-verify", out.text())
 
     def test_kernel_withheld_when_fragment_missing(self):
         # §8.5: a missing fragment is a G2 failure -> kernel withheld, no build,
@@ -379,23 +414,12 @@ class CommitCommandTests(unittest.TestCase):
         # the bare -Su re-exec that broke new ssh connections.
         svcroot = self.tmp / "service"
         (svcroot / "sshd").mkdir(parents=True)
-        calls: list[list[str]] = []
-
-        def run(args, cwd=None):
-            calls.append(list(args))
-            if args[:3] == ["git", "rev-parse", "HEAD"]:
-                return cp(0, stdout="abc123\n")
-            if args[0] == "uname":
-                return cp(0, stdout="6.12.34_1\n")
-            if args[:2] == ["sudo", "xcheckrestart"]:
-                return cp(0, stdout="631 /usr/bin/sshd (openssh)\n")
-            if args[:3] == ["sudo", "sv", "status"]:
-                return cp(0, stdout="run: sshd: (pid 631) 42s\n")
-            return cp(0, stdout="")
-
+        xb = self._orphaned_takeover_xbps()
+        run, calls = self._takeover_run(
+            xb, xcheckrestart="631 /usr/bin/sshd (openssh)\n",
+            sv_status="run: sshd: (pid 631) 42s\n")
         out = Sink()
-        rc = cli.cmd_commit(self._orphaned_takeover_xbps(),
-                            self._cfg(["gamemode"]),
+        rc = cli.cmd_commit(xb, self._cfg(["gamemode"]),
                             assume_yes=True, dry_run=False, out=out, run=run,
                             service_root=svcroot)
         self.assertEqual(rc, cli.EXIT_OK)
@@ -531,6 +555,68 @@ class ServiceCycleTests(unittest.TestCase):
             "  /usr/lib/libfoo.so (deleted)\n"       # -v LIBS detail line
             "700 /usr/bin/dbus-daemon (dbus)\n")
         self.assertEqual([p for p, _ in flagged], [631, 700])
+
+
+class PostVerifyTests(unittest.TestCase):
+    """§7.7 post-deploy convergence gate (exit 52)."""
+
+    REPO = {"/vp/hostdir/binpkgs", "/vp/hostdir/binpkgs/nonfree"}
+
+    def test_converged_ok(self):
+        xb = FakeXbps(installed=["mesa"], src_map={"mesa": "mesa"},
+                      inst_ver={"mesa": "mesa-1.0_1"},
+                      repo_ver={"mesa": "mesa-1.0_1"})   # origin defaults overlay
+        out = Sink()
+        self.assertEqual(cli._post_verify(["mesa"], xb, self.REPO, out),
+                         cli.EXIT_OK)
+        self.assertIn("converged", out.text())
+
+    def test_nonoverlay_origin_is_52(self):
+        xb = FakeXbps(installed=["mesa"], src_map={"mesa": "mesa"},
+                      inst_ver={"mesa": "mesa-1.0_1"},
+                      repo_ver={"mesa": "mesa-1.0_1"},
+                      origins={"mesa": "https://upstream"})
+        out = Sink()
+        self.assertEqual(cli._post_verify(["mesa"], xb, self.REPO, out),
+                         cli.EXIT_VERIFY)
+        self.assertIn("still originates", out.text())
+
+    def test_version_mismatch_is_52(self):
+        xb = FakeXbps(installed=["mesa"], src_map={"mesa": "mesa"},
+                      inst_ver={"mesa": "mesa-1.0_1"},
+                      repo_ver={"mesa": "mesa-1.0_2"})
+        out = Sink()
+        self.assertEqual(cli._post_verify(["mesa"], xb, self.REPO, out),
+                         cli.EXIT_VERIFY)
+        self.assertIn("pkgver", out.text())
+
+    def test_split_version_is_52(self):
+        # two installed binpkgs of one srcpkg stuck at different versions
+        xb = FakeXbps(installed=["qt", "qt-devel"],
+                      src_map={"qt": "qt", "qt-devel": "qt"},
+                      inst_ver={"qt": "qt-5.0_1", "qt-devel": "qt-devel-5.0_2"},
+                      repo_ver={"qt": "qt-5.0_1", "qt-devel": "qt-devel-5.0_2"})
+        out = Sink()
+        self.assertEqual(cli._post_verify(["qt", "qt-devel"], xb, self.REPO, out),
+                         cli.EXIT_VERIFY)
+        self.assertIn("installed version", out.text())
+
+    def test_kernel_target_excluded(self):
+        # linux-cachy with an upstream origin must NOT trip post-verify — the
+        # kernel is introduced/verified by §8.6, not here.
+        xb = FakeXbps(installed=["linux-cachy"],
+                      src_map={"linux-cachy": "linux-cachy"},
+                      inst_ver={"linux-cachy": "linux-cachy-6.12.35_1"},
+                      repo_ver={"linux-cachy": "linux-cachy-6.12.35_1"},
+                      origins={"linux-cachy": "https://upstream"})
+        out = Sink()
+        self.assertEqual(cli._post_verify(["linux-cachy"], xb, self.REPO, out),
+                         cli.EXIT_OK)
+
+    def test_empty_deploy_is_ok(self):
+        xb = FakeXbps(installed=[], src_map={})
+        out = Sink()
+        self.assertEqual(cli._post_verify([], xb, self.REPO, out), cli.EXIT_OK)
 
 
 class ArgparseTests(unittest.TestCase):

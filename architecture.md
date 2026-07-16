@@ -539,6 +539,8 @@ for t in Q_deploy:
     assert len(inst_vers(t)) == 1                       # convergent: no partial deploy
 ```
 
+The convergence assertions cover the *userspace* deploy only: `linux-cachy` is excluded — it is introduced and verified through the §8.6 staging path (on a first bump it is not yet installed at this point, and keeping the previous known-good kernel installed alongside the candidate is deliberate, §2.5/§4.7), so the single-version check does not apply to it here.
+
 **Shared-library rejection:** XBPS validates shlib requires/provides at transaction time. If `xbps-install` refuses on shlib grounds ⇒ exit 51 and HARD STOP. Forcing past a shlib error is forbidden in all circumstances — it is XBPS proving the overlay would break ABI coherence. Recovery per §5. Service cycling then proceeds per §4.7; if `linux-cachy ∈ Q_deploy`, hand off to §8.6 instead of the generic reboot banner.
 
 ### 7.8 Failure taxonomy (extends §4.8)

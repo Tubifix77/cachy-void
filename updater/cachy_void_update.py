@@ -732,6 +732,50 @@ def _deploy(config: Config, deploy_bins, xbps, out, run) -> int:
                 out(f"error: forced reinstall of {b} failed")
                 return EXIT_INSTALL
     out(f"deployed {len(deploy_bins)} package(s).")
+    return _post_verify(deploy_bins, xbps, repo_paths, out)
+
+
+def _post_verify(deploy_bins, xbps, repo_paths, out) -> int:
+    """§7.7 post-deploy convergence gate; EXIT_VERIFY (52) on any mismatch.
+
+    Confirms the userspace deploy actually converged: every deployed binpkg is
+    now overlay-sourced and installed at the overlay pkgver, and each deploy
+    target resolves to exactly one installed version (no split/partial
+    transaction). ``linux-cachy`` is excluded — it is introduced and verified by
+    the §8.6 staging path and may legitimately not be single-version here.
+    Version strings are normalized subpackage-safe before ``vercmp`` (§7.2).
+    """
+    vbins = [b for b in deploy_bins if xbps.srcpkg_of(b) != KERNEL_TARGET]
+    for b in vbins:
+        origin = xbps.origin(b)
+        if origin not in repo_paths:
+            out(f"error: post-verify: {b} still originates from {origin} — "
+                "takeover did not converge (exit 52, §7.7).")
+            return EXIT_VERIFY
+        rv = xbps.repo_ver(b)
+        if rv is None or xbps.vercmp(split_pkgver(xbps.inst_pkgver(b))[1],
+                                     split_pkgver(rv)[1]) != 0:
+            out(f"error: post-verify: {b} installed pkgver != overlay pkgver "
+                "(exit 52, §7.7).")
+            return EXIT_VERIFY
+    targets: set[str] = set()
+    for b in vbins:
+        s = xbps.srcpkg_of(b)
+        if s is not None:
+            targets.add(s)
+    versions: dict[str, set[str]] = {t: set() for t in targets}
+    for b in xbps.installed():
+        s = xbps.srcpkg_of(b)
+        if s in versions:
+            versions[s].add(split_pkgver(xbps.inst_pkgver(b))[1])
+    for t in sorted(targets):
+        n = len(versions[t])
+        if n != 1:
+            out(f"error: post-verify: {t} resolves to {n} installed version(s) "
+                "— partial/non-convergent deploy (exit 52, §7.7).")
+            return EXIT_VERIFY
+    if vbins:
+        out("post-verify: userspace deploy converged (§7.7).")
     return EXIT_OK
 
 

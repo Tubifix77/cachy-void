@@ -192,25 +192,34 @@ class CommitResilienceTests(unittest.TestCase):
     def test_kernel_halt_still_deploys_userland(self):
         fx = Fixture(lock_valid=False)         # kernel synthesis will halt
 
-        # A userland target that needs deploying (O-term: upstream origin).
+        # A userland target that needs deploying (O-term: upstream origin until
+        # the §4.6 takeover flips it to the overlay).
+        overlay = str(fx.config.repos[0])
+
         class UserlandXbps(VerXbps):
+            def __init__(self): self._taken: set[str] = set()
             def installed(self): return ["mesa"]
             def srcpkg_of(self, b): return "mesa" if b == "mesa" else None
             def inst_pkgver(self, b): return "mesa-1.0_1"
             def repo_ver(self, n): return "mesa-1.0_1" if n == "mesa" else None
-            def origin(self, b): return "https://upstream"        # takeover pending
+            def origin(self, b):
+                return overlay if b in self._taken else "https://upstream"
+            def take_over(self, b): self._taken.add(b)
             def show_local_updates(self): return []
             def sort_dependencies(self, p): return sorted(p), True
         fx.config.targets = ["mesa", "linux-cachy"]
+        xb = UserlandXbps()
 
         calls = []
         def run(args, cwd=None):
             calls.append(list(args))
             if args[:3] == ["git", "rev-parse", "HEAD"]:
                 return _cp(0, "abc\n")
+            if args[:2] == ["sudo", "xbps-install"] and "-fy" in args and "mesa" in args:
+                xb.take_over("mesa")                       # §4.6 takeover converges
             return _cp(0, "")
 
-        rc = cli.cmd_commit(UserlandXbps(), fx.config, assume_yes=True,
+        rc = cli.cmd_commit(xb, fx.config, assume_yes=True,
                             dry_run=False, out=lambda *_: None, run=run)
         self.assertEqual(rc, cli.EXIT_OK)                 # userspace succeeded
         self.assertEqual(fx.state_name(), "AWAIT_HUMAN_PATCH")   # kernel withheld
