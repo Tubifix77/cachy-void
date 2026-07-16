@@ -17,6 +17,14 @@ Cachy-Void fuses two philosophies:
 - **Void** — systems-first minimalism: honest, transparent, flat, imposes no identity, quiet.
 - **CachyOS** — a performance ethos: tuned, instant, purposeful.
 
+**The identity is the fusion itself** — Void's honest, quiet, minimal *form* carrying
+CachyOS's tuned, fast, purposeful *substance*. The look must read as **both at once**:
+calm *and* high-performance. Restraint is Void's contribution; the feel of a
+finely-tuned instrument is CachyOS's — and neither wins at the other's expense (pure
+minimalism would lose the performance soul; anything flashy would betray Void). Note
+*how* we express performance: the Void way — not RGB and gauges, but **honest, legible
+telemetry** (btop-style) — a fast machine you can see straight into.
+
 The target feel is **low-key and modern** — quiet, matte, understated. The palette
 (charcoal + muted army-green + oxblood) lends a calm, low-visibility character, like an
 instrument panel dimmed for night use — not a gamer rig.
