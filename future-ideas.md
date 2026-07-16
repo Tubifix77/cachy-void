@@ -257,3 +257,25 @@ off-topic Windows-11 Discord troubleshooting tangent, irrelevant. ONE keeper:
   invariant I6, which governs the *build* side (never cross-build i686 with
   `x86-64-v*`). TODO: add to INSTALL.md after verifying the exact Void package
   names for the target GPU (nvidia470 legacy → its own 32-bit libs).
+
+**chatgptchat.md (audited 2026-07-16):** a Danish multi-model (ChatGPT/Gemini/Grok)
+critique of a Gemini "Void LXQt gaming install guide," framed for a modern RTX 3080.
+It is entirely BASE-SYSTEM gaming-desktop setup (repos, X11/LXQt/SDDM, NVIDIA +
+Vulkan + 32-bit, PipeWire, Steam) — it never touches the Cachy-Void overlay, so its
+home is an INSTALL.md "gaming-desktop prerequisites" appendix, not architecture.md.
+Heavy overlap with geminichat2. No invariant conflicts; it actively CORROBORATES
+LXQt/X11 for NVIDIA gaming (further undercutting the §1 Plasma lock-in). Keepers:
+- **Modern-NVIDIA KMS tweak:** `options nvidia-drm modeset=1 fbdev=1` in
+  `/etc/modprobe.d`. We ALREADY run `modeset=1` on the Medion (the fix walked home at
+  the start of this session, verified `modeset=Y`); `fbdev=1` is the new bit and is
+  MODERN-driver-only — scope it away from the nvidia470 legacy testbed.
+- **PipeWire has NO runit service on Void** (starts as a user-session/DBus service).
+  Guard: never add a `pipewire` runit service to this project.
+- **Package/repo names — VERIFY on real Void, do NOT trust the chats.** The thread is
+  three LLMs disagreeing over names — the exact failure mode behind the
+  [[spec-bug-game-devices-udev]] bug. To confirm with `xbps-query -Rs` on the box
+  before anything enters INSTALL.md: repos `void-repo-multilib` / `-nonfree` /
+  `-multilib-nonfree`; 32-bit libs — the chat "corrected" `mesa-dri-32bit` →
+  `mesa-32bit-dri`, but Void's `<name>-32bit` convention actually favours
+  `mesa-dri-32bit`, so trust NEITHER until checked; plus `nvidia-libs-32bit`,
+  `vulkan-loader-32bit`.
