@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="void-cachy square badge">
+  <!-- alt icon / standalone badge: concentric-square frames + core. transparent bg, dark-surface use. -->
+  <rect x="8" y="8" width="80" height="80" fill="none" stroke="#abb2bf" stroke-width="3"/>
+  <rect x="22" y="22" width="52" height="52" fill="none" stroke="#5c6370" stroke-width="2"/>
+  <rect x="35" y="35" width="26" height="26" fill="none" stroke="#5c6370" stroke-width="1.5"/>
+  <polygon points="48,37 59,48 48,59 37,48" fill="#478061"/>
+</svg>

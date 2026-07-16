@@ -222,13 +222,42 @@ ${color1}up   ${color}${uptime_short}
 ```
 No bars, no rings, no meters — density through plain text is the point.
 
-### 5.6 Wallpaper & the mark
+### 5.6 The mark & wallpaper
 
-- **Wallpaper:** structural + dark — a subtle blueprint/carbon texture or a solid `--bg`
-  charcoal. On-palette, low-contrast, never busy. Set with `feh --bg-fill <img>`.
-- **The mark:** replace the LXQt menu button with a **monochrome Void-logo glyph**
-  (`--fg` grey-white, or `--accent` green on hover), *no "Start" text* — the single,
-  deliberate spot of identity.
+**Canonical logo set** (SVGs in [`assets/`](assets/) — dark-surface: grey/green on a
+transparent field; for light surfaces swap the greys for the dark tokens):
+
+| Asset | Role | Contents |
+|---|---|---|
+| `assets/void-cachy-mark.svg` | **primary lockup** | landscape 3-frame core + wordmark — headers, docs, splash |
+| `assets/void-cachy-icon.svg` | **primary icon** | the bare green core diamond — favicon, LXQt panel button |
+| `assets/void-cachy-square.svg` | **alt icon / badge** (back-pocket) | concentric-square frames + core — square icon slots, stickers, centred badges |
+
+Rules of use: the **landscape lockup is primary** (it flows beside the wordmark); the
+**square is the back-pocket alt** wherever a square shape fits better; the **bare core is
+the tiny icon** everywhere (the frames don't survive to favicon size). Exactly one green
+element — the mark *is* the "one restrained accent."
+
+Fixed brand colours (NOT theme-adaptive): outer frame `#abb2bf`, inner frames `#5c6370`,
+core + tech line `#478061`, wordmark `#abb2bf`, tagline `#5c6370`. Do **not** use
+`#282c34` for text or inner frames on obsidian — at ~1.2:1 it disappears.
+
+**Terminal / fastfetch** (no SVG in a TTY) — the ASCII lockup (colour the `◆` core
+`#478061` in the fastfetch config, everything else `#abb2bf`/`#5c6370`):
+
+```
+╭─────────────╮
+│ ╭─────────╮ │
+│ │    ◆    │ │   void · cachy
+│ ╰─────────╯ │   performance core
+╰─────────────╯   runit · xbps · x86-64-v3 · BORE
+```
+
+One-line nameplate (prompt or panel header):
+`◆ void·cachy ── performance core ── runit · xbps · v3 · BORE`
+
+**Wallpaper:** structural + dark — a subtle blueprint/carbon texture or a solid `--bg`
+charcoal. On-palette, low-contrast, never busy. Set with `feh --bg-fill <img>`.
 
 ---
 
