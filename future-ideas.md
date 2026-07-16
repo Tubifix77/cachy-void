@@ -187,3 +187,31 @@ because most of it is already built:
 **Possible refinement:** a lighter "daily" updater mode/alias that runs the `-Su`
 + §4.7 service-cycle and *prompts* before any long compile, instead of doing the
 whole build/deploy in one `--commit`.
+
+### 6b. From the 2026-07-16 aesthetic / "steal from CachyOS" discussion
+
+- **btrfs conversion** — the requested 6th item; tracked/executing separately
+  (staged `/home/boas/void-convert.sh`), not a roadmap idea.
+- **Proton-CachyOS-GE / GE-Proton** — NEW and the easiest real win: drop the
+  prebuilt Proton into `~/.steam/root/compatibilitytools.d/` and select it per
+  title in Steam. Pure userspace, no compile, no system change, trivially
+  reversible — the most Void-friendly way to grab CachyOS's gaming sauce. Pairs
+  with the gaming-userspace layer (§6 above).
+- **Concrete branding palette** ("Industrial Cockpit", Void-logo adjacent): bg
+  `#1b1d1e`, fg `#abb2bf`, accent `#478061` (desaturated forest green), alert
+  `#8a2f32`; flat / no glass, JetBrains Mono or IBM Plex Mono, one thin panel,
+  `btop` as the "telemetry" widget, structural/dark wallpaper, Void-logo menu
+  icon (no "Start" button).
+- **Audited the chat's "CachyOS tweaks" against our config — almost all already
+  present**, often done more correctly: per-medium I/O schedulers (§3.3),
+  `kernel.split_lock_mitigate=0` (§3.1), BBR (§3.1 + built into linux-cachy),
+  `-march` userland ladder, BORE. THP: we set **ALWAYS** (§2.4) whereas the chat
+  suggested `madvise` — a real, debatable divergence worth revisiting for a
+  latency-sensitive gaming profile.
+- **Rejected (unchanged):** `mitigations=off` (invariant I7) and `linux-tkg`
+  (we fork Void's own kernel template, not tkg/XanMod; BORE already works).
+- **Hardware caveat:** the shared mockup shows an AMD RX 6800XT + implies
+  Wayland/Sway. The real box is Intel Ivy Bridge (v2) + NVIDIA GT 730M on
+  nvidia470 (Kepler) → X11/**Openbox** (already in the allowlist), not
+  Sway/Wayland (no viable Wayland on 470 legacy; Explicit Sync needs 555+).
+  gamescope is also dubious on the 470 legacy driver.
