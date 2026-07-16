@@ -100,6 +100,7 @@ Key flags:
 | `--user NAME` | The unprivileged updater user (gets the sudoers grants). |
 | `--void-packages DIR` | Path to your `void-packages` checkout. |
 | `--with-grub` | Adds `usbcore.autosuspend=-1` to the kernel cmdline **and** sets `GRUB_DEFAULT=saved` (required for one-shot kernel boot-testing). |
+| `--with-schedule` | Also **enable** the §4.9 `cachy-void-update` runit timer for unattended daily `--sync`+`--commit`. Without it the service is provisioned but left disabled (opt-in). |
 | `--march ARCH` | Compiler ABI level. Default: **auto-detected** from `/proc/cpuinfo` via the §1.2 ladder (v4 → v3 → v2 → baseline), so pre-Haswell CPUs get `x86-64-v2` automatically instead of SIGILL-ing on v3 binaries. Pass explicitly to override (e.g. when provisioning a disk for a different machine via `--root`). |
 | `--jobs N` | Build parallelism (default: `nproc`). |
 | `--tag NAME` | Ledger tag for this run (`core` default; use `test`/`opt` per route — see §9). |
@@ -132,7 +133,9 @@ sudoers fragment is validated with `visudo -c` before it is ever activated.
 | `/etc/modprobe.d/99-gaming-input.conf`, `/etc/modules-load.d/cachy.conf` | Input polling + BBR module. |
 | `/etc/sudoers.d/cachy-void` | Narrow NOPASSWD grants for the updater user. |
 | `/etc/sv/zramen/`, `/etc/sv/cachy-health/` | runit services (zram swap; post-boot health daemon). |
-| `/var/log/cachy-health/` | Health daemon logs (svlogd). |
+| `/etc/sv/cachy-void-update/` | Unattended-update timer service (§4.9; provisioned always, enabled only with `--with-schedule`). |
+| `/var/log/cachy-health/`, `/var/log/cachy-void-update/` | Health daemon + scheduled-run logs (svlogd). |
+| `/.cachy-snapshots/` | Pre-deploy btrfs snapshot subvol (§9.5; created only when the root is btrfs). |
 
 ---
 
@@ -161,7 +164,19 @@ restart_skip = ["udevd", "dbus", "elogind"]
 
 [kernel]
 enable = true
+
+[snapshot]
+# §9.5 pre-deploy btrfs snapshot (a rollback net taken right before each deploy).
+enable = "auto"          # "auto" = snapshot only when the subvol is btrfs (default);
+                         #  true = require btrfs and ABORT the deploy if it isn't;
+                         #  false = never snapshot.
+subvol = "/"             # the subvolume to snapshot (your Void root).
+dir    = "/.cachy-snapshots"   # where snapshots are stored (deploy.sh makes this subvol).
+keep   = 5               # prune to the newest N; older pre-deploy snapshots are deleted.
 ```
+
+The `[snapshot]` table is optional — omit it entirely and the defaults above apply
+(`auto`/`/`/`/.cachy-snapshots`/`5`), so on an ext4 host it is a silent no-op.
 
 ### 6.2 BORE patch trust anchor — `bore.lock`
 
@@ -177,6 +192,22 @@ it never edits the lockfile for you (trust-on-first-use is a human act).
 you provisioned manually, set at least `base_series` (e.g. `6.12`) and a
 `known_good.kver` matching your current `uname -r`; leave `ported_version` low
 (e.g. `0.0.0_0`) so the first commit builds `linux-cachy`.
+
+### 6.4 Pre-deploy snapshots (btrfs) — `[snapshot]`
+
+On a **btrfs** root, `deploy.sh` creates a dedicated `/.cachy-snapshots` subvol
+and every `--commit` takes a read-only snapshot of your root *immediately before*
+touching any package (§9.5). It is a convenience rollback net on top of the
+always-converges recovery path (§9 / Recovery Runbook), never a replacement.
+
+- Nothing to schedule — snapshots are taken inline by the updater, not by cron.
+- Roll back a bad userland deploy by booting/selecting the pre-deploy snapshot
+  (e.g. `grub-btrfs`, or `btrfs subvolume set-default <id> /` then reboot).
+- Older snapshots are pruned to `keep` (default 5).
+- **Converted to btrfs after your first deploy?** (The subvol only exists if the
+  root was btrfs at deploy time.) Just re-run `deploy.sh` once — it detects btrfs
+  and creates `/.cachy-snapshots`. Until it exists, a *forced* `enable = true`
+  aborts the deploy (exit 54); the default `"auto"` simply skips snapshotting.
 
 ---
 
@@ -324,3 +355,108 @@ Notes and limits:
 - Offline service enablement links into `/etc/runit/runsvdir/default/` (the
   handbook's path for a system that is not booted); it takes effect on the next
   Void boot.
+
+---
+
+## 12. Gaming-Desktop Prerequisites (Steam / Proton, multilib)
+
+Cachy-Void is a performance overlay, not a desktop installer — but Steam and
+Proton are 32-bit at the entry point and will not launch without Void's
+**multilib** repos and the matching **32-bit** GL/Vulkan libraries. This is the
+*install*-side counterpart to invariant **I6** (which forbids cross-building i686
+with `x86-64-v*` on the *build* side): here you install upstream 32-bit binaries,
+you never compile them.
+
+> All package names below were verified against the live Void repos
+> (`xbps-query -R`). Do **not** substitute names from memory or from AI chat
+> logs — the `<name>-32bit` convention is real (`mesa-dri-32bit`), and at least
+> one name is case-sensitive (`MangoHud-32bit`, capital M-H). See
+> [the game-devices-udev lesson](architecture.md).
+
+**1. Enable the multilib repositories** (as root):
+
+```bash
+sudo xbps-install -Sy void-repo-multilib void-repo-multilib-nonfree
+sudo xbps-install -S          # refresh the package index
+```
+
+`void-repo-nonfree` (for the NVIDIA driver and Steam) is usually already enabled;
+add it the same way if not.
+
+**2. Install the 32-bit graphics stack:**
+
+```bash
+sudo xbps-install -Sy mesa-dri-32bit libglvnd-32bit vulkan-loader-32bit
+```
+
+**3. Install the 32-bit NVIDIA libraries matching your *installed* driver series.**
+The 32-bit libs must be the **same series** as your 64-bit driver:
+
+| Your 64-bit driver | 32-bit package |
+|---|---|
+| Current (`nvidia`) | `nvidia-libs-32bit` |
+| 470 legacy — Kepler, e.g. GT 730M (`nvidia470`) | `nvidia470-libs-32bit` |
+| 390 legacy — Fermi (`nvidia390`) | `nvidia390-libs-32bit` |
+
+```bash
+# example for the 470-legacy testbed:
+sudo xbps-install -Sy nvidia470-libs-32bit
+```
+
+On AMD/Intel the `mesa-dri-32bit` + `vulkan-loader-32bit` from step 2 is all you
+need — there is no vendor 32-bit package.
+
+**4. Steam, Proton overlay, and the HUD** (all optional):
+
+```bash
+sudo xbps-install -Sy steam            # from void-repo-nonfree
+sudo xbps-install -Sy MangoHud MangoHud-32bit   # HUD, needs both ABIs
+```
+
+Notes:
+
+- **PipeWire has no runit service on Void** — it starts as a user-session/DBus
+  service. Do not add a `pipewire` runit service.
+- **NVIDIA KMS:** `options nvidia-drm modeset=1` in `/etc/modprobe.d/` gives the
+  smoothest experience and is safe on all supported series. The additional
+  `fbdev=1` is **modern-driver-only** — do **not** set it on the 470/390 legacy
+  drivers.
+- Wayland is impractical on the 470/390 legacy stack; use X11 (any lightweight DE
+  — LXQt/Openbox are fine). The DE stays your choice; Cachy-Void never locks one in.
+
+---
+
+## 13. Multi-Boot: Give Void the Bootloader (opt-in)
+
+The updater's **one-shot kernel boot-testing** (§8.6) needs Void to own a
+`grubenv`-writable GRUB with `GRUB_DEFAULT=saved`. On a multi-boot machine where
+*another* distro owns GRUB (e.g. Debian loading Void via a hand-added
+`40_custom` entry), the updater cannot stage a trial kernel and safely **skips**
+staging — the kernel builds and deploys, but you pick it manually from the other
+distro's menu. That is a supported, deliberate fallback, not a failure.
+
+If you would rather have Void drive the bootloader (enabling one-shot staging),
+you can hand it over **without reinstalling** anything:
+
+```bash
+# 1. See the current UEFI boot entries and their order:
+sudo efibootmgr
+
+# 2. Reorder so Void's entry boots first (use the hex IDs from step 1;
+#    put Void first, keep the rest as fallbacks):
+sudo efibootmgr -o 0001,0000,2001      # example: Void=0001, other=0000, ...
+
+# 3. Let Void's GRUB discover the other OSes, then regenerate its config:
+sudo xbps-install -Sy os-prober grub
+#    os-prober is off by default on modern GRUB — enable it:
+echo 'GRUB_DISABLE_OS_PROBER=false' | sudo tee -a /etc/default/grub
+sudo grub-mkconfig -o /boot/grub/grub.cfg
+```
+
+Then run `deploy.sh --with-grub` (§4) so Void's GRUB gets `GRUB_DEFAULT=saved`,
+and the updater's one-shot staging becomes available.
+
+> **Trade-off:** whichever distro owns GRUB must regenerate it after the *other*
+> distro's kernel updates. Leaving GRUB with the distro you update most (or the
+> one you treat as the recovery escape hatch) is a perfectly valid choice — the
+> updater degrades gracefully either way.

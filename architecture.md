@@ -346,6 +346,23 @@ Optional unattended runs via `snooze` under runit — no cron daemon, no timers:
 exec snooze -H 5 -M 30 /usr/local/bin/cachy-void-update --yes
 ```
 
+**Implementation notes** (this sketch is elaborated as shipped in
+`system/sv/cachy-void-update/`):
+- The engine lives at `/usr/libexec/cachy-void-updater/cachy_void_update.py`
+  (§6/§8.9), not `/usr/local/bin`, and takes `--config`. The service runs it as
+  the unprivileged updater user via `chpst -u` (same model as cachy-health §8.7);
+  the process is never root and reaches privilege only through the §4.1 sudoers
+  grants.
+- A "run" is `--sync` then, only on success, `--commit --yes` — the full
+  unattended update, not a bare commit. Schedule (`SNOOZE_HOUR`/`SNOOZE_MINUTE`,
+  which accept snooze patterns) lives in the companion `conf`.
+- `snooze` flags verified against Void's `snooze-0.5.1`: `-H` is the hour field,
+  `-M` the minute field (uppercase for time fields; `-M` is **not** month here).
+- **Opt-in**: `deploy.sh` always provisions the service dir but only *enables* it
+  with `--with-schedule`. An unattended build+deploy is a deliberate choice, so
+  the default install leaves it disabled and one `ln -s` (or a re-run with the
+  flag) away.
+
 ---
 
 ## 5. Recovery Runbook

@@ -1,0 +1,19 @@
+# Cachy-Void scheduled-update service configuration — architecture.md §4.9.
+# Sourced by /etc/sv/cachy-void-update/run. Rendered by deploy.sh (@USER@/@ENGINE@).
+#
+# This service is OPT-IN: deploy.sh installs it but only enables it when you pass
+# --with-schedule (or symlink it into /var/service yourself). When enabled it
+# runs `--sync` then `--commit --yes` unattended at the configured daily time.
+#
+# CACHY_USER    — unprivileged updater user (holds the §4 sudoers grants).
+# CACHY_ENGINE  — install dir of the mirrored engine (cachy_void_update.py + engine/).
+# CACHY_CONFIG  — path to updater.toml.
+# SNOOZE_HOUR   — hour-of-day for the run (0-23), snooze -H field.
+# SNOOZE_MINUTE — minute-of-hour for the run (0-59), snooze -M field.
+#                 Both accept snooze patterns for finer control, e.g.
+#                 SNOOZE_HOUR="*/6" (every 6 hours) or SNOOZE_MINUTE="0,30".
+CACHY_USER=@USER@
+CACHY_ENGINE=@ENGINE@
+CACHY_CONFIG=/etc/cachy-void/updater.toml
+SNOOZE_HOUR=5
+SNOOZE_MINUTE=30

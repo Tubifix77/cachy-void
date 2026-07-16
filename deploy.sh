@@ -24,8 +24,8 @@
 #
 # Usage:
 #   sudo ./deploy.sh [--user NAME] [--void-packages DIR] [--march ARCH]
-#                    [--jobs N] [--with-grub] [--tag core|test|opt]
-#                    [--simulate] [--dry-run] [--root DIR]
+#                    [--jobs N] [--with-grub] [--with-schedule]
+#                    [--tag core|test|opt] [--simulate] [--dry-run] [--root DIR]
 #   sudo ./deploy.sh --log                 [--root DIR]
 #   sudo ./deploy.sh --uninstall           [--dry-run] [--root DIR]
 #   sudo ./deploy.sh --uninstall-tag NAME  [--dry-run] [--root DIR]
@@ -58,6 +58,8 @@ readonly PKG_XTOOLS="xtools"
 # Fixed install location for the mirrored Python engine (§6/§8.9).
 readonly CACHY_ENGINE="/usr/libexec/cachy-void-updater"
 readonly HEALTH_LOG_DIR="/var/log/cachy-health"
+readonly SCHED_LOG_DIR="/var/log/cachy-void-update"   # §4.9 scheduled-run logs
+readonly SNAP_DIR_DEFAULT="/.cachy-snapshots"          # §9.5 default snapshot subvol
 
 # ---------------------------------------------------------------------------
 # Options (mutable)
@@ -66,6 +68,7 @@ DO_UNINSTALL=false
 DO_LOG=false
 DRY_RUN=false
 WITH_GRUB=false
+WITH_SCHEDULE=false       # §4.9: also ENABLE the unattended cachy-void-update timer
 SIMULATE=false            # WSL2/sandbox: lay down files, skip init-dependent ops
 ROOT=""                   # offline mode: mounted Void tree prefix ("" = live)
 DEPLOY_TAG="core"         # ledger tag for this run (core|test|opt|...)
@@ -118,6 +121,7 @@ parse_args() {
             --dry-run)        DRY_RUN=true ;;
             --simulate)       SIMULATE=true ;;
             --with-grub)      WITH_GRUB=true ;;
+            --with-schedule)  WITH_SCHEDULE=true ;;
             --user)           UPDATER_USER="${2:?--user needs a value}"; shift ;;
             --void-packages)  VOID_PACKAGES="${2:?--void-packages needs a value}"; shift ;;
             --march)          MARCH="${2:?--march needs a value}"; shift ;;
@@ -170,6 +174,7 @@ detect_sandbox() {
 #   SERVICE  service-name       "-"
 #   PKG      package-name       "-"        (only recorded if WE installed it)
 #   DIR      dir-path           "-"
+#   SUBVOL   subvol-path        "-"        (btrfs; kept on uninstall if non-empty)
 #   GRUB     /etc/default/grub  backup-path
 # ---------------------------------------------------------------------------
 manifest_has() {  # TYPE TARGET
@@ -319,6 +324,25 @@ install_health_service() {
     enable_service cachy-health
 }
 
+# install_schedule_service — provision the §4.9 unattended-update runit service.
+# Files are ALWAYS laid down (tracked, uninstall reverts them) but the service is
+# ENABLED only with --with-schedule: an unattended build+deploy is opt-in, never
+# a default. Without the flag it sits ready and one `ln -s` away.
+install_schedule_service() {
+    install_dir /etc/sv/cachy-void-update root
+    install_file "$SYS_DIR/sv/cachy-void-update/run" /etc/sv/cachy-void-update/run 0755 root root
+    local tmp; tmp="$(mktemp)"; render "$SYS_DIR/sv/cachy-void-update/conf" "$tmp"
+    install_file "$tmp" /etc/sv/cachy-void-update/conf 0644 root root
+    rm -f -- "$tmp"
+    install_file "$SYS_DIR/sv/cachy-void-update/log/run" /etc/sv/cachy-void-update/log/run 0755 root root
+    install_dir "$SCHED_LOG_DIR" root
+    if $WITH_SCHEDULE; then
+        enable_service cachy-void-update
+    else
+        log "cachy-void-update provisioned but NOT enabled (pass --with-schedule for unattended §4.9 runs)"
+    fi
+}
+
 grub_regen() {
     if [ -n "$ROOT" ]; then
         warn "offline mode: grub config not regenerated — run update-grub from"
@@ -350,6 +374,82 @@ resolve_void_packages() {
         local home
         home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
         [ -n "$home" ] && [ -d "$home/void-packages" ] && VOID_PACKAGES="$home/void-packages"
+    fi
+}
+
+# toml_get SECTION KEY — read a scalar string from an updater.toml section.
+# Crude (no nested tables), but the updater.toml the user hand-writes (§6.1) is
+# flat; matches resolve_void_packages' spirit. Prints nothing / returns 1 if the
+# file or key is absent, so callers can fall back to their default.
+toml_get() {
+    local section="$1" key="$2" toml
+    toml="$(rp /etc/cachy-void/updater.toml)"
+    [ -f "$toml" ] || return 1
+    # Portable awk (no gawk-only gensub — Void's default awk is mawk): literal
+    # section compare + index/substr key split, so it runs anywhere deploy.sh does.
+    awk -v sec="[$section]" -v key="$key" '
+        { t=$0; sub(/^[[:space:]]+/,"",t); sub(/[[:space:]]+$/,"",t) }
+        t ~ /^\[/ { in_sec = (t == sec); next }
+        in_sec {
+            line=$0; sub(/#.*/,"",line)
+            n=index(line,"=")
+            if (n>0) {
+                k=substr(line,1,n-1); sub(/^[[:space:]]+/,"",k); sub(/[[:space:]]+$/,"",k)
+                if (k==key) {
+                    v=substr(line,n+1); sub(/^[[:space:]]+/,"",v); sub(/[[:space:]]+$/,"",v)
+                    gsub(/^["'"'"']|["'"'"']$/,"",v)   # strip surrounding quotes
+                    print v; exit
+                }
+            }
+        }' "$toml"
+}
+resolve_snapshot_dir()    { local v; v="$(toml_get snapshot dir    2>/dev/null)"; printf '%s' "${v:-$SNAP_DIR_DEFAULT}"; }
+resolve_snapshot_subvol() { local v; v="$(toml_get snapshot subvol 2>/dev/null)"; printf '%s' "${v:-/}"; }
+resolve_snapshot_enable() { local v; v="$(toml_get snapshot enable 2>/dev/null)"; printf '%s' "${v:-auto}"; }
+
+# install_snapshot_subvol — create the §9.5 pre-deploy snapshot subvol.
+# The updater takes a read-only snapshot INTO this subvol before every deploy and
+# ASSUMES it already exists (engine/snapshot.py; the updater's sudo grants cover
+# btrfs snapshot/delete/list but NOT create — so creation is deploy.sh's job, as
+# root). Created once, only when the target subvol is btrfs; harmless if snapshots
+# end up disabled. If the root is converted to btrfs LATER (a real path — the
+# Medion did exactly this), just re-run deploy.sh and this step creates it.
+install_snapshot_subvol() {
+    local enable snapdir subvol fstype pdir
+    enable="$(resolve_snapshot_enable)"
+    if [ "$enable" = false ] || [ "$enable" = "\"false\"" ]; then
+        log "pre-deploy snapshots disabled in updater.toml — skipping subvol (§9.5)"
+        return 0
+    fi
+    snapdir="$(resolve_snapshot_dir)"
+    subvol="$(resolve_snapshot_subvol)"
+    if [ -n "$ROOT" ]; then
+        warn "offline mode: §9.5 snapshot subvol '$snapdir' not created — after"
+        warn "  booting Void run: sudo btrfs subvolume create $snapdir (if on btrfs)"
+        return 0
+    fi
+    if $SIMULATE; then
+        log "[simulate] would create btrfs subvol $snapdir when '$subvol' is btrfs (§9.5)"
+        return 0
+    fi
+    fstype="$(findmnt -no FSTYPE -T "$(rp "$subvol")" 2>/dev/null || true)"
+    if [ "$fstype" != "btrfs" ]; then
+        log "'$subvol' is ${fstype:-unknown} (not btrfs) — skipping §9.5 snapshot subvol (auto-mode disables snapshots there)"
+        return 0
+    fi
+    pdir="$(rp "$snapdir")"
+    if [ -e "$pdir" ]; then
+        log "§9.5 snapshot subvol $snapdir already present"
+        manifest_add SUBVOL "$snapdir" "-"
+        return 0
+    fi
+    if $DRY_RUN; then log "[dry-run] btrfs subvolume create $snapdir"; return 0; fi
+    if btrfs subvolume create "$pdir" >/dev/null; then
+        manifest_add SUBVOL "$snapdir" "-"
+        ok "created btrfs subvol $snapdir (§9.5 pre-deploy snapshot target)"
+    else
+        warn "could not create btrfs subvol $snapdir — §9.5 snapshots will fail until"
+        warn "  it exists; create it manually: sudo btrfs subvolume create $snapdir"
     fi
 }
 
@@ -488,34 +588,38 @@ do_install() {
     $DRY_RUN && warn "dry-run: no changes will be made"
     $SIMULATE && [ -z "$ROOT" ] && warn "simulate: runit service enablement will be skipped"
 
-    log "[1/8] sysctl, udev, modprobe, module-load profiles (§3.1, §3.3)"
+    log "[1/9] sysctl, udev, modprobe, module-load profiles (§3.1, §3.3)"
     install_file "$SYS_DIR/sysctl.d/99-cachy-gaming.conf"   /etc/sysctl.d/99-cachy-gaming.conf   0644 root root
     install_file "$SYS_DIR/udev/60-ioschedulers.rules"      /etc/udev/rules.d/60-ioschedulers.rules 0644 root root
     install_file "$SYS_DIR/modprobe.d/99-gaming-input.conf" /etc/modprobe.d/99-gaming-input.conf 0644 root root
     install_file "$SYS_DIR/modules-load.d/cachy.conf"       /etc/modules-load.d/cachy.conf       0644 root root
 
-    log "[2/8] updater privilege boundary (§4.1)"
+    log "[2/9] updater privilege boundary (§4.1)"
     install_sudoers
 
-    log "[3/8] kernel state dir + G2 config fragment (§8.1, §8.5)"
+    log "[3/9] kernel state dir + G2 config fragment (§8.1, §8.5)"
     install_kernel_state
 
-    log "[4/8] compiler profile + overlay repository (§1.1, §4.6, §7.2)"
+    log "[4/9] compiler profile + overlay repository (§1.1, §4.6, §7.2)"
     install_compiler_profile
 
-    log "[5/8] mirror the updater engine into $CACHY_ENGINE (§6/§8.9)"
+    log "[5/9] mirror the updater engine into $CACHY_ENGINE (§6/§8.9)"
     install_engine
 
-    log "[6/8] packages: zram (§3.2) + xtools (§4.7 service cycling)"
+    log "[6/9] packages: zram (§3.2) + xtools (§4.7 service cycling)"
     ensure_pkg "$PKG_ZRAM"
     ensure_pkg "$PKG_XTOOLS"
 
-    log "[7/8] runit services: zram (§3.2) + cachy-health (§8.7)"
+    log "[7/9] runit services: zram (§3.2), cachy-health (§8.7), cachy-void-update (§4.9)"
     install_file "$SYS_DIR/sv/zramen/conf" /etc/sv/zramen/conf 0644 root root
     enable_service "$PKG_ZRAM"
     install_health_service
+    install_schedule_service
 
-    log "[8/8] apply runtime state"
+    log "[8/9] pre-deploy snapshot subvol (§9.5, btrfs hosts only)"
+    install_snapshot_subvol
+
+    log "[9/9] apply runtime state"
     install_grub_settings
     if ! $DRY_RUN && live; then
         # bbr module must be present BEFORE sysctl applies tcp_congestion_control
@@ -535,6 +639,10 @@ Next steps / notes:
     ZRAM_SIZE=percent, ZRAM_MAX_SIZE, ZRAM_PRIORITY) — see /etc/sv/zramen/conf.
   * -march was '$MARCH' (auto-detected via the §1.2 ladder unless --march was given).
   * USB autosuspend (§3.3) is opt-in: re-run with --with-grub to apply it.
+  * Unattended updates (§4.9) are opt-in: re-run with --with-schedule to enable the
+    daily cachy-void-update timer (edit /etc/sv/cachy-void-update/conf for the time).
+  * Pre-deploy snapshots (§9.5) auto-arm on btrfs. If you convert to btrfs LATER,
+    re-run deploy.sh once so it creates the $SNAP_DIR_DEFAULT subvol.
   * Inspect the change ledger any time:  sudo $0 --log
   * Roll back everything:                sudo $0 --uninstall
   * Roll back one route's changes:       sudo $0 --uninstall-tag $DEPLOY_TAG
@@ -586,6 +694,23 @@ uninstall_dir() {  # dir we created; may hold runtime state (kernel-state.json)
     rm -rf -- "$(rp "$d")"
     ok "removed dir $d"
 }
+uninstall_subvol() {  # subvol path (logical) — NEVER nuke rollback nets silently
+    local d="$1" pd; pd="$(rp "$d")"
+    if $DRY_RUN; then log "[dry-run] delete btrfs subvol $d (only if it holds no snapshots)"; return; fi
+    [ -e "$pd" ] || { ok "subvol $d already gone"; return; }
+    if ls -1d "$pd"/deploy-* >/dev/null 2>&1; then
+        warn "subvol $d still holds pre-deploy snapshot(s) — LEFT IN PLACE"
+        warn "  (a §9.5 rollback net; remove manually when sure:"
+        warn "   sudo btrfs subvolume delete $d/deploy-* && sudo btrfs subvolume delete $d)"
+        return
+    fi
+    if live && command -v btrfs >/dev/null 2>&1; then
+        btrfs subvolume delete "$pd" >/dev/null 2>&1 && ok "deleted empty subvol $d" \
+            || { rmdir "$pd" 2>/dev/null && ok "removed $d" || warn "could not remove subvol $d"; }
+    else
+        warn "offline/no btrfs here: leaving subvol $d in place (delete from booted Void)"
+    fi
+}
 uninstall_grub() {  # target backup
     local target="$1" backup="$2"
     if $DRY_RUN; then log "[dry-run] restore $target and regenerate grub"; return; fi
@@ -630,6 +755,7 @@ do_uninstall() {
             SERVICE) uninstall_service "$target" ;;
             FILE)    uninstall_file    "$target" "$extra" ;;
             DIR)     uninstall_dir     "$target" ;;
+            SUBVOL)  uninstall_subvol  "$target" ;;
             GRUB)    uninstall_grub    "$target" "$extra" ;;
             PKG)     uninstall_pkg     "$target" ;;
             *)       warn "unknown ledger entry: $type $target" ;;

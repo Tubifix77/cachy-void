@@ -1,0 +1,38 @@
+#!/bin/sh
+# Cachy-Void scheduled unattended update — architecture.md §4.9 (runit + snooze).
+#
+# runit-native scheduling, no cron and no timers: snooze waits until the daily
+# window, runs the update, then exits; runit re-runs this script so snooze
+# re-arms for the next day. This is the §0 invariant "scheduling via snooze"
+# in practice.
+#
+# OPT-IN. deploy.sh provisions this service dir but only ENABLES it (symlinks it
+# into /var/service) when you pass --with-schedule, because an unattended
+# build+deploy is a deliberate choice, not a default. Enable it yourself with:
+#   ln -s /etc/sv/cachy-void-update /var/service/
+#
+# The whole service — snooze while it waits and the update when it fires — runs
+# as the unprivileged updater user (same model as cachy-health, §8.7). That user
+# holds the narrow §4 sudoers grants the deploy stage needs; the process itself
+# is never root.
+exec 2>&1
+[ -r ./conf ] && . ./conf
+
+: "${CACHY_USER:=root}"
+: "${CACHY_ENGINE:=/usr/libexec/cachy-void-updater}"
+: "${CACHY_CONFIG:=/etc/cachy-void/updater.toml}"
+: "${SNOOZE_HOUR:=5}"
+: "${SNOOZE_MINUTE:=30}"
+
+UPDATER="$CACHY_ENGINE/cachy_void_update.py"
+
+# snooze -H/-M are the hour/minute time-field patterns (verified against Void's
+# snooze-0.5.1: uppercase for time fields; both accept snooze patterns like */6
+# or 1-5). A daily run is --sync (rebase void-packages, self-rolling-back on
+# conflict, §4.2) then, only if that succeeds, --commit --yes (build + deploy,
+# fail-fast + system-intact, §4). exec keeps the final process supervised so a
+# `sv restart`/`sv down` reaches the running update, not a leftover shell.
+exec chpst -u "$CACHY_USER" \
+    snooze -H "$SNOOZE_HOUR" -M "$SNOOZE_MINUTE" \
+    sh -c 'python3 "$1" --config "$2" --sync && exec python3 "$1" --config "$2" --commit --yes' \
+        cachy-void-update "$UPDATER" "$CACHY_CONFIG"

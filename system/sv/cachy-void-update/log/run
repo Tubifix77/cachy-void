@@ -1,0 +1,5 @@
+#!/bin/sh
+# Cachy-Void scheduled-update log service — architecture.md §4.9 (runit svlogd).
+# Captures the update run's stdout/stderr into timestamped, rotated logs so an
+# unattended --sync/--commit leaves an audit trail even when nobody is watching.
+exec svlogd -tt /var/log/cachy-void-update
