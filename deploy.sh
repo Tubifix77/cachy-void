@@ -25,6 +25,7 @@
 # Usage:
 #   sudo ./deploy.sh [--user NAME] [--void-packages DIR] [--march ARCH]
 #                    [--jobs N] [--with-grub] [--with-schedule]
+#                    [--hud-profile auto|full|minimal]
 #                    [--tag core|test|opt] [--simulate] [--dry-run] [--root DIR]
 #   sudo ./deploy.sh --log                 [--root DIR]
 #   sudo ./deploy.sh --uninstall           [--dry-run] [--root DIR]
@@ -78,6 +79,7 @@ DO_LOG=false
 DRY_RUN=false
 WITH_GRUB=false
 WITH_SCHEDULE=false       # §4.9: also ENABLE the unattended cachy-void-update timer
+HUD_PROFILE="auto"        # §3.4 MangoHud config: auto|full|minimal (minimal = legacy Optimus)
 SIMULATE=false            # WSL2/sandbox: lay down files, skip init-dependent ops
 ROOT=""                   # offline mode: mounted Void tree prefix ("" = live)
 DEPLOY_TAG="core"         # ledger tag for this run (core|test|opt|...)
@@ -131,6 +133,7 @@ parse_args() {
             --simulate)       SIMULATE=true ;;
             --with-grub)      WITH_GRUB=true ;;
             --with-schedule)  WITH_SCHEDULE=true ;;
+            --hud-profile)    HUD_PROFILE="${2:?--hud-profile needs auto|full|minimal}"; shift ;;
             --user)           UPDATER_USER="${2:?--user needs a value}"; shift ;;
             --void-packages)  VOID_PACKAGES="${2:?--void-packages needs a value}"; shift ;;
             --march)          MARCH="${2:?--march needs a value}"; shift ;;
@@ -172,6 +175,25 @@ detect_sandbox() {
         SIMULATE=true
         warn "WSL2/virtualized profile detected — enabling --simulate (no runit alterations)"
     fi
+}
+
+# detect_legacy_optimus — true on an NVIDIA Optimus laptop with a LEGACY driver
+# (series <= 470, e.g. Kepler). On these the dGPU's load/power counters are not
+# reliably exposed via NVML during PRIME offload (even nvidia-smi struggles), so
+# MangoHud's GPU panel misleads — reading 0% while a game renders on the dGPU
+# (§3.4). Such hosts get the minimal HUD (fps/cpu, no GPU sensors). Live-only:
+# the hardware can't be probed offline (--root) or in a sandbox, so it says no.
+detect_legacy_optimus() {
+    [ -z "$ROOT" ] && ! $SIMULATE || return 1
+    local ver major
+    ver="$(cat /sys/module/nvidia/version 2>/dev/null)"   # e.g. 470.256.02
+    [ -n "$ver" ] || return 1
+    major="${ver%%.*}"
+    [ "$major" -le 470 ] 2>/dev/null || return 1
+    # Optimus proxy: PRIME offloader present, or an Intel/AMD iGPU beside the dGPU.
+    command -v prime-run >/dev/null 2>&1 && return 0
+    lspci 2>/dev/null | grep -iqE 'VGA.*(Intel|AMD|ATI)' && return 0
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -364,7 +386,21 @@ install_gaming_userspace() {
     ensure_pkg "$PKG_XZ"          # cachy-proton needs xz to extract Proton-CachyOS
     install_file "$SYS_DIR/bin/cachy-game"   "$CACHY_GAME_WRAPPER"   0755 root root
     install_file "$SYS_DIR/bin/cachy-proton" "$CACHY_PROTON_HELPER"  0755 root root
-    install_file "$SYS_DIR/xdg/MangoHud.conf" "$MANGOHUD_CONF" 0644 root root
+
+    # §3.4 MangoHud config: full (GPU stats) vs minimal (legacy Optimus — the dGPU
+    # sensors read a misleading 0%, so keep only the accurate fps/cpu telemetry).
+    local hud="$HUD_PROFILE" hud_src
+    if [ "$hud" = auto ]; then
+        if detect_legacy_optimus; then hud=minimal; else hud=full; fi
+    fi
+    case "$hud" in
+        minimal) hud_src="$SYS_DIR/xdg/MangoHud-minimal.conf"
+                 log "MangoHud: MINIMAL profile (legacy Optimus — GPU sensors unreliable; keeping fps/cpu)" ;;
+        full)    hud_src="$SYS_DIR/xdg/MangoHud.conf"
+                 log "MangoHud: full profile (GPU stats enabled)" ;;
+        *)       die "invalid --hud-profile '$HUD_PROFILE' (use auto|full|minimal)" ;;
+    esac
+    install_file "$hud_src" "$MANGOHUD_CONF" 0644 root root
     log "gaming layer ready — launch: cachy-game %command% | Proton-CachyOS: run 'cachy-proton' (per-user)"
 }
 

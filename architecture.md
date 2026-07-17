@@ -227,7 +227,13 @@ Two upstream tools plus a composition wrapper:
 - **`MangoHud`** — an opt-in performance overlay (FPS/frametime/CPU+GPU temp),
   loaded as a Vulkan/GL layer via the `MANGOHUD=1` environment variable. The
   32-bit sibling `MangoHud-32bit` is needed for 32-bit titles and is therefore
-  **multilib-gated** (§ INSTALL multilib); its absence is non-fatal.
+  **multilib-gated** (§ INSTALL multilib); its absence is non-fatal. Two config
+  profiles ship: the default **full** HUD, and a **minimal** HUD auto-selected on
+  a legacy NVIDIA Optimus laptop (driver ≤ 470) — there the dGPU's load/power/temp
+  are not reliably exposed via NVML during PRIME offload (even `nvidia-smi`
+  struggles), so the GPU panel would read a misleading 0% while a game renders;
+  the minimal profile keeps the accurate swapchain-based fps/frametime + CPU and
+  drops the GPU sensors. `deploy.sh --hud-profile auto|full|minimal` overrides.
 - **`cachy-game`** — a launch wrapper that composes the offloader and gamemode:
   `gamemoderun` → `prime-run` (the NVIDIA PRIME offload, §6b) → the game. It
   **skips any piece that is absent**, so it is correct on a desktop GPU (no
@@ -453,7 +459,8 @@ cachy-void/
 │   ├── sudoers.d/cachy-void             # §4 privilege boundary
 │   ├── bin/cachy-game                   # §3.4 game launch wrapper (→ /usr/local/bin)
 │   ├── bin/cachy-proton                 # §3.4 Proton-CachyOS installer (→ /usr/local/bin)
-│   ├── xdg/MangoHud.conf                # §3.4 default HUD (→ /etc/xdg/MangoHud/)
+│   ├── xdg/MangoHud.conf                # §3.4 full HUD (→ /etc/xdg/MangoHud/)
+│   ├── xdg/MangoHud-minimal.conf        # §3.4 legacy-Optimus HUD (no GPU sensors)
 │   ├── sv/zramen/{run,finish,conf}      # §3.2 zram service (run: override template)
 │   ├── sv/cachy-health/{run,conf}       # §8.7 post-boot health daemon service
 │   └── sv/cachy-void-update/{run,conf,log/run}  # §4.9 scheduled-update service (opt-in)
