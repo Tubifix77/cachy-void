@@ -1,0 +1,25 @@
+#!/bin/sh
+# cachy-game — Cachy-Void game launch wrapper (architecture.md §3.4).
+#
+# Composes the per-game runtime optimisations into one prefix:
+#   gamemoderun -> prime-run -> <game>
+# i.e. run the game under Feral GameMode (performance governor + GPU perf +
+# nice/ionice for its lifetime) AND on the discrete GPU via the NVIDIA PRIME
+# offload. Each layer is applied ONLY if present, so this is correct on:
+#   * an Optimus laptop (both prime-run and gamemoderun)  -> gamemoderun prime-run game
+#   * a desktop dGPU (no prime-run)                       -> gamemoderun game
+#   * a box without gamemode                              -> game (or prime-run game)
+#
+# MangoHud is opt-in (it is a Vulkan/GL layer keyed on MANGOHUD=1): set CACHY_HUD=1
+# to overlay FPS/frametime/temps. Left off by default so the wrapper is invisible
+# unless asked for.
+#
+# Steam per-title launch option:      cachy-game %command%
+# With the HUD:                       CACHY_HUD=1 cachy-game %command%
+# From a shell:                       cachy-game ./mygame
+[ "${CACHY_HUD:-0}" = 1 ] && export MANGOHUD=1
+
+command -v prime-run   >/dev/null 2>&1 && set -- prime-run "$@"
+command -v gamemoderun >/dev/null 2>&1 && set -- gamemoderun "$@"
+
+exec "$@"

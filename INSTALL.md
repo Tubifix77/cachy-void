@@ -136,6 +136,8 @@ sudoers fragment is validated with `visudo -c` before it is ever activated.
 | `/etc/sv/cachy-void-update/` | Unattended-update timer service (§4.9; provisioned always, enabled only with `--with-schedule`). |
 | `/var/log/cachy-health/`, `/var/log/cachy-void-update/` | Health daemon + scheduled-run logs (svlogd). |
 | `/.cachy-snapshots/` | Pre-deploy btrfs snapshot subvol (§9.5; created only when the root is btrfs). |
+| `/usr/local/bin/cachy-game` | Game launch wrapper — `gamemoderun`→`prime-run`→game (§3.4). |
+| `/etc/xdg/MangoHud/MangoHud.conf` | Restrained default MangoHud overlay config (§3.4). |
 
 ---
 
@@ -423,6 +425,37 @@ Notes:
   drivers.
 - Wayland is impractical on the 470/390 legacy stack; use X11 (any lightweight DE
   — LXQt/Openbox are fine). The DE stays your choice; Cachy-Void never locks one in.
+
+### 12.1 Launching games — the `cachy-game` wrapper (§3.4)
+
+`deploy.sh` installs `gamemode`, `MangoHud`, and a launch wrapper
+`/usr/local/bin/cachy-game` that composes the per-game runtime optimisations:
+
+```
+cachy-game = gamemoderun  ->  prime-run  ->  <your game>
+```
+
+i.e. it runs the game under **Feral GameMode** (performance CPU governor, GPU
+perf mode, nice/ionice for the game's lifetime) and, on an Optimus laptop, on the
+**discrete GPU** via the NVIDIA PRIME offload. Any missing piece is skipped, so it
+is also correct on a desktop dGPU.
+
+- **Steam** — set the per-title launch option to:
+  ```
+  cachy-game %command%
+  ```
+- **With the performance overlay** (MangoHud, FPS/frametime/temps):
+  ```
+  CACHY_HUD=1 cachy-game %command%
+  ```
+  Toggle the overlay in-game with **Shift_R + F12**. Tune it by copying
+  `/etc/xdg/MangoHud/MangoHud.conf` to `~/.config/MangoHud/MangoHud.conf`.
+- **From a shell** — `cachy-game ./mygame` (or `CACHY_HUD=1 cachy-game …`).
+
+GameMode needs no runit service (it is D-Bus activated) and no special group on a
+seat-managed (elogind) desktop. `gamescope` is intentionally **not** part of this
+layer — it is unreliable on the nvidia470/390 legacy drivers; install it by hand
+where it helps.
 
 ---
 

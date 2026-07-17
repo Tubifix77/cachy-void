@@ -209,6 +209,54 @@ Apply: `sudo udevadm control --reload && sudo udevadm trigger`.
 
 ---
 
+### 3.4 Gaming userspace layer (runtime)
+
+The third leg of the performance stool: **BORE** tunes the *scheduler* (§2), **zram**
+tunes *memory* (§3.2), and this layer tunes the *per-game runtime* — non-kernel,
+non-persistent optimisations that apply only while a game runs. It is pure
+userspace: no runit service, no kernel involvement, trivially reversible.
+
+Two upstream tools plus a composition wrapper:
+
+- **`gamemode`** (Feral) — a D-Bus–activated user daemon (`gamemoded`; **no runit
+  service**, like PipeWire) that, for the duration of a game, switches the CPU
+  governor to `performance`, requests the GPU's high-perf mode, and applies
+  nice/ionice. Activated per-process by `gamemoderun`. It is already in the
+  allowlist, so the updater can rebuild it `-O3`; deploy.sh only guarantees it is
+  present.
+- **`MangoHud`** — an opt-in performance overlay (FPS/frametime/CPU+GPU temp),
+  loaded as a Vulkan/GL layer via the `MANGOHUD=1` environment variable. The
+  32-bit sibling `MangoHud-32bit` is needed for 32-bit titles and is therefore
+  **multilib-gated** (§ INSTALL multilib); its absence is non-fatal.
+- **`cachy-game`** — a launch wrapper that composes the offloader and gamemode:
+  `gamemoderun` → `prime-run` (the NVIDIA PRIME offload, §6b) → the game. It
+  **skips any piece that is absent**, so it is correct on a desktop GPU (no
+  `prime-run`) or a box without gamemode. MangoHud is opt-in via `CACHY_HUD=1`.
+  The Steam per-title launch option becomes simply `cachy-game %command%`.
+
+```sh
+# /usr/local/bin/cachy-game
+#!/bin/sh
+[ "${CACHY_HUD:-0}" = 1 ] && export MANGOHUD=1
+command -v prime-run   >/dev/null 2>&1 && set -- prime-run "$@"
+command -v gamemoderun >/dev/null 2>&1 && set -- gamemoderun "$@"
+exec "$@"
+```
+
+**Out of scope:** `gamescope` (Valve's microcompositor) — valuable on modern GPUs
+but unreliable on the `nvidia470` legacy driver, so it is not part of the layer
+(install it by hand where it helps). **Adjacent, not here:** a `Proton-GE` /
+`Proton-CachyOS` drop-in is per-user (`~/.steam/root/compatibilitytools.d/`), not
+a system component; it is a separate optional helper.
+
+`deploy.sh` provisions this layer by default (it is what a *gaming* overlay is
+for): ensure `gamemode` + `MangoHud` (+ `MangoHud-32bit` when multilib is
+present), install `cachy-game`, and drop a restrained default
+`/etc/xdg/MangoHud/MangoHud.conf`. Every item is ledger-tracked and reverts on
+`--uninstall`.
+
+---
+
 ## 4. The Automated Updater (`cachy-void-update`)
 
 A standalone Python 3 script (stdlib only: `subprocess`, `tomllib`, `logging`). It runs as the **regular build user**; root is reached exclusively through `sudo` for the exact commands in Stage 4 (single privilege boundary, I4). A sudoers fragment (`/etc/sudoers.d/cachy-void`) grants NOPASSWD for `xbps-install`, `sv`, `xcheckrestart` (§4.7 — it must run as root to read system daemons' `/proc/*/maps`), `xbps-pkgdb`, and the three narrow GRUB staging binaries `grub-set-default`, `grub-reboot`, `grub-editenv` (§8.6) — nothing else.
@@ -394,8 +442,11 @@ cachy-void/
 │   ├── modprobe.d/99-gaming-input.conf  # §3.3
 │   ├── xbps.d/00-cachy-overlay.conf     # §4.6, §7.2 (lists both repo roots)
 │   ├── sudoers.d/cachy-void             # §4 privilege boundary
+│   ├── bin/cachy-game                   # §3.4 game launch wrapper (→ /usr/local/bin)
+│   ├── xdg/MangoHud.conf                # §3.4 default HUD (→ /etc/xdg/MangoHud/)
 │   ├── sv/zramen/{run,finish,conf}      # §3.2 zram service (run: override template)
-│   └── sv/cachy-health/{run,conf}       # §8.7 post-boot health daemon service
+│   ├── sv/cachy-health/{run,conf}       # §8.7 post-boot health daemon service
+│   └── sv/cachy-void-update/{run,conf,log/run}  # §4.9 scheduled-update service (opt-in)
 ├── updater/
 │   ├── cachy_void_update.py             # §4: CLI entry point (+ --health-daemon)
 │   ├── engine/                          # ddre.py (§7), xbps.py (§7.2), journal.py (§7.6),

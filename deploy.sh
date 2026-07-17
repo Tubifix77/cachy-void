@@ -55,6 +55,12 @@ readonly TAB=$'\t'
 readonly PKG_ZRAM="zramen"
 readonly PKG_XTOOLS="xtools"
 readonly PKG_SNOOZE="snooze"   # §4.9: the scheduled-update runit service execs it
+# §3.4 gaming userspace layer.
+readonly PKG_GAMEMODE="gamemode"
+readonly PKG_MANGOHUD="MangoHud"           # case-sensitive; lowercase does not exist
+readonly PKG_MANGOHUD32="MangoHud-32bit"   # 32-bit titles; multilib-gated (optional)
+readonly CACHY_GAME_WRAPPER="/usr/local/bin/cachy-game"
+readonly MANGOHUD_CONF="/etc/xdg/MangoHud/MangoHud.conf"
 
 # Fixed install location for the mirrored Python engine (§6/§8.9).
 readonly CACHY_ENGINE="/usr/libexec/cachy-void-updater"
@@ -344,6 +350,20 @@ install_schedule_service() {
     fi
 }
 
+# install_gaming_userspace — provision the §3.4 runtime layer: the cachy-game
+# launch wrapper + a restrained MangoHud default, and ensure gamemode/MangoHud
+# are present. gamemode is also an allowlist target, so the updater can later
+# rebuild it -O3 and take it over; here we only guarantee it exists for the
+# wrapper. MangoHud-32bit is multilib-gated, hence optional (non-fatal if absent).
+install_gaming_userspace() {
+    ensure_pkg "$PKG_GAMEMODE"
+    ensure_pkg "$PKG_MANGOHUD"
+    ensure_pkg "$PKG_MANGOHUD32" optional
+    install_file "$SYS_DIR/bin/cachy-game" "$CACHY_GAME_WRAPPER" 0755 root root
+    install_file "$SYS_DIR/xdg/MangoHud.conf" "$MANGOHUD_CONF" 0644 root root
+    log "gaming layer ready — Steam launch option: cachy-game %command% (HUD: CACHY_HUD=1 cachy-game %command%)"
+}
+
 grub_regen() {
     if [ -n "$ROOT" ]; then
         warn "offline mode: grub config not regenerated — run update-grub from"
@@ -589,25 +609,25 @@ do_install() {
     $DRY_RUN && warn "dry-run: no changes will be made"
     $SIMULATE && [ -z "$ROOT" ] && warn "simulate: runit service enablement will be skipped"
 
-    log "[1/9] sysctl, udev, modprobe, module-load profiles (§3.1, §3.3)"
+    log "[1/10] sysctl, udev, modprobe, module-load profiles (§3.1, §3.3)"
     install_file "$SYS_DIR/sysctl.d/99-cachy-gaming.conf"   /etc/sysctl.d/99-cachy-gaming.conf   0644 root root
     install_file "$SYS_DIR/udev/60-ioschedulers.rules"      /etc/udev/rules.d/60-ioschedulers.rules 0644 root root
     install_file "$SYS_DIR/modprobe.d/99-gaming-input.conf" /etc/modprobe.d/99-gaming-input.conf 0644 root root
     install_file "$SYS_DIR/modules-load.d/cachy.conf"       /etc/modules-load.d/cachy.conf       0644 root root
 
-    log "[2/9] updater privilege boundary (§4.1)"
+    log "[2/10] updater privilege boundary (§4.1)"
     install_sudoers
 
-    log "[3/9] kernel state dir + G2 config fragment (§8.1, §8.5)"
+    log "[3/10] kernel state dir + G2 config fragment (§8.1, §8.5)"
     install_kernel_state
 
-    log "[4/9] compiler profile + overlay repository (§1.1, §4.6, §7.2)"
+    log "[4/10] compiler profile + overlay repository (§1.1, §4.6, §7.2)"
     install_compiler_profile
 
-    log "[5/9] mirror the updater engine into $CACHY_ENGINE (§6/§8.9)"
+    log "[5/10] mirror the updater engine into $CACHY_ENGINE (§6/§8.9)"
     install_engine
 
-    log "[6/9] packages: zram (§3.2) + xtools (§4.7 cycling) + snooze (§4.9 timer)"
+    log "[6/10] packages: zram (§3.2) + xtools (§4.7 cycling) + snooze (§4.9 timer)"
     ensure_pkg "$PKG_ZRAM"
     ensure_pkg "$PKG_XTOOLS"
     # snooze backs the §4.9 service; install it unconditionally so the service
@@ -615,16 +635,19 @@ do_install() {
     # manual `ln -s` (the run script documents that path). It is tiny.
     ensure_pkg "$PKG_SNOOZE"
 
-    log "[7/9] runit services: zram (§3.2), cachy-health (§8.7), cachy-void-update (§4.9)"
+    log "[7/10] runit services: zram (§3.2), cachy-health (§8.7), cachy-void-update (§4.9)"
     install_file "$SYS_DIR/sv/zramen/conf" /etc/sv/zramen/conf 0644 root root
     enable_service "$PKG_ZRAM"
     install_health_service
     install_schedule_service
 
-    log "[8/9] pre-deploy snapshot subvol (§9.5, btrfs hosts only)"
+    log "[8/10] gaming userspace layer: gamemode + MangoHud + cachy-game (§3.4)"
+    install_gaming_userspace
+
+    log "[9/10] pre-deploy snapshot subvol (§9.5, btrfs hosts only)"
     install_snapshot_subvol
 
-    log "[9/9] apply runtime state"
+    log "[10/10] apply runtime state"
     install_grub_settings
     if ! $DRY_RUN && live; then
         # bbr module must be present BEFORE sysctl applies tcp_congestion_control
