@@ -117,7 +117,12 @@ else
     warn "no checksum asset published for this build — installing unverified"
 fi
 
-TOPDIR="$(tar -tJf "$TMP/$TARBALL_NAME" | head -1 | cut -d/ -f1)"
+# Read just the top-level dir name. `tar -t | head -1` makes tar receive SIGPIPE
+# once head closes the pipe, which under `set -o pipefail` would abort us — so
+# read the first entry with pipefail momentarily off.
+set +o pipefail
+TOPDIR="$(tar -tJf "$TMP/$TARBALL_NAME" 2>/dev/null | head -1 | cut -d/ -f1)"
+set -o pipefail
 [ -n "$TOPDIR" ] || die "could not read tarball contents"
 mkdir -p -- "$COMPAT_DIR"
 if [ -d "$COMPAT_DIR/$TOPDIR" ]; then
