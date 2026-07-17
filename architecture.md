@@ -243,11 +243,20 @@ command -v gamemoderun >/dev/null 2>&1 && set -- gamemoderun "$@"
 exec "$@"
 ```
 
+- **`cachy-proton`** — a per-user helper (no root) that installs **Proton-CachyOS**
+  (CachyOS's own gaming Proton fork — the fusion, grabbed as a prebuilt drop-in
+  with no compile) into `~/.steam/root/compatibilitytools.d/`. It is **ABI-aware**:
+  Proton-CachyOS ships a baseline `x86_64` and an `x86_64_v3` build, so on a
+  pre-Haswell CPU it selects the baseline (the v3 build SIGILLs) — the same ABI
+  ladder as the userland overlay (§1.2). It resolves the latest GitHub release,
+  **verifies the `.sha512sum`** before extracting (trust-first), and is idempotent.
+  Because Steam compat tools are strictly per-user state, this is a helper the user
+  runs — never a root/deploy action.
+
 **Out of scope:** `gamescope` (Valve's microcompositor) — valuable on modern GPUs
 but unreliable on the `nvidia470` legacy driver, so it is not part of the layer
-(install it by hand where it helps). **Adjacent, not here:** a `Proton-GE` /
-`Proton-CachyOS` drop-in is per-user (`~/.steam/root/compatibilitytools.d/`), not
-a system component; it is a separate optional helper.
+(install it by hand where it helps). `GE-Proton` (GloriousEggroll) is a fine
+alternative to Proton-CachyOS but not shipped by default; install it by hand.
 
 `deploy.sh` provisions this layer by default (it is what a *gaming* overlay is
 for): ensure `gamemode` + `MangoHud` (+ `MangoHud-32bit` when multilib is
@@ -443,6 +452,7 @@ cachy-void/
 │   ├── xbps.d/00-cachy-overlay.conf     # §4.6, §7.2 (lists both repo roots)
 │   ├── sudoers.d/cachy-void             # §4 privilege boundary
 │   ├── bin/cachy-game                   # §3.4 game launch wrapper (→ /usr/local/bin)
+│   ├── bin/cachy-proton                 # §3.4 Proton-CachyOS installer (→ /usr/local/bin)
 │   ├── xdg/MangoHud.conf                # §3.4 default HUD (→ /etc/xdg/MangoHud/)
 │   ├── sv/zramen/{run,finish,conf}      # §3.2 zram service (run: override template)
 │   ├── sv/cachy-health/{run,conf}       # §8.7 post-boot health daemon service

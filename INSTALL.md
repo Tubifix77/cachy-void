@@ -137,6 +137,7 @@ sudoers fragment is validated with `visudo -c` before it is ever activated.
 | `/var/log/cachy-health/`, `/var/log/cachy-void-update/` | Health daemon + scheduled-run logs (svlogd). |
 | `/.cachy-snapshots/` | Pre-deploy btrfs snapshot subvol (§9.5; created only when the root is btrfs). |
 | `/usr/local/bin/cachy-game` | Game launch wrapper — `gamemoderun`→`prime-run`→game (§3.4). |
+| `/usr/local/bin/cachy-proton` | Per-user helper to install Proton-CachyOS into Steam (§3.4). |
 | `/etc/xdg/MangoHud/MangoHud.conf` | Restrained default MangoHud overlay config (§3.4). |
 
 ---
@@ -456,6 +457,25 @@ GameMode needs no runit service (it is D-Bus activated) and no special group on 
 seat-managed (elogind) desktop. `gamescope` is intentionally **not** part of this
 layer — it is unreliable on the nvidia470/390 legacy drivers; install it by hand
 where it helps.
+
+### 12.2 Proton-CachyOS — the `cachy-proton` helper (§3.4)
+
+For better game compatibility, install CachyOS's own Proton fork. Run as **your
+normal user** (it is per-user Steam state, never root):
+
+```bash
+cachy-proton            # download + install the latest Proton-CachyOS
+cachy-proton --list     # show installed versions
+cachy-proton --force    # reinstall / re-pull the latest
+```
+
+It auto-selects the right build for your CPU (baseline `x86_64` on older CPUs,
+`x86_64_v3` on Haswell+), verifies the release checksum before extracting, and
+drops it into `~/.steam/root/compatibilitytools.d/`. Then **fully restart Steam**
+and, per game, *Properties → Compatibility → Force a specific Steam Play tool →
+Proton-CachyOS …*. Pair it with `cachy-game %command%` for gamemode + the GPU
+offload. `GE-Proton` is a fine alternative if you prefer it — install it by hand
+the same way (drop it in the same directory).
 
 ---
 

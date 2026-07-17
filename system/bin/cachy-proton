@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# cachy-proton — install/update Proton-CachyOS into Steam (architecture.md §3.4, adjacent).
+#
+# Drops CachyOS's gaming Proton fork into Steam's compatibilitytools.d so you can
+# pick it per title. Pure USERSPACE, no root: it only writes under your $HOME, and
+# is trivially reversible (delete the folder). This is the most Void-friendly way
+# to grab CachyOS's gaming sauce — a prebuilt drop-in, no compile, no system change.
+#
+#   cachy-proton              install/update to the latest release (idempotent)
+#   cachy-proton --force      reinstall even if the latest is already present
+#   cachy-proton --list       list installed Proton-CachyOS versions
+#   cachy-proton --dir DIR    override the compatibilitytools.d directory
+#
+# ABI-aware: Proton-CachyOS ships a baseline x86_64 build and an x86_64_v3 build.
+# On a pre-Haswell CPU (e.g. the Ivy Bridge testbed) the v3 build SIGILLs, so we
+# select x86_64 unless the CPU proves AVX2+BMI2+FMA. (There is no v4 build.)
+set -euo pipefail
+
+readonly REPO="CachyOS/proton-cachyos"
+readonly API="https://api.github.com/repos/${REPO}/releases/latest"
+
+if [ -t 1 ]; then C_I=$'\033[0;36m'; C_OK=$'\033[0;32m'; C_W=$'\033[0;33m'; C_E=$'\033[0;31m'; C_0=$'\033[0m'
+else C_I=""; C_OK=""; C_W=""; C_E=""; C_0=""; fi
+log()  { printf '%s==>%s %s\n' "$C_I"  "$C_0" "$*"; }
+ok()   { printf '%s ok%s %s\n' "$C_OK" "$C_0" "$*"; }
+warn() { printf '%swarn%s %s\n' "$C_W" "$C_0" "$*" >&2; }
+die()  { printf '%serror%s %s\n' "$C_E" "$C_0" "$*" >&2; exit 1; }
+
+FORCE=false; DO_LIST=false; COMPAT_DIR=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --force) FORCE=true ;;
+        --list)  DO_LIST=true ;;
+        --dir)   COMPAT_DIR="${2:?--dir needs a value}"; shift ;;
+        -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) die "unknown argument: $1 (try --help)" ;;
+    esac
+    shift
+done
+
+[ "$(id -u)" -ne 0 ] || warn "running as root is unusual — Proton is per-user; you probably want your normal user."
+
+# Resolve compatibilitytools.d. ~/.steam/root follows the native-Steam symlink to
+# ~/.local/share/Steam; honor an explicit --dir or the STEAM_COMPAT_DIR override.
+if [ -z "$COMPAT_DIR" ]; then
+    if [ -n "${STEAM_COMPAT_DIR:-}" ]; then COMPAT_DIR="$STEAM_COMPAT_DIR"
+    elif [ -d "$HOME/.steam/root" ]; then COMPAT_DIR="$HOME/.steam/root/compatibilitytools.d"
+    elif [ -d "$HOME/.local/share/Steam" ]; then COMPAT_DIR="$HOME/.local/share/Steam/compatibilitytools.d"
+    else COMPAT_DIR="$HOME/.steam/root/compatibilitytools.d"; fi
+fi
+readonly MARKER="$COMPAT_DIR/.cachy-proton"    # last-installed tag + dir, for idempotency
+
+if $DO_LIST; then
+    log "Proton-CachyOS in $COMPAT_DIR:"
+    ls -1d "$COMPAT_DIR"/proton-cachyos-* 2>/dev/null | sed 's#.*/#  #' || echo "  (none installed)"
+    [ -f "$MARKER" ] && sed 's/^/  marker: /' "$MARKER"
+    exit 0
+fi
+
+detect_abi() {
+    local f; f=" $(grep -m1 '^flags' /proc/cpuinfo 2>/dev/null | cut -d: -f2) "
+    if [ "${f#* avx2 }" != "$f" ] && [ "${f#* bmi2 }" != "$f" ] && [ "${f#* fma }" != "$f" ]; then
+        printf 'x86_64_v3'
+    else
+        printf 'x86_64'
+    fi
+}
+
+for t in curl tar xz python3 sha512sum; do
+    command -v "$t" >/dev/null 2>&1 || die "missing required tool: $t (install it first)"
+done
+
+ABI="$(detect_abi)"
+log "resolving latest Proton-CachyOS release for ABI: $ABI"
+
+# One API call; parse tag + the matching baseline/v3 tarball and its checksum.
+read -r TAG TARBALL_URL SHA_URL TARBALL_NAME < <(python3 - "$ABI" <<PY
+import json, sys, urllib.request
+abi = sys.argv[1]
+req = urllib.request.Request("$API",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "cachy-proton"})
+d = json.load(urllib.request.urlopen(req, timeout=30))
+tag, tb_url, sha_url, tb_name = d["tag_name"], "", "", ""
+for a in d.get("assets", []):
+    n = a["name"]
+    if n.endswith(f"-{abi}.tar.xz"):
+        tb_url, tb_name = a["browser_download_url"], n
+    elif n.endswith(f"-{abi}.sha512sum"):
+        sha_url = a["browser_download_url"]
+print(tag, tb_url, sha_url, tb_name)
+PY
+) || die "could not query the GitHub release API (network? rate limit?)"
+
+[ -n "$TARBALL_URL" ] || die "no $ABI tarball in release $TAG (asset naming changed?)"
+log "latest: $TAG  asset: $TARBALL_NAME"
+
+if ! $FORCE && [ -f "$MARKER" ] && grep -qxF "tag=$TAG" "$MARKER"; then
+    installed_dir="$(sed -n 's/^dir=//p' "$MARKER")"
+    if [ -n "$installed_dir" ] && [ -d "$COMPAT_DIR/$installed_dir" ]; then
+        ok "already up to date: $TAG ($ABI) in $COMPAT_DIR/$installed_dir"
+        echo "   (use --force to reinstall)"
+        exit 0
+    fi
+fi
+
+TMP="$(mktemp -d)"; trap 'rm -rf -- "$TMP"' EXIT
+log "downloading $TARBALL_NAME …"
+curl -fL# -o "$TMP/$TARBALL_NAME" "$TARBALL_URL" || die "download failed"
+if [ -n "$SHA_URL" ]; then
+    curl -fsSL -o "$TMP/$TARBALL_NAME.sha512sum" "$SHA_URL" || die "checksum download failed"
+    log "verifying sha512 …"
+    # the .sha512sum lists the tarball by name; verify from inside $TMP
+    ( cd "$TMP" && sha512sum -c --status "$TARBALL_NAME.sha512sum" ) \
+        || die "SHA-512 MISMATCH — refusing to install (corrupt or tampered download)"
+    ok "checksum verified"
+else
+    warn "no checksum asset published for this build — installing unverified"
+fi
+
+TOPDIR="$(tar -tJf "$TMP/$TARBALL_NAME" | head -1 | cut -d/ -f1)"
+[ -n "$TOPDIR" ] || die "could not read tarball contents"
+mkdir -p -- "$COMPAT_DIR"
+if [ -d "$COMPAT_DIR/$TOPDIR" ]; then
+    $FORCE || die "$COMPAT_DIR/$TOPDIR already exists (use --force)"
+    rm -rf -- "$COMPAT_DIR/$TOPDIR"
+fi
+log "extracting into $COMPAT_DIR …"
+tar -xJf "$TMP/$TARBALL_NAME" -C "$COMPAT_DIR"
+
+printf 'tag=%s\ndir=%s\nabi=%s\n' "$TAG" "$TOPDIR" "$ABI" > "$MARKER"
+ok "installed Proton-CachyOS $TAG ($ABI) → $COMPAT_DIR/$TOPDIR"
+cat <<EOF
+
+Next:
+  1. Fully restart Steam (so it rescans compatibilitytools.d).
+  2. Per game: Properties → Compatibility → Force a specific Steam Play tool →
+     pick the "Proton-CachyOS …" entry. (Or set it globally in Steam Play settings.)
+  3. Pair it with the launch wrapper:  cachy-game %command%
+EOF

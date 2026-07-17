@@ -59,7 +59,9 @@ readonly PKG_SNOOZE="snooze"   # §4.9: the scheduled-update runit service execs
 readonly PKG_GAMEMODE="gamemode"
 readonly PKG_MANGOHUD="MangoHud"           # case-sensitive; lowercase does not exist
 readonly PKG_MANGOHUD32="MangoHud-32bit"   # 32-bit titles; multilib-gated (optional)
+readonly PKG_XZ="xz"                        # cachy-proton extracts .tar.xz releases
 readonly CACHY_GAME_WRAPPER="/usr/local/bin/cachy-game"
+readonly CACHY_PROTON_HELPER="/usr/local/bin/cachy-proton"
 readonly MANGOHUD_CONF="/etc/xdg/MangoHud/MangoHud.conf"
 
 # Fixed install location for the mirrored Python engine (§6/§8.9).
@@ -359,9 +361,11 @@ install_gaming_userspace() {
     ensure_pkg "$PKG_GAMEMODE"
     ensure_pkg "$PKG_MANGOHUD"
     ensure_pkg "$PKG_MANGOHUD32" optional
-    install_file "$SYS_DIR/bin/cachy-game" "$CACHY_GAME_WRAPPER" 0755 root root
+    ensure_pkg "$PKG_XZ"          # cachy-proton needs xz to extract Proton-CachyOS
+    install_file "$SYS_DIR/bin/cachy-game"   "$CACHY_GAME_WRAPPER"   0755 root root
+    install_file "$SYS_DIR/bin/cachy-proton" "$CACHY_PROTON_HELPER"  0755 root root
     install_file "$SYS_DIR/xdg/MangoHud.conf" "$MANGOHUD_CONF" 0644 root root
-    log "gaming layer ready — Steam launch option: cachy-game %command% (HUD: CACHY_HUD=1 cachy-game %command%)"
+    log "gaming layer ready — launch: cachy-game %command% | Proton-CachyOS: run 'cachy-proton' (per-user)"
 }
 
 grub_regen() {
