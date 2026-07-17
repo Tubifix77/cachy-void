@@ -54,6 +54,7 @@ readonly TAB=$'\t'
 # game-devices-udev package.
 readonly PKG_ZRAM="zramen"
 readonly PKG_XTOOLS="xtools"
+readonly PKG_SNOOZE="snooze"   # §4.9: the scheduled-update runit service execs it
 
 # Fixed install location for the mirrored Python engine (§6/§8.9).
 readonly CACHY_ENGINE="/usr/libexec/cachy-void-updater"
@@ -606,9 +607,13 @@ do_install() {
     log "[5/9] mirror the updater engine into $CACHY_ENGINE (§6/§8.9)"
     install_engine
 
-    log "[6/9] packages: zram (§3.2) + xtools (§4.7 service cycling)"
+    log "[6/9] packages: zram (§3.2) + xtools (§4.7 cycling) + snooze (§4.9 timer)"
     ensure_pkg "$PKG_ZRAM"
     ensure_pkg "$PKG_XTOOLS"
+    # snooze backs the §4.9 service; install it unconditionally so the service
+    # works the moment it is enabled — whether via --with-schedule or a later
+    # manual `ln -s` (the run script documents that path). It is tiny.
+    ensure_pkg "$PKG_SNOOZE"
 
     log "[7/9] runit services: zram (§3.2), cachy-health (§8.7), cachy-void-update (§4.9)"
     install_file "$SYS_DIR/sv/zramen/conf" /etc/sv/zramen/conf 0644 root root
