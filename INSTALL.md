@@ -450,8 +450,16 @@ is also correct on a desktop dGPU.
   ```
   CACHY_HUD=1 cachy-game %command%
   ```
-  Toggle the overlay in-game with **Shift_R + F12**. Tune it by copying
-  `/etc/xdg/MangoHud/MangoHud.conf` to `~/.config/MangoHud/MangoHud.conf`.
+  Toggle the overlay in-game with **Shift_R + F12**. Tune it by editing
+  `~/.config/MangoHud/MangoHud.conf`.
+
+  **Proton / Steam-Runtime games:** these run inside a pressure-vessel container
+  that does **not** expose the host's `/etc/xdg`, so a system-wide MangoHud config
+  can't reach them — only `$HOME` is bind-mounted in. `cachy-game` handles this by
+  seeding `~/.config/MangoHud/MangoHud.conf` from the system profile on first use
+  (it never overwrites a config you already have). If you edit the system default
+  later and want Proton games to pick it up, delete `~/.config/MangoHud/MangoHud.conf`
+  and launch once more to re-seed.
 
   **Legacy NVIDIA Optimus note:** on an Optimus laptop with the ≤ 470 driver
   (e.g. Kepler GT 730M), the discrete GPU's load/power/temp counters are not

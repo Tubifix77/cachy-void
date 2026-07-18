@@ -17,7 +17,20 @@
 # Steam per-title launch option:      cachy-game %command%
 # With the HUD:                       CACHY_HUD=1 cachy-game %command%
 # From a shell:                       cachy-game ./mygame
-[ "${CACHY_HUD:-0}" = 1 ] && export MANGOHUD=1
+if [ "${CACHY_HUD:-0}" = 1 ]; then
+    export MANGOHUD=1
+    # A Proton/Steam-Runtime game runs inside a pressure-vessel CONTAINER whose
+    # /etc is its own — the host's /etc/xdg/MangoHud/MangoHud.conf is NOT visible
+    # there, so MangoHud would fall back to its built-in defaults (which show GPU
+    # stats — misleading on legacy Optimus, §3.4). Only $HOME is bind-mounted into
+    # the container, so seed the per-user config from the Cachy-Void system profile
+    # ONCE (never clobber a config the user already has), making the intended
+    # profile reach Proton games too.
+    _ucfg="${XDG_CONFIG_HOME:-$HOME/.config}/MangoHud/MangoHud.conf"
+    if [ ! -f "$_ucfg" ] && [ -f /etc/xdg/MangoHud/MangoHud.conf ]; then
+        mkdir -p "${_ucfg%/*}" 2>/dev/null && cp /etc/xdg/MangoHud/MangoHud.conf "$_ucfg" 2>/dev/null || true
+    fi
+fi
 
 command -v prime-run   >/dev/null 2>&1 && set -- prime-run "$@"
 command -v gamemoderun >/dev/null 2>&1 && set -- gamemoderun "$@"
