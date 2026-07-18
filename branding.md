@@ -256,8 +256,54 @@ core + tech line `#478061`, wordmark `#abb2bf`, tagline `#5c6370`. Do **not** us
 One-line nameplate (prompt or panel header):
 `◆ void·cachy ── performance core ── runit · xbps · v3 · BORE`
 
-**Wallpaper:** structural + dark — a subtle blueprint/carbon texture or a solid `--bg`
-charcoal. On-palette, low-contrast, never busy. Set with `feh --bg-fill <img>`.
+**Wallpaper set** (shipped in [`assets/wallpapers/`](assets/wallpapers/) as clean SVGs —
+crisp at any resolution, locked to the palette; render to PNG with `rsvg-convert`/ImageMagick):
+
+| File | Motif | Feel |
+|---|---|---|
+| `cachy-void-official.svg` | **flagship** — concentric squares + rotated diamond, green core with a *void* at its centre, schematic corner annotation | engineered, the identity piece |
+| `void-cachy-radar.svg` | concentric circles (Void's circular logo), "performance pulse" | calm, restful |
+| `void-cachy-hex.svg` | concentric hexagons (Cachy's hexagon logo) | Cachy-forward |
+| `void-cachy-flow.svg` | turned-down green ambient + topographic ridges | soft, atmospheric |
+
+All are matte, on-palette, low-contrast, never busy — obsidian field, exactly one green
+accent. The green core carries a tiny obsidian **void** at its centre: Void *inside* Cachy,
+the fusion made literal. Set with `feh --bg-fill`, or on LXQt via `pcmanfm-qt
+--set-wallpaper=<png> --wallpaper-mode=stretch`. Default = the flagship.
+
+### 5.7 Desktop composition — molding it together
+
+The rule for the *whole* desktop is the same as for a single widget: **quiet by default,
+one thing doing each job.** Do not stack a panel *and* a dock that both show a task list —
+pick one primary launcher/switcher and let everything else recede.
+
+**Recommended LXQt layout (played-down):**
+
+- **One panel, themed** — the LXQt panel (bottom) is the anchor: menu button (the mark),
+  task list, tray, clock. Kept thin and dark (the `void-tactical` LXQt theme). This alone
+  is a complete, honest desktop — the most Void choice.
+- **A dock is *optional*, and must stay subtle.** If a dock is wanted, add **Plank** as a
+  *minimal launcher only* — not a showpiece:
+  - Flat/matte theme (§5.4): sharp corners, thin graphite stroke, obsidian fill, green
+    active-indicator. **No** glass, **no** macOS zoom/bounce (`zoom-enabled=false`).
+  - Small icons (~40 px), **auto-hide or dodge-windows** so it never competes with content
+    or the wallpaper.
+  - Position it so it does **not** fight the panel: either move the LXQt panel to a thin
+    **top** bar (tray/clock/menu) and give Plank the **bottom** for app launching, **or**
+    keep the bottom panel and dodge-hide Plank on a **side** edge. Never two bars on the
+    same edge.
+  - Curation still applies (§5): **Cairo-Dock is rejected** (3D/reflections/animation);
+    Plank *only if* kept flat. Tint2 is the even-more-Void alternative (razor-thin, text).
+- **Compositor** — Picom (§5.3) for tight matte shadows; it makes windows sit on the
+  backdrop without any glow. Already the correct, low-key depth cue.
+- **Launcher** — Rofi (§5.2) is keyboard-first and overlays nothing permanently; bind it to
+  a key (e.g. `Super`) rather than adding another visible bar.
+- **Telemetry** — Conky (§5.5), if used, is text-only, top-right, on the wallpaper — honest
+  numbers, never gauges.
+
+**The played-down test:** on a fresh boot with no windows open, the desktop should read as
+*mostly wallpaper* — a calm obsidian field with the mark — with at most one thin bar. If two
+elements are both asking for attention, remove or auto-hide one.
 
 ---
 

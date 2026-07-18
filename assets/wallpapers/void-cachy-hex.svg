@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-label="Cachy-Void wallpaper — hex">
+  <!-- Cachy's hexagon-logo shape: concentric hexagons around the green core. -->
+  <defs>
+    <pattern id="g" width="120" height="120" patternUnits="userSpaceOnUse">
+      <path d="M120 0 H0 V120" fill="none" stroke="#282c34" stroke-width="1" opacity="0.22"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1080" fill="#1b1d1e"/>
+  <rect width="1920" height="1080" fill="url(#g)"/>
+  <g transform="translate(960,540)" fill="none" stroke-width="1.5">
+    <!-- flat-top unit hexagon, scaled per ring; non-scaling-stroke keeps lines thin -->
+    <polygon points="1,0 0.5,0.866 -0.5,0.866 -1,0 -0.5,-0.866 0.5,-0.866" transform="scale(470)" stroke="#262c2a" vector-effect="non-scaling-stroke"/>
+    <polygon points="1,0 0.5,0.866 -0.5,0.866 -1,0 -0.5,-0.866 0.5,-0.866" transform="scale(360)" stroke="#2f3f37" vector-effect="non-scaling-stroke"/>
+    <polygon points="1,0 0.5,0.866 -0.5,0.866 -1,0 -0.5,-0.866 0.5,-0.866" transform="scale(260)" stroke="#35564a" vector-effect="non-scaling-stroke"/>
+    <polygon points="1,0 0.5,0.866 -0.5,0.866 -1,0 -0.5,-0.866 0.5,-0.866" transform="scale(170)" stroke="#5c6370" vector-effect="non-scaling-stroke"/>
+    <polygon points="1,0 0.5,0.866 -0.5,0.866 -1,0 -0.5,-0.866 0.5,-0.866" transform="scale(95)" stroke="#6a8f7d" vector-effect="non-scaling-stroke"/>
+  </g>
+  <polygon points="960,492 1008,540 960,588 912,540" fill="#478061"/>
+  <polygon points="960,524 976,540 960,556 944,540" fill="#1b1d1e"/>
+</svg>

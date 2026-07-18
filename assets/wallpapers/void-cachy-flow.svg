@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-label="Cachy-Void wallpaper — flow">
+  <!-- Cachy's colorful side, turned DOWN: a soft muted-green ambient + Void's topo ridges.
+       No gloss/halo — a gentle radial lift, not a glow. -->
+  <defs>
+    <radialGradient id="amb" cx="50%" cy="46%" r="60%">
+      <stop offset="0%"  stop-color="#20302a"/>
+      <stop offset="55%" stop-color="#1b2320"/>
+      <stop offset="100%" stop-color="#1b1d1e"/>
+    </radialGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="#1b1d1e"/>
+  <rect width="1920" height="1080" fill="url(#amb)"/>
+  <!-- turned-down green contour ridges (Void topo / Cachy flow) -->
+  <g fill="none" stroke-width="1.6">
+    <path d="M-40 300 C 380 220, 760 360, 1120 250 S 1720 300, 1960 210" stroke="#2c4238" opacity="0.8"/>
+    <path d="M-40 430 C 420 350, 820 480, 1180 380 S 1740 430, 1960 350" stroke="#33513f" opacity="0.75"/>
+    <path d="M-40 690 C 380 780, 780 640, 1160 760 S 1720 700, 1960 800" stroke="#33513f" opacity="0.75"/>
+    <path d="M-40 830 C 420 900, 820 780, 1180 900 S 1740 840, 1960 920" stroke="#2c4238" opacity="0.8"/>
+  </g>
+  <!-- the green core, quiet -->
+  <polygon points="960,494 1006,540 960,586 914,540" fill="#478061"/>
+  <polygon points="960,524 976,540 960,556 944,540" fill="#1b2320"/>
+</svg>
