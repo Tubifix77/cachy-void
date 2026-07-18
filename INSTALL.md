@@ -125,7 +125,7 @@ sudoers fragment is validated with `visudo -c` before it is ever activated.
 | Path | Contents |
 |---|---|
 | `/usr/libexec/cachy-void-updater/` | Mirrored Python engine (`cachy_void_update.py`, `engine/`, `bore.lock`). |
-| `/etc/cachy-void/updater.toml` | Updater configuration (you create this — §6). |
+| `/etc/cachy-void/updater.toml` | Updater configuration (`deploy.sh` generates a default; edit to taste — §6). |
 | `/etc/cachy-void/cachy-fragment.config` | Kernel `.config` fragment (BORE, 1000 Hz, full preempt…). |
 | `/var/lib/cachy-void/kernel/kernel-state.json` | Kernel tracking + boot-test state machine. |
 | `/etc/xbps.d/00-cachy-overlay.conf` | Registers the local optimized repo ahead of the mirror. |
@@ -148,7 +148,11 @@ sudoers fragment is validated with `visudo -c` before it is ever activated.
 
 ### 6.1 Updater configuration — `/etc/cachy-void/updater.toml`
 
-Create it (adjust `void_packages` and the target allowlist):
+**`deploy.sh` generates this for you** with the defaults below (filling
+`void_packages` from the detected checkout) and never overwrites it once it
+exists — so on the automated path (§2) you only need to *review* the `[packages]`
+allowlist. Create/edit it by hand only if you provisioned without `--void-packages`
+or want different targets. The full default:
 
 ```toml
 [paths]
@@ -532,6 +536,32 @@ and the updater's one-shot staging becomes available.
 > distro's kernel updates. Leaving GRUB with the distro you update most (or the
 > one you treat as the recovery escape hatch) is a perfectly valid choice — the
 > updater degrades gracefully either way.
+
+`deploy.sh --with-grub` also keeps the other-OS entries across its `grub-mkconfig`
+run: if `os-prober` is installed it sets `GRUB_DISABLE_OS_PROBER=false` for you
+(and warns if `os-prober` is missing). And note that `GRUB_DEFAULT` is set to
+`saved` — after the first `grub-set-default`/boot, "default" becomes the
+last/pinned choice rather than a fixed menu index; set your preferred default with
+`sudo grub-set-default 'Windows Boot Manager…'` if you want another OS to lead.
+
+> ### ⚠️ Secure Boot + NVIDIA (Windows 11 dual-boot)
+> A machine that also boots **Windows 11** very likely had **Secure Boot enabled**.
+> Void's NVIDIA driver is a **DKMS-built, unsigned kernel module** — with Secure
+> Boot **on**, the kernel refuses to load it, so after installing `nvidia` (or
+> booting `linux-cachy`) you get **no GPU driver** (black screen / nouveau
+> fallback). Cachy-Void does **not** sign modules or enroll a MOK. Before relying
+> on the NVIDIA driver, either **disable Secure Boot** for the Linux entry in
+> firmware, **or** sign the modules and MOK-enroll the key yourself. (This is
+> firmware/OS policy, not something the installer can safely automate.)
+
+> ### First-time one-shot kernel staging
+> On a box where **Void owns a `grubenv`-writable GRUB** (this section), the
+> updater's §8.6 one-shot staging becomes **active** for the first time: `--commit`
+> builds `linux-cachy`, pins the GRUB default to your known-good kernel, and arms a
+> **one-shot** trial boot of the new kernel (it never auto-reboots). After a healthy
+> boot the §8.7 health daemon promotes it; a bad boot falls back to the pinned
+> known-good on the next reboot. If GRUB staging can't run for any reason the deploy
+> is still intact — you just pick the kernel from the menu manually.
 
 ---
 

@@ -1303,6 +1303,15 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _park(out, reason: str) -> int:
+    """Idle forever without exiting (runit-safe). A clean exit under runit means
+    respawn-spin; parking keeps a service inert until `sv down` stops it. Factored
+    out so both the §8.7 degraded path and the missing-config path are testable."""
+    out(reason)
+    while True:
+        time.sleep(3600)
+
+
 def main(argv: Optional[Sequence[str]] = None, *,
          xbps=None, config: Optional[Config] = None, out=print) -> int:
     args = build_parser().parse_args(argv)
@@ -1312,6 +1321,12 @@ def main(argv: Optional[Sequence[str]] = None, *,
             config = load_config(args.config)
         except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
             out(f"error: cannot load config {args.config}: {exc}")
+            # The health daemon runs under runit — a bare EXIT_USAGE here would
+            # crash-loop it (e.g. before updater.toml exists). Park inert instead;
+            # every other action is one-shot, so they still surface the error.
+            if getattr(args, "health_daemon", False):
+                return _park(out, "health-daemon: no usable config at "
+                             f"{args.config} — parking (create it / sv down to stop).")
             return EXIT_USAGE
 
     # --no-kernel: scope this run to userspace only. Disabling kernel_enable up
@@ -1330,10 +1345,8 @@ def main(argv: Optional[Sequence[str]] = None, *,
             if outcome == DEGRADED:
                 # Under runit an immediate clean exit means respawn-spin (§8.7
                 # inert-safe): park quietly instead; sv down still terminates us.
-                out("health-daemon: degraded environment — parking with no "
-                    "supervisor changes (sv down to stop).")
-                while True:
-                    time.sleep(3600)
+                return _park(out, "health-daemon: degraded environment — parking "
+                             "with no supervisor changes (sv down to stop).")
             return EXIT_OK if outcome == HEALTHY else EXIT_KERNEL
         if xbps is None:
             xbps = build_xbps(config)

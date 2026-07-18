@@ -657,6 +657,31 @@ install_compiler_profile() {
     rm -f -- "$tmp"
 }
 
+# install_updater_config — generate /etc/cachy-void/updater.toml if absent (§4.1).
+# EVERYTHING downstream needs it: the engine's default config, the §8.7 cachy-health
+# service (enabled below — it crash-loops without a loadable config), the §4.9
+# scheduler, and the first `--check`/`--commit`. It was previously a hand-written
+# manual step, so a fresh bootstrap left cachy-health spinning; generate a sane
+# default here instead. NEVER clobber an existing (possibly hand-edited) config.
+install_updater_config() {
+    local dest="/etc/cachy-void/updater.toml" pdest tmp
+    pdest="$(rp "$dest")"
+    if [ -e "$pdest" ]; then
+        log "updater.toml already present — leaving your config as-is"
+        return 0
+    fi
+    if [ -z "$VOID_PACKAGES" ]; then
+        warn "void-packages path unknown — NOT generating $dest."
+        warn "  Write it by hand (INSTALL.md §6.1) or re-run with --void-packages;"
+        warn "  cachy-health and the updater cannot run without it."
+        return 0
+    fi
+    tmp="$(mktemp)"; render "$SYS_DIR/cachy-void/updater.toml.in" "$tmp"
+    install_file "$tmp" "$dest" 0644 root root
+    rm -f -- "$tmp"
+    log "generated a default $dest — review its [packages] allowlist"
+}
+
 # --with-grub performs BOTH sanctioned bootloader edits (§3.3, §8.6):
 #   * usbcore.autosuspend=-1 on the kernel cmdline (input latency)
 #   * GRUB_DEFAULT=saved — prerequisite for one-shot kernel staging; without
@@ -669,16 +694,23 @@ install_grub_settings() {
     local pgrub; pgrub="$(rp "$grubcfg")"
     [ -f "$pgrub" ] || { warn "$grubcfg not found — skipping GRUB edits"; return 0; }
 
-    local need_param=true need_saved=true
+    local need_param=true need_saved=true need_osprober=false
     grep -q "$param" "$pgrub" && need_param=false
     grep -q '^GRUB_DEFAULT=saved$' "$pgrub" && need_saved=false
-    if ! $need_param && ! $need_saved; then
-        log "GRUB already configured (autosuspend + GRUB_DEFAULT=saved)"
+    # Multi-boot safety: modern GRUB (>=2.06) disables os-prober by default, so the
+    # grub_regen below would SILENTLY DROP the Windows/other-OS menu entries. If
+    # os-prober is installed (the user multi-boots), make sure detection stays on.
+    if command -v os-prober >/dev/null 2>&1; then
+        grep -q '^GRUB_DISABLE_OS_PROBER=false$' "$pgrub" || need_osprober=true
+    fi
+    if ! $need_param && ! $need_saved && ! $need_osprober; then
+        log "GRUB already configured (autosuspend + GRUB_DEFAULT=saved + os-prober)"
         return 0
     fi
     if $DRY_RUN; then
         $need_param && log "[dry-run] add $param to GRUB_CMDLINE_LINUX_DEFAULT"
         $need_saved && log "[dry-run] set GRUB_DEFAULT=saved"
+        $need_osprober && log "[dry-run] set GRUB_DISABLE_OS_PROBER=false (keep other-OS entries)"
         log "[dry-run] regenerate grub config"
         return 0
     fi
@@ -705,6 +737,17 @@ install_grub_settings() {
         fi
         ok "GRUB_DEFAULT=saved (§8.6 one-shot staging prerequisite)"
     fi
+    if $need_osprober; then
+        if grep -q '^GRUB_DISABLE_OS_PROBER=' "$pgrub"; then
+            sed -i -E 's|^GRUB_DISABLE_OS_PROBER=.*|GRUB_DISABLE_OS_PROBER=false|' "$pgrub"
+        else
+            printf 'GRUB_DISABLE_OS_PROBER=false\n' >> "$pgrub"
+        fi
+        ok "GRUB_DISABLE_OS_PROBER=false (multi-boot: keep other-OS entries across regen)"
+    fi
+    command -v os-prober >/dev/null 2>&1 || warn \
+        "os-prober not installed — grub-mkconfig will NOT add a Windows/other-OS entry; \
+if you multi-boot, install it first: sudo xbps-install os-prober"
     grub_regen
 }
 
@@ -764,8 +807,9 @@ do_install() {
     log "[3/10] kernel state dir + G2 config fragment (§8.1, §8.5)"
     install_kernel_state
 
-    log "[4/10] compiler profile + overlay repository (§1.1, §4.6, §7.2)"
+    log "[4/10] compiler profile + overlay repository + updater config (§1.1, §4.1, §4.6, §7.2)"
     install_compiler_profile
+    install_updater_config
 
     log "[5/10] mirror the updater engine into $CACHY_ENGINE (§6/§8.9)"
     install_engine

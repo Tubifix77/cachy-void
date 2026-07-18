@@ -59,6 +59,16 @@ BASE_SERIES="$(printf '%s\n' "$KVER" | grep -oE '^[0-9]+\.[0-9]+' || true)"
 [ -n "$BASE_SERIES" ] || die "could not derive a base series from 'uname -r' ($KVER)"
 ok "running kernel $KVER  ->  tracking series linux$BASE_SERIES (known-good = $KVER)"
 
+# The shipped bore.lock pins specific kernel series. If THIS box's series isn't
+# pinned, the first linux-cachy build is withheld (AWAIT_HUMAN_PATCH) until a
+# human adds a [[patch]] entry + sha256 (§8.3). Warn early — userspace is unaffected.
+BORE_LOCK="$SCRIPT_DIR/updater/bore.lock"
+if [ -f "$BORE_LOCK" ] && ! grep -qE "series[[:space:]]*=[[:space:]]*\"$BASE_SERIES\"" "$BORE_LOCK"; then
+    printf '%s!! bore.lock has no pin for series %s — the first linux-cachy build will be\n' "$C_ERR" "$BASE_SERIES" >&2
+    printf '   WITHHELD until you add a [[patch]] entry (commit + per-series sha256) for it\n' >&2
+    printf '   in bore.lock (INSTALL.md §6.2). Userspace updates work regardless.%s\n' "$C_OFF" >&2
+fi
+
 # ---------------------------------------------------------------------------
 # Step 2 — install build prerequisites
 # ---------------------------------------------------------------------------
@@ -142,13 +152,16 @@ ok "kernel-state.json written (base_series=$BASE_SERIES, known_good=$KVER)"
 step "Bootstrap complete"
 cat <<EOF
 
-Cachy-Void is provisioned. Next steps:
+Cachy-Void is provisioned (deploy.sh generated /etc/cachy-void/updater.toml with
+defaults — review its [packages] allowlist). Next steps:
 
-  1. Pin the BORE patch trust anchor before the first kernel build:
-       edit $VOID_PACKAGES/../  (see updater/bore.lock) — fill sha256 + approve (§8.3)
-  2. Preview the queue (read-only):
+  1. Review the generated config (edit the allowlist to taste):
+       sudoedit /etc/cachy-void/updater.toml
+  2. Pin the BORE patch trust anchor before the first kernel build:
+       edit /usr/libexec/cachy-void-updater/bore.lock — fill sha256 + approve (§8.3)
+  3. Preview the queue (read-only):
        /usr/libexec/cachy-void-updater/cachy_void_update.py --check --config /etc/cachy-void/updater.toml
-  3. Build + deploy (compiles linux-cachy on first run; reboot when prompted):
+  4. Build + deploy (compiles linux-cachy on first run; reboot when prompted):
        sudo -u $BUILD_USER /usr/libexec/cachy-void-updater/cachy_void_update.py --commit --yes
 
 Revert everything with:  sudo $SCRIPT_DIR/deploy.sh --uninstall

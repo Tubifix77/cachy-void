@@ -968,5 +968,31 @@ class NoKernelScopeTests(unittest.TestCase):
         self.assertEqual(cli._always_build(cfg), [])
 
 
+class HealthDaemonConfigTests(unittest.TestCase):
+    """A missing/unloadable config must PARK the health daemon, never crash-loop
+    it under runit (finding: cachy-health spun before updater.toml existed)."""
+
+    def _patch_park(self):
+        seen = {}
+        orig = cli._park
+        cli._park = lambda out, reason: (seen.update(reason=reason), 0)[1]
+        self.addCleanup(lambda: setattr(cli, "_park", orig))
+        return seen
+
+    def test_health_daemon_parks_on_missing_config(self):
+        seen = self._patch_park()
+        rc = cli.main(["--health-daemon", "--config", "/no/such/updater.toml"],
+                      out=Sink())
+        self.assertEqual(rc, 0)                     # parked, not EXIT_USAGE
+        self.assertIn("parking", seen["reason"])
+
+    def test_other_actions_still_error_on_missing_config(self):
+        # only the daemon parks; one-shot actions must still surface the error
+        out = Sink()
+        rc = cli.main(["--check", "--config", "/no/such/updater.toml"], out=out)
+        self.assertEqual(rc, cli.EXIT_USAGE)
+        self.assertIn("cannot load config", out.text())
+
+
 if __name__ == "__main__":
     unittest.main()
