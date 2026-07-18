@@ -66,7 +66,7 @@ readonly CACHY_PROTON_HELPER="/usr/local/bin/cachy-proton"
 readonly MANGOHUD_CONF="/etc/xdg/MangoHud/MangoHud.conf"
 # §branding: void-tactical LXQt desktop (opt-in, --with-branding). The applier
 # runs per-user (cachy-branding); deploy.sh only installs packages + assets.
-readonly PKG_BRANDING="kvantum papirus-icon-theme papirus-folders plank rofi conky picom xcape"
+readonly PKG_BRANDING="kvantum papirus-icon-theme papirus-folders plank rofi conky picom"
 readonly BRANDING_ASSETS="/usr/share/cachy-void/branding"
 readonly CACHY_BRANDING_BIN="/usr/local/bin/cachy-branding"
 

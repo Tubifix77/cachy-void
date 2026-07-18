@@ -188,7 +188,29 @@ if [ -f "$PC" ]; then
 import sys,re
 p,icon=sys.argv[1],sys.argv[2]
 t=open(p).read()
-m=re.search(r'(\[panel1\]\n)(.*?)(?=\n\[|\Z)', t, re.S)
+
+def section(t, sec):
+    return re.search(r'(\['+re.escape(sec)+r'\]\n)(.*?)(?=\n\[|\Z)', t, re.S)
+
+def set_in_section(t, sec, kvs, create=False):
+    """Set key=val pairs inside [sec]. Edits the plugin's OWN config section —
+    never fabricates a plugin instance (that broke rendering before)."""
+    m=section(t, sec)
+    if m:
+        head,body=m.group(1),m.group(2)
+        for k,v in kvs:
+            if re.search(r'^%s='%re.escape(k), body, re.M):
+                body=re.sub(r'^%s=.*$'%re.escape(k), '%s=%s'%(k,v), body, count=1, flags=re.M)
+            else:
+                body=body.rstrip('\n')+'\n%s=%s\n'%(k,v)
+        return t[:m.start()]+head+body+t[m.end():]
+    if create:
+        block='['+sec+']\n'+''.join('%s=%s\n'%(k,v) for k,v in kvs)
+        return t.rstrip('\n')+'\n\n'+block+'\n'
+    return t
+
+menu=None
+m=section(t,'panel1')
 if m:
     head,body=m.group(1),m.group(2)
     def setkv(body,key,val):
@@ -201,19 +223,24 @@ if m:
     if pm:
         items=[x.strip() for x in pm.group(1).split(',') if x.strip()]
         items=[x for x in items if x not in ('desktopswitch','pager')]
+        for cand in items:
+            if cand.split('_')[0] in ('fancymenu','mainmenu'): menu=cand; break
         body=re.sub(r'^plugins=.*$', 'plugins='+', '.join(items), body, count=1, flags=re.M)
     t=t[:m.start()]+head+body+t[m.end():]
-# same-size icon swap on the existing mainmenu section only — never fabricate one
-mm=re.search(r'\[mainmenu\]\n(.*?)(?=\n\[|\Z)', t, re.S)
-if mm:
-    body=mm.group(1)
-    if re.search(r'^icon=', body, re.M): body=re.sub(r'^icon=.*$', 'icon=%s'%icon, body, count=1, flags=re.M)
-    else: body='icon=%s\n'%icon+body
-    if not re.search(r'^shortcut=', body, re.M): body='shortcut=Ctrl+Escape\n'+body
-    t=t[:mm.start(1)]+body+t[mm.end(1):]
+
+# swap the menu button icon on whichever menu plugin this panel actually uses.
+# fancymenu needs ownIcon=true to honour a custom icon; mainmenu just takes icon=.
+# Its config section is safe to create (the instance already exists in plugins=).
+if menu:
+    kind=menu.split('_')[0]
+    if kind=='fancymenu':
+        t=set_in_section(t, menu, [('ownIcon','true'),('icon',icon)], create=True)
+    else:  # mainmenu
+        t=set_in_section(t, menu, [('icon',icon)], create=True)
 open(p,'w').write(t)
+print('menu plugin:', menu or '(none found)')
 PY
-    ok "panel -> top, thinner, desktop switcher dropped, menu icon swapped (mainmenu untouched otherwise)"
+    ok "panel -> top, thinner, desktop switcher dropped, menu-button icon swapped"
 else
     warn "no panel.conf found (and no /etc/xdg default) — panel layout unchanged"
 fi
@@ -248,12 +275,17 @@ cp -f "$ASSETS/rofi/config.rasi" "$CFG/rofi/config.rasi"
 IFACE=$(ip route 2>/dev/null | awk '/^default/{print $5; exit}'); : "${IFACE:=eth0}"
 HW=$(for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name 2>/dev/null)" = coretemp ] && basename "$h" | tr -dc 0-9 && break; done); : "${HW:=0}"
 # GPU line: query the nvidia chip directly (nvidia-smi), not the game overlay
-# path — on legacy Optimus/PRIME render-offload, MangoHud/NVML load% is
-# unreliable, but nvidia-smi's own temp/util reads are direct chip queries and
-# hold up fine. execi caches for 5s so conky isn't spawning nvidia-smi every tick.
+# path — on legacy Optimus/PRIME render-offload MangoHud/NVML load% is unreliable,
+# but nvidia-smi's own reads are direct chip queries. Kepler cards (GT 730M etc.)
+# return [N/A] for util/power/clocks while temp + memory still read fine, so the
+# awk below prints ONLY the fields that came back as real numbers — self-adjusting
+# per card (a modern GPU also shows util%). One nvidia-smi call per 5s (execi).
 GPU_LINE=""
-if command -v nvidia-smi >/dev/null 2>&1; then
-    GPU_LINE='${color1}gpu ${color}${execi 5 nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null}C   ${color2}${execi 5 nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null}%${color}'
+if command -v nvidia-smi >/dev/null 2>&1 && [ -n "$(nvidia-smi -L 2>/dev/null)" ]; then
+    GPU_LINE=$(cat <<'LINE'
+${color1}gpu ${color}${execi 5 nvidia-smi --query-gpu=temperature.gpu,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | awk -F", " '{ s=$1"C"; if ($2!="[N/A]" && $2!="") s=s"  "$2"%"; if ($3!="[N/A]" && $3!="") s=s"  "$3"/"$4"M"; print s }'}
+LINE
+)
 fi
 sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.in" | \
     awk -v line="$GPU_LINE" '{ if ($0 ~ /@GPU_LINE@/) { if (line != "") print line } else print }' > "$CFG/conky/conky.conf"
@@ -261,17 +293,30 @@ sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.i
 # (top_right) gets computed against whatever screen geometry is live when
 # conky starts, so it drifts if that's the wrong output.
 printf '[Desktop Entry]\nType=Application\nName=conky\nExec=sh -c "sleep 8 && exec conky -c %s/conky/conky.conf"\n' "$CFG" > "$CFG/autostart/conky.desktop"
-# xcape: tap Super -> Ctrl+Escape (the mainmenu shortcut). lxqt-globalkeys can't
-# bind a bare modifier (lxqt#1387), so this is the standard bridge; tap-only, so
-# holding Super for other combos still works.
-if command -v xcape >/dev/null 2>&1; then
-    printf '[Desktop Entry]\nType=Application\nName=xcape\nExec=xcape -e Super_L=Control_L|Escape\n' > "$CFG/autostart/xcape.desktop"
-fi
-ok "picom / rofi / conky / xcape configs"
+ok "picom / rofi / conky configs"
 
 # ============================================================ apply live
 log "applying live"
-pgrep -x lxqt-globalkeys >/dev/null 2>&1 || { command -v lxqt-globalkeysd >/dev/null 2>&1 && setsid lxqt-globalkeysd >/dev/null 2>&1 & sleep 1; }
+# Super_L -> menu, via LXQt's own global-shortcut daemon (cleaner than xcape; this
+# LXQt build binds a bare Super fine). The daemon OWNS globalkeyshortcuts.conf and
+# rewrites it on exit, so we must stop it BEFORE editing or our entry is clobbered:
+# stop -> edit (idempotent, skips if Super_L already bound) -> start to reload.
+MENU=$(grep -E '^plugins=' "$PC" 2>/dev/null | tr ',' '\n' | grep -oE 'fancymenu|mainmenu' | head -1); : "${MENU:=mainmenu}"
+pkill -x lxqt-globalkeysd 2>/dev/null; sleep 1
+python3 - "$CFG/lxqt/globalkeyshortcuts.conf" "$MENU" <<'PY'
+import sys,os,re
+p,menu=sys.argv[1],sys.argv[2]
+path='/panel/%s/show_hide'%menu
+default="[General]\nAllowGrabBaseKeypad=true\nAllowGrabBaseSpecial=false\nAllowGrabLocks=false\nAllowGrabMiscKeypad=true\nAllowGrabMiscSpecial=true\nMultipleActionsBehaviour=first\n"
+t=open(p).read() if os.path.exists(p) else default
+if re.search(r'^\[Super_L\.', t, re.M):
+    print('Super_L already bound — leaving user binding as-is'); open(p,'w').write(t); sys.exit(0)
+ids=[int(m) for m in re.findall(r'^\[[^\]]*\.(\d+)\]', t, re.M)]
+n=(max(ids)+1) if ids else 1
+open(p,'w').write(t.rstrip('\n')+'\n\n[Super_L.%d]\nComment=Show/hide main menu\nEnabled=true\npath=%s\n'%(n,path))
+print('bound Super_L ->',path)
+PY
+command -v lxqt-globalkeysd >/dev/null 2>&1 && setsid lxqt-globalkeysd >/dev/null 2>&1 &
 pkill -9 -x lxqt-panel 2>/dev/null; sleep 2   # lxqt-session respawns exactly one (reads new config)
 command -v openbox >/dev/null 2>&1 && openbox --reconfigure 2>/dev/null
 for a in picom plank conky; do
@@ -283,12 +328,11 @@ for a in picom plank conky; do
         conky) setsid conky -c "$CFG/conky/conky.conf" >/dev/null 2>&1 & ;;
     esac
 done
-if command -v xcape >/dev/null 2>&1; then pkill -x xcape 2>/dev/null; setsid xcape -e 'Super_L=Control_L|Escape' >/dev/null 2>&1 & fi
 
 cat <<EOF
 
 ${K}Cachy-Void desktop applied.${Z}
   * Log out / back in once for every app to pick up the Kvantum style + env.
-  * Launcher:  Super+Space (Rofi)
-  * Revert:    cachy-branding --remove   (then log out/in)
+  * Menu:      tap Super (Windows key)      Launcher: Super+Space (Rofi)
+  * Revert:    cachy-branding --remove      (then log out/in)
 EOF

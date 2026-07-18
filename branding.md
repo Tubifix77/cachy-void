@@ -316,7 +316,14 @@ pick one primary launcher/switcher and let everything else recede.
 - **Compositor** — Picom (§5.3) for tight matte shadows; it makes windows sit on the
   backdrop without any glow. Already the correct, low-key depth cue.
 - **Launcher** — Rofi (§5.2) is keyboard-first and overlays nothing permanently; bind it to
-  a key (e.g. `Super`) rather than adding another visible bar.
+  `Super+Space` rather than adding another visible bar.
+- **Menu key** — the Windows/**Super** key opens the panel menu, bound through LXQt's own
+  global-shortcut daemon: `[Super_L.N]` in `globalkeyshortcuts.conf` with
+  `path=/panel/<menu>/show_hide` (the plugin is `fancymenu` on newer LXQt, `mainmenu` on
+  older — `cachy-branding` detects which). Current LXQt binds a bare `Super_L` cleanly, so
+  no xcape/xdotool bridge is needed. The daemon rewrites that file on exit, so the applier
+  stops it, edits, then restarts it — and skips the edit entirely if a `Super_L` binding
+  already exists (never clobbers a user's own).
 - **Telemetry** — Conky (§5.5), if used, is text-only, top-right, on the wallpaper — honest
   numbers, never gauges.
 
