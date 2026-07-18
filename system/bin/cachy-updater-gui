@@ -93,7 +93,7 @@ class Updater(QWidget):
         for b in self._buttons:
             b.setEnabled(not yes)
 
-    def _run(self, args, target, *, done=None, confirm=None):
+    def _run(self, args, target, *, done=None, confirm=None, busy_msg=None):
         if self.proc and self.proc.state() != QProcess.NotRunning:
             return
         if confirm and QMessageBox.question(
@@ -101,6 +101,11 @@ class Updater(QWidget):
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         target.clear()
+        # show a "working…" line while the CLI runs (a --status probe can take
+        # ~15s); it's replaced the moment real output arrives (_drain).
+        if busy_msg:
+            target.setPlainText(busy_msg)
+        self._clear_on_output = bool(busy_msg)
         self._busy(True)
         self.proc = QProcess(self)
         self.proc.setProcessChannelMode(QProcess.MergedChannels)
@@ -120,6 +125,9 @@ class Updater(QWidget):
     def _drain(self, target):
         chunk = bytes(self.proc.readAll()).decode("utf-8", "replace")
         if chunk:
+            if getattr(self, "_clear_on_output", False):
+                target.clear()
+                self._clear_on_output = False
             target.appendPlainText(chunk.rstrip("\n"))
 
     def _finished(self, target, code, done):
@@ -130,7 +138,7 @@ class Updater(QWidget):
 
     # -- actions ----------------------------------------------------------
     def check(self):
-        self._run(["--status"], self.status)
+        self._run(["--status"], self.status, busy_msg="Getting Cachy-Void status…")
 
     def update_userspace(self):
         # userspace only — the kernel is the explicit "Update kernel" button
