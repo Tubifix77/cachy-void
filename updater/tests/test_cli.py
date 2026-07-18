@@ -819,13 +819,15 @@ class GpuCommandTests(unittest.TestCase):
         return cp(0, "")
 
     def test_nvidia_advisory(self):
-        xb = FakeXbps(installed=["nvidia470"], inst_ver={"nvidia470": "470.256.02_1"})
+        # inst_pkgver returns the full name-version (as the real Xbps does)
+        xb = FakeXbps(installed=["nvidia470"],
+                      inst_ver={"nvidia470": "nvidia470-470.256.02_1"})
         out = Sink()
         rc = cli.cmd_gpu(xb, _config([]), out=out, run=self._run_nvidia)
         self.assertEqual(rc, cli.EXIT_OK)
         t = out.text()
         self.assertIn("NVIDIA card present", t)
-        self.assertIn("nvidia470 470.256.02_1", t)
+        self.assertIn("nvidia470 470.256.02_1", t)   # name not doubled
         self.assertIn("Kepler", t)          # the legacy-series hint
         self.assertIn("470.256.02", t)      # dkms line
 

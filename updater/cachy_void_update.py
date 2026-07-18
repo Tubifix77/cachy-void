@@ -964,7 +964,7 @@ def cmd_gpu(xbps, config: Config, out=print, run=_run) -> int:
         if drv:
             for d in drv:
                 try:
-                    out(f"    driver package: {d} {xbps.inst_pkgver(d)}")
+                    out(f"    driver package: {d} {split_pkgver(xbps.inst_pkgver(d))[1]}")
                 except (XbpsError, KeyError, OSError):
                     out(f"    driver package: {d}")
             # driver updates ride the normal upstream update (dry-run check)
