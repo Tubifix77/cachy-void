@@ -56,12 +56,14 @@ PY
     rm -rf "$SHARE/lxqt/themes/void-tactical" "$CFG/Kvantum/void-tactical" "$HOME/.themes/void-tactical"
     rm -f "$CFG"/autostart/{picom,plank,conky,conky-system,xcape}.desktop
     rm -f "$CFG"/conky/conky-system.conf
-    # openbox session autostart: restore a pre-existing one, else remove ours
-    if [ -e "$CFG/openbox/autostart.pre-cachy.bak" ]; then
-        mv -f "$CFG/openbox/autostart.pre-cachy.bak" "$CFG/openbox/autostart"
-    else
-        rm -f "$CFG/openbox/autostart"
-    fi
+    # openbox session autostart + root menu: restore a pre-existing one, else drop ours
+    for _obf in autostart menu.xml; do
+        if [ -e "$CFG/openbox/$_obf.pre-cachy.bak" ]; then
+            mv -f "$CFG/openbox/$_obf.pre-cachy.bak" "$CFG/openbox/$_obf"
+        else
+            rm -f "$CFG/openbox/$_obf"
+        fi
+    done
     command -v papirus-folders >/dev/null 2>&1 && sudo papirus-folders -C blue -t Papirus-Dark 2>/dev/null
     pkill -x picom 2>/dev/null; pkill -x plank 2>/dev/null; pkill -x conky 2>/dev/null; pkill -x xcape 2>/dev/null
     pkill -f lxqt-powermanagement 2>/dev/null; command -v lxqt-powermanagement >/dev/null 2>&1 && setsid lxqt-powermanagement >/dev/null 2>&1 &
@@ -319,6 +321,36 @@ _kbd="$(setxkbmap -query 2>/dev/null | awk '/^layout/{print $2}')"
 chmod +x "$OBA"
 command -v feh >/dev/null 2>&1 || warn "feh not installed — openbox session has no wallpaper (deploy.sh --with-branding installs it)"
 ok "openbox autostart -> wallpaper + picom + conky${_kbd:+ + keyboard $_kbd}"
+
+# Curated openbox ROOT MENU (right-click). Openbox's stock /etc/xdg/openbox/menu.xml
+# is a generic 48-entry list hard-coding apps from every DE (KDE/GNOME/XFCE/OpenOffice)
+# — almost all uninstalled, so it looks like "residue from an old DE". A user menu.xml
+# overrides it: essentials + "Applications" via rofi (dynamic — only shows what's
+# installed, never goes stale). Entries self-adjust to the tools actually present.
+OBM="$CFG/openbox/menu.xml"; bak "$OBM"
+_term=""; for t in qterminal xterm sakura alacritty kitty; do command -v "$t" >/dev/null 2>&1 && { _term="$t"; break; }; done
+_fm="";   for f in pcmanfm-qt pcmanfm; do command -v "$f" >/dev/null 2>&1 && { _fm="$f"; break; }; done
+_br="";   for b in firefox chromium; do command -v "$b" >/dev/null 2>&1 && { _br="$b"; break; }; done
+{
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<openbox_menu xmlns="http://openbox.org/3.4/menu">\n'
+  printf '  <menu id="root-menu" label="Cachy-Void">\n'
+  printf '    <item label="Applications"><action name="Execute"><command>rofi -show drun</command></action></item>\n'
+  printf '    <item label="Run"><action name="Execute"><command>rofi -show run</command></action></item>\n'
+  printf '    <separator/>\n'
+  [ -n "$_term" ] && printf '    <item label="Terminal"><action name="Execute"><command>%s</command></action></item>\n' "$_term"
+  [ -n "$_fm" ]   && printf '    <item label="Files"><action name="Execute"><command>%s</command></action></item>\n' "$_fm"
+  [ -n "$_br" ]   && printf '    <item label="Web Browser"><action name="Execute"><command>%s</command></action></item>\n' "$_br"
+  printf '    <separator/>\n'
+  printf '    <item label="Reconfigure Openbox"><action name="Reconfigure"/></item>\n'
+  printf '    <separator/>\n'
+  printf '    <item label="Log Out"><action name="Exit"><prompt>yes</prompt></action></item>\n'
+  if command -v loginctl >/dev/null 2>&1; then
+    printf '    <item label="Reboot"><action name="Execute"><command>loginctl reboot</command></action></item>\n'
+    printf '    <item label="Shut Down"><action name="Execute"><command>loginctl poweroff</command></action></item>\n'
+  fi
+  printf '  </menu>\n</openbox_menu>\n'
+} > "$OBM"
+ok "openbox root menu -> curated (rofi + essentials; stale stock menu bypassed)"
 
 # ============================================================ Papirus grey folders (only on the Papirus fallback)
 if [ "$ICON_THEME" = "Papirus-Dark" ] && command -v papirus-folders >/dev/null 2>&1; then

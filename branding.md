@@ -418,6 +418,15 @@ rather than a full desktop. Deliberately restrained — an openbox user who want
 rice from scratch just deletes the file (or `cachy-branding --remove` restores any
 pre-existing one). `deploy.sh --with-branding` installs `feh` for it.
 
+It also writes a **curated root menu** (`~/.config/openbox/menu.xml`, right-click).
+Openbox's stock `/etc/xdg/openbox/menu.xml` is a generic ~48-entry list hard-coding
+apps from every DE (KDE/GNOME/XFCE/OpenOffice) — almost all uninstalled on a Void +
+LXQt box, so it reads as "residue from an old DE" (it isn't — it ships with openbox).
+A user `menu.xml` overrides it with essentials + **Applications via rofi** (dynamic,
+only shows what's installed, so it never goes stale); entries self-adjust to the
+terminal / file-manager / browser actually present, plus Reconfigure and Log Out /
+Reboot / Shut Down (`loginctl`).
+
 ---
 
 ## 6. Scope & rules
