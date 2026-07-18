@@ -35,9 +35,9 @@ if [ "${1:-}" = "--remove" ]; then
         [ -e "$f.pre-cachy.bak" ] && mv -f "$f.pre-cachy.bak" "$f" && ok "restored $f"
     done
     rm -rf "$SHARE/lxqt/themes/void-tactical" "$CFG/Kvantum/void-tactical" "$HOME/.themes/void-tactical"
-    rm -f "$CFG"/autostart/{picom,plank,conky}.desktop
+    rm -f "$CFG"/autostart/{picom,plank,conky,xcape}.desktop
     command -v papirus-folders >/dev/null 2>&1 && sudo papirus-folders -C blue -t Papirus-Dark 2>/dev/null
-    pkill -x picom 2>/dev/null; pkill -x plank 2>/dev/null; pkill -x conky 2>/dev/null
+    pkill -x picom 2>/dev/null; pkill -x plank 2>/dev/null; pkill -x conky 2>/dev/null; pkill -x xcape 2>/dev/null
     ok "removed — log out/in for a full reset."
     exit 0
 fi
@@ -142,12 +142,15 @@ import re,sys
 p=sys.argv[1]; t=open(p).read()
 if re.search(r'<theme>.*?<name>',t,re.S): t=re.sub(r'(<theme>.*?<name>).*?(</name>)',r'\1void-tactical\2',t,count=1,flags=re.S)
 elif '</openbox_config>' in t: t=t.replace('</openbox_config>','<theme><name>void-tactical</name></theme>\n</openbox_config>')
+# one virtual desktop (the 4-desktop default is dated; re-add if wanted)
+if '<desktops>' in t: t=re.sub(r'(<number>)\s*\d+\s*(</number>)', r'\g<1>1\g<2>', t, count=1)
+elif '<openbox_config' in t: t=re.sub(r'(<openbox_config[^>]*>)', r'\1\n<desktops><number>1</number></desktops>', t, count=1)
 # Super+Space -> rofi
 if '</keyboard>' in t and 'rofi -show' not in t:
     t=t.replace('</keyboard>','  <keybind key="W-space"><action name="Execute"><command>rofi -show drun</command></action></keybind>\n</keyboard>')
 open(p,'w').write(t)
 PY
-    ok "openbox -> void-tactical (+ Super+Space rofi)"
+    ok "openbox -> void-tactical (+ 1 desktop, Super+Space rofi)"
 else warn "no openbox rc.xml — titlebar theme + rofi keybind skipped"; fi
 
 # ============================================================ Papirus grey folders
@@ -175,13 +178,25 @@ import sys,re,os
 p,icon=sys.argv[1],sys.argv[2]
 t=open(p).read() if os.path.exists(p) else "[General]\n__userfile__=true\n"
 if 'panels=' not in t: t=t.replace('[General]\n','[General]\npanels=panel1\n',1)
+# thin top bar; NO desktopswitch (single-desktop default, re-add if wanted)
+PLUGINS='mainmenu, mount, tray, volume, worldclock'
+def upd(t,key,val):
+    m=re.search(r'(\[panel1\]\n)(.*?)(?=\n\[|\Z)', t, re.S)
+    head,body=m.group(1),m.group(2)
+    if re.search(r'^%s='%key, body, re.M): body=re.sub(r'^%s=.*$'%key, '%s=%s'%(key,val), body, count=1, flags=re.M)
+    else: body=key+'='+val+'\n'+body
+    return t[:m.start()]+head+body+t[m.end():]
 if '[panel1]' not in t:
-    t+="\n[panel1]\nposition=Top\npanelSize=30\niconSize=22\nlineCount=1\nalignment=-1\nhidable=false\nplugins=mainmenu, desktopswitch, mount, tray, volume, worldclock\n"
+    t+="\n[panel1]\nposition=Top\npanelSize=30\niconSize=22\nlineCount=1\nalignment=-1\nhidable=false\nplugins=%s\n"%PLUGINS
 else:
-    t=re.sub(r'^position=.*$','position=Top',t,count=1,flags=re.M) if re.search(r'^position=',t,re.M) else t.replace('[panel1]\n','[panel1]\nposition=Top\n',1)
-# mainmenu icon
-if '[mainmenu]' not in t: t+="\n[mainmenu]\nicon=%s\n"%icon
-elif 'icon=' not in t.split('[mainmenu]')[1].split('[')[0]: t=t.replace('[mainmenu]\n','[mainmenu]\nicon=%s\n'%icon,1)
+    t=upd(t,'position','Top'); t=upd(t,'plugins',PLUGINS)
+# mainmenu icon + shortcut (Super via xcape -> Ctrl+Escape)
+if '[mainmenu]' not in t:
+    t+="\n[mainmenu]\nicon=%s\nshortcut=Ctrl+Escape\n"%icon
+else:
+    mm=t.split('[mainmenu]')[1].split('\n[')[0]
+    if 'icon=' not in mm: t=t.replace('[mainmenu]\n','[mainmenu]\nicon=%s\n'%icon,1)
+    if 'shortcut=' not in mm: t=t.replace('[mainmenu]\n','[mainmenu]\nshortcut=Ctrl+Escape\n',1)
 open(p,'w').write(t)
 PY
 cp -f "$ASSETS/void-cachy-square.svg" "$SHARE/cachy-void/void-cachy-square.svg" 2>/dev/null
@@ -214,10 +229,17 @@ IFACE=$(ip route 2>/dev/null | awk '/^default/{print $5; exit}'); : "${IFACE:=et
 HW=$(for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name 2>/dev/null)" = coretemp ] && basename "$h" | tr -dc 0-9 && break; done); : "${HW:=0}"
 sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.in" > "$CFG/conky/conky.conf"
 printf '[Desktop Entry]\nType=Application\nName=conky\nExec=conky -c %s/conky/conky.conf\n' "$CFG" > "$CFG/autostart/conky.desktop"
-ok "picom / rofi / conky configs"
+# xcape: tap Super -> Ctrl+Escape (the mainmenu shortcut). lxqt-globalkeys can't
+# bind a bare modifier (lxqt#1387), so this is the standard bridge; tap-only, so
+# holding Super for other combos still works.
+if command -v xcape >/dev/null 2>&1; then
+    printf '[Desktop Entry]\nType=Application\nName=xcape\nExec=xcape -e Super_L=Control_L|Escape\n' > "$CFG/autostart/xcape.desktop"
+fi
+ok "picom / rofi / conky / xcape configs"
 
 # ============================================================ apply live
 log "applying live"
+pgrep -x lxqt-globalkeys >/dev/null 2>&1 || { command -v lxqt-globalkeysd >/dev/null 2>&1 && setsid lxqt-globalkeysd >/dev/null 2>&1 & sleep 1; }
 pkill -9 -x lxqt-panel 2>/dev/null; sleep 2   # lxqt-session respawns exactly one (reads new config)
 command -v openbox >/dev/null 2>&1 && openbox --reconfigure 2>/dev/null
 for a in picom plank conky; do
@@ -229,6 +251,7 @@ for a in picom plank conky; do
         conky) setsid conky -c "$CFG/conky/conky.conf" >/dev/null 2>&1 & ;;
     esac
 done
+if command -v xcape >/dev/null 2>&1; then pkill -x xcape 2>/dev/null; setsid xcape -e 'Super_L=Control_L|Escape' >/dev/null 2>&1 & fi
 
 cat <<EOF
 
