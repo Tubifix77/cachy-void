@@ -57,7 +57,7 @@ PY
     rm -f "$CFG"/autostart/{picom,plank,conky,conky-system,xcape}.desktop
     rm -f "$CFG"/conky/conky-system.conf
     # openbox session autostart + root menu: restore a pre-existing one, else drop ours
-    for _obf in openbox/autostart openbox/menu.xml tint2/tint2rc; do
+    for _obf in openbox/autostart openbox/menu.xml openbox/environment tint2/tint2rc; do
         if [ -e "$CFG/$_obf.pre-cachy.bak" ]; then
             mv -f "$CFG/$_obf.pre-cachy.bak" "$CFG/$_obf"
         else
@@ -356,6 +356,20 @@ _br="";   for b in firefox chromium; do command -v "$b" >/dev/null 2>&1 && { _br
   printf '  </menu>\n</openbox_menu>\n'
 } > "$OBM"
 ok "openbox root menu -> curated (rofi + essentials; stale stock menu bypassed)"
+
+# Dark Qt for the bare Openbox session. LXQt exports these via its session.conf;
+# openbox does NOT, so Qt apps (qterminal, pcmanfm-qt, the updater GUI) render in a
+# LIGHT default style there. openbox-session sources ~/.config/openbox/environment
+# at startup, so exporting them here themes every Qt app dark (Kvantum void-tactical).
+OBE="$CFG/openbox/environment"; bak "$OBE"
+{
+  printf '# cachy-void: dark Qt theme for the Openbox session (Kvantum void-tactical).\n'
+  printf '# LXQt sets these via session.conf; openbox needs them here so Qt apps\n'
+  printf '# (qterminal, pcmanfm-qt, the updater GUI) are dark, not the light default.\n'
+  printf 'export QT_QPA_PLATFORMTHEME=lxqt\n'
+  printf 'export QT_STYLE_OVERRIDE=kvantum\n'
+} > "$OBE"
+ok "openbox session -> dark Qt (Kvantum) for qterminal/pcmanfm-qt/updater"
 
 # ============================================================ Papirus grey folders (only on the Papirus fallback)
 if [ "$ICON_THEME" = "Papirus-Dark" ] && command -v papirus-folders >/dev/null 2>&1; then
