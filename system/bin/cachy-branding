@@ -104,7 +104,27 @@ if [ -d "$LXSRC" ]; then
      -e 's/#0050a0/#3a6b52/Ig' -e 's/#375778/#2e4d3f/Ig' -e 's/#385a7c/#2e4d3f/Ig' \
      -e 's/#345372/#2c4a3c/Ig' -e 's/#2e4964/#282c34/Ig' -e 's/#001e3c/#16211b/Ig' \
      -e 's/#001428/#121a15/Ig'
-    ok "LXQt theme -> void-tactical"
+    # kill the plugin move-handle "dots" (the taskbar/tray grip). The theme draws
+    # them via Plugin[NeedsHandle="true"] + plugin-handle-*.svg; lockPanel is meant
+    # to hide them but doesn't in LXQt 2.4, so null the image (last-wins override,
+    # matching the per-position selectors' specificity) and reclaim their margin.
+    if [ -f "$D/lxqt-panel.qss" ]; then
+        cat >> "$D/lxqt-panel.qss" <<'QSS'
+
+/* cachy-void: remove the plugin move-handle dots (clean, locked-looking panel).
+   Must be `background: none` (shorthand) — `background-image: none` alone does
+   NOT clear it in Qt QSS. */
+LXQtPanel[position="Bottom"] Plugin[NeedsHandle="true"],
+LXQtPanel[position="Top"] Plugin[NeedsHandle="true"],
+LXQtPanel[position="Left"] Plugin[NeedsHandle="true"],
+LXQtPanel[position="Right"] Plugin[NeedsHandle="true"] {
+    background: none;
+    margin: 0;
+    padding: 0;
+}
+QSS
+    fi
+    ok "LXQt theme -> void-tactical (handle dots removed)"
 else warn "LXQt 'kvantum' theme not present — panel keeps current theme"; fi
 
 # ============================================================ LXQt appearance (lxqt.conf / session.conf)
@@ -161,14 +181,21 @@ fi
 # ============================================================ wallpaper
 log "wallpaper (cachy-void-official)"
 WP="$SHARE/cachy-void/cachy-void-official.png"; mkdir -p "$SHARE/cachy-void"
-if [ ! -f "$WP" ] && [ -f "$ASSETS/wallpapers/cachy-void-official.svg" ]; then
+# always (re)render from the SVG — a stale PNG must not survive an asset update
+if [ -f "$ASSETS/wallpapers/cachy-void-official.svg" ]; then
     if command -v rsvg-convert >/dev/null 2>&1; then rsvg-convert -w 1920 -h 1080 "$ASSETS/wallpapers/cachy-void-official.svg" -o "$WP"
     else magick -background none "$ASSETS/wallpapers/cachy-void-official.svg" -resize 1920x1080 "$WP" 2>/dev/null; fi
 fi
+# pcmanfm-qt caches the decoded wallpaper by PATH — a same-name content change is
+# ignored (needs a desktop restart). Point it at a fresh versioned copy each apply
+# so the path changes and it reloads live; prune older versions.
+WPV="$SHARE/cachy-void/cachy-void-official-$(date +%s).png"
+cp -f "$WP" "$WPV" 2>/dev/null && find "$SHARE/cachy-void" -maxdepth 1 -name 'cachy-void-official-*.png' ! -name "$(basename "$WPV")" -delete 2>/dev/null
+[ -f "$WPV" ] || WPV="$WP"
 PS="$CFG/pcmanfm-qt/lxqt/settings.conf"
-[ -f "$PS" ] && { bak "$PS"; sed -i -E "s#^Wallpaper=.*#Wallpaper=$WP#; s#^WallpaperMode=.*#WallpaperMode=stretch#" "$PS"; }
-command -v pcmanfm-qt >/dev/null 2>&1 && pcmanfm-qt --set-wallpaper="$WP" --wallpaper-mode=stretch 2>/dev/null
-ok "wallpaper set"
+[ -f "$PS" ] && { bak "$PS"; sed -i -E "s#^Wallpaper=.*#Wallpaper=$WPV#; s#^WallpaperMode=.*#WallpaperMode=stretch#" "$PS"; }
+command -v pcmanfm-qt >/dev/null 2>&1 && pcmanfm-qt --set-wallpaper="$WPV" --wallpaper-mode=stretch 2>/dev/null
+ok "wallpaper rendered + set"
 
 # ============================================================ panel: top bar
 # Surgical: keep the user's existing (working) panel.conf and only nudge
@@ -217,6 +244,8 @@ if m:
         if re.search(r'^%s='%key, body, re.M): return re.sub(r'^%s=.*$'%key, '%s=%s'%(key,val), body, count=1, flags=re.M)
         return key+'='+val+'\n'+body
     body=setkv(body,'position','Top')
+    # lock the panel: an unlocked LXQt panel draws grip dots between plugins.
+    body=setkv(body,'lockPanel','true')
     if re.search(r'^panelSize=', body, re.M):
         body=re.sub(r'^panelSize=.*$', 'panelSize=30', body, count=1, flags=re.M)
     pm=re.search(r'^plugins=(.*)$', body, re.M)
@@ -282,10 +311,27 @@ HW=$(for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name 2>/dev/null)" = coret
 # per card (a modern GPU also shows util%). One nvidia-smi call per 5s (execi).
 GPU_LINE=""
 if command -v nvidia-smi >/dev/null 2>&1 && [ -n "$(nvidia-smi -L 2>/dev/null)" ]; then
-    GPU_LINE=$(cat <<'LINE'
-${color1}gpu ${color}${execi 5 nvidia-smi --query-gpu=temperature.gpu,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | awk -F", " '{ s=$1"C"; if ($2!="[N/A]" && $2!="") s=s"  "$2"%"; if ($3!="[N/A]" && $3!="") s=s"  "$3"/"$4"M"; print s }'}
-LINE
-)
+    # Build the line at APPLY time from whichever fields the card reports as real
+    # numbers (Kepler returns [N/A] for util). Colours + units live in the STATIC
+    # template, and each value is a SIMPLE ${execi} (no braces / no ${} inside the
+    # command) — conky's parser mis-nests on ${color} embedded in an exec command
+    # (execpi) and truncates it, so keep exec commands bare. Green labels + units
+    # match the cpu/mem lines: gpu NN°C   load NN%   vram U/TMB.
+    q(){ nvidia-smi --query-gpu="$1" --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '; }
+    isnum(){ case "$1" in ''|*[!0-9.]*) return 1;; *) return 0;; esac; }
+    E='--format=csv,noheader,nounits 2>/dev/null'
+    seg='${color1}gpu ${color}'
+    if isnum "$(q temperature.gpu)"; then
+        seg="$seg"'${execi 5 nvidia-smi --query-gpu=temperature.gpu '"$E"'}°C'
+    fi
+    if isnum "$(q utilization.gpu)"; then
+        seg="$seg"'   ${color1}load ${color}${execi 5 nvidia-smi --query-gpu=utilization.gpu '"$E"'}%'
+    fi
+    TOTAL="$(q memory.total)"   # constant — bake it in, only "used" is dynamic
+    if isnum "$(q memory.used)" && isnum "$TOTAL"; then
+        seg="$seg"'   ${color1}vram ${color}${execi 5 nvidia-smi --query-gpu=memory.used '"$E"'}/'"$TOTAL"'MB'
+    fi
+    GPU_LINE="$seg"
 fi
 sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.in" | \
     awk -v line="$GPU_LINE" '{ if ($0 ~ /@GPU_LINE@/) { if (line != "") print line } else print }' > "$CFG/conky/conky.conf"
