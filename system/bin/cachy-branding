@@ -40,6 +40,14 @@ if [ "${1:-}" = "--remove" ]; then
         gsettings reset org.gnome.desktop.interface gtk-theme 2>/dev/null
         gsettings reset org.gnome.desktop.interface color-scheme 2>/dev/null
     fi
+    # strip our gtk.css block (the Plank-dot tint); leave any user rules intact
+    GC="$CFG/gtk-3.0/gtk.css"
+    [ -f "$GC" ] && python3 - "$GC" <<'PY'
+import re,sys
+p=sys.argv[1]; t=open(p).read()
+t=re.sub(r"\n*/\* >>> cachy-void >>> \*/.*?/\* <<< cachy-void <<< \*/\n*","\n",t,flags=re.S)
+open(p,"w").write(t)
+PY
     rm -rf "$SHARE/icons/Luv-Void"
     _desk=$(xdg-user-dir DESKTOP 2>/dev/null); [ -d "$_desk" ] || _desk="$HOME/Desktop"
     rm -f "$_desk/cachy-updater.desktop" "$CFG/plank/dock1/launchers/00-cachy-updater.dockitem"
@@ -226,7 +234,25 @@ if command -v gsettings >/dev/null 2>&1; then
     gsettings set org.gnome.desktop.interface gtk-theme "$GTK_THEME" 2>/dev/null
     gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null
 fi
-ok "lxqt.conf + session.conf + GTK theme ($GTK_THEME) + icon theme"
+# Plank's running-indicator dot is NOT a themeable dock.theme key — libplank derives
+# it from the GTK theme's `iconview.view` background colour (Arc-Dark ships blue-grey,
+# so the dot renders blue). Override that one colour in the user gtk.css to tint the
+# dot brand green. pcmanfm-qt is Qt (unaffected); GTK apps don't paint chrome from
+# iconview.view, so the blast radius is just Plank's dot. Marked block = --remove-able.
+GC="$CFG/gtk-3.0/gtk.css"
+python3 - "$GC" "$ACCENT" <<'PY'
+import os,re,sys
+p,accent=sys.argv[1],sys.argv[2]
+t=open(p).read() if os.path.exists(p) else ""
+t=re.sub(r"\n*/\* >>> cachy-void >>> \*/.*?/\* <<< cachy-void <<< \*/\n*","\n",t,flags=re.S)
+block=("/* >>> cachy-void >>> */\n"
+       "/* Plank derives its running-indicator dot from iconview.view's background;\n"
+       "   tint it brand green (dock.theme has no key for this). */\n"
+       f"iconview.view {{ background-color: #{accent}; }}\n"
+       "/* <<< cachy-void <<< */\n")
+open(p,"w").write((t.rstrip()+"\n\n" if t.strip() else "")+block)
+PY
+ok "lxqt.conf + session.conf + GTK theme ($GTK_THEME) + icon theme + Plank dot"
 
 # ============================================================ openbox titlebars
 log "openbox titlebars (void-tactical)"

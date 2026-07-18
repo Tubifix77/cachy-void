@@ -194,11 +194,18 @@ FillStartColor=27;;29;;30;;242       # obsidian @ ~95%
 FillEndColor=27;;29;;30;;242
 OuterStrokeColor=40;;44;;52;;255     # thin graphite line
 InnerStrokeColor=0;;0;;0;;0
-ActiveIndicatorColor=71;;128;;97;;255   # Void green
 UrgentGlowColor=138;;47;;50;;255        # oxblood
 ```
 *(Verify section/key names against the installed Plank version — they vary; the color
 format is `R;;G;;B;;A`, 0–255.)*
+
+> **Running-indicator dot colour is not a `dock.theme` key.** There is an
+> `ActiveIndicatorColor`, but libplank ignores it — the dot's colour is derived from
+> the GTK theme's `iconview.view` background. Arc-Dark ships that blue-grey, so the dot
+> renders blue. `cachy-branding` tints it brand green with a marked block in the user's
+> `~/.config/gtk-3.0/gtk.css` (`iconview.view { background-color: #478061; }`).
+> pcmanfm-qt is Qt so it's unaffected, and GTK apps don't paint chrome from
+> `iconview.view`, so the blast radius is just the dot.
 
 ### 5.5 Conky — minimal telemetry (text only, **no gauges**)
 
