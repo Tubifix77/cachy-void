@@ -171,48 +171,58 @@ command -v pcmanfm-qt >/dev/null 2>&1 && pcmanfm-qt --set-wallpaper="$WP" --wall
 ok "wallpaper set"
 
 # ============================================================ panel: top bar
-log "panel: thin top bar + logo menu button"
-PC="$CFG/lxqt/panel.conf"; bak "$PC"
-python3 - "$PC" "$SHARE/cachy-void/void-cachy-square.svg" <<'PY'
-import sys,re,os
+# Surgical: keep the user's existing (working) panel.conf and only nudge
+# position/size/plugin-list — do NOT rebuild [panel1]/[mainmenu] from scratch.
+# A from-scratch rewrite was tried and shipped a menu-less panel (the mainmenu
+# plugin silently failed to render); editing the live config in place is safe.
+log "panel: move top, thinner, drop desktop switcher"
+PC="$CFG/lxqt/panel.conf"
+[ -f "$PC" ] || { [ -f /etc/xdg/lxqt/panel.conf ] && mkdir -p "$CFG/lxqt" && cp /etc/xdg/lxqt/panel.conf "$PC"; }
+bak "$PC"
+mkdir -p "$SHARE/cachy-void"
+cp -f "$ASSETS/void-cachy-icon.svg" "$SHARE/cachy-void/void-cachy-icon.svg" 2>/dev/null
+if command -v rsvg-convert >/dev/null 2>&1; then rsvg-convert -w 64 -h 64 "$SHARE/cachy-void/void-cachy-icon.svg" -o "$SHARE/cachy-void/void-cachy-icon.png"
+else magick -background none "$SHARE/cachy-void/void-cachy-icon.svg" -resize 64x64 "$SHARE/cachy-void/void-cachy-icon.png" 2>/dev/null; fi
+if [ -f "$PC" ]; then
+    python3 - "$PC" "$SHARE/cachy-void/void-cachy-icon.png" <<'PY'
+import sys,re
 p,icon=sys.argv[1],sys.argv[2]
-t=open(p).read() if os.path.exists(p) else "[General]\n__userfile__=true\n"
-if 'panels=' not in t: t=t.replace('[General]\n','[General]\npanels=panel1\n',1)
-# thin top bar; NO desktopswitch (single-desktop default, re-add if wanted)
-PLUGINS='mainmenu, mount, tray, volume, worldclock'
-def upd(t,key,val):
-    m=re.search(r'(\[panel1\]\n)(.*?)(?=\n\[|\Z)', t, re.S)
+t=open(p).read()
+m=re.search(r'(\[panel1\]\n)(.*?)(?=\n\[|\Z)', t, re.S)
+if m:
     head,body=m.group(1),m.group(2)
-    if re.search(r'^%s='%key, body, re.M): body=re.sub(r'^%s=.*$'%key, '%s=%s'%(key,val), body, count=1, flags=re.M)
-    else: body=key+'='+val+'\n'+body
-    return t[:m.start()]+head+body+t[m.end():]
-if '[panel1]' not in t:
-    t+="\n[panel1]\nposition=Top\npanelSize=30\niconSize=22\nlineCount=1\nalignment=-1\nhidable=false\nplugins=%s\n"%PLUGINS
-else:
-    t=upd(t,'position','Top'); t=upd(t,'plugins',PLUGINS)
-# mainmenu icon + shortcut (Super via xcape -> Ctrl+Escape)
-if '[mainmenu]' not in t:
-    t+="\n[mainmenu]\nicon=%s\nshortcut=Ctrl+Escape\n"%icon
-else:
-    mm=t.split('[mainmenu]')[1].split('\n[')[0]
-    if 'icon=' not in mm: t=t.replace('[mainmenu]\n','[mainmenu]\nicon=%s\n'%icon,1)
-    if 'shortcut=' not in mm: t=t.replace('[mainmenu]\n','[mainmenu]\nshortcut=Ctrl+Escape\n',1)
+    def setkv(body,key,val):
+        if re.search(r'^%s='%key, body, re.M): return re.sub(r'^%s=.*$'%key, '%s=%s'%(key,val), body, count=1, flags=re.M)
+        return key+'='+val+'\n'+body
+    body=setkv(body,'position','Top')
+    if re.search(r'^panelSize=', body, re.M):
+        body=re.sub(r'^panelSize=.*$', 'panelSize=30', body, count=1, flags=re.M)
+    pm=re.search(r'^plugins=(.*)$', body, re.M)
+    if pm:
+        items=[x.strip() for x in pm.group(1).split(',') if x.strip()]
+        items=[x for x in items if x not in ('desktopswitch','pager')]
+        body=re.sub(r'^plugins=.*$', 'plugins='+', '.join(items), body, count=1, flags=re.M)
+    t=t[:m.start()]+head+body+t[m.end():]
+# same-size icon swap on the existing mainmenu section only — never fabricate one
+mm=re.search(r'\[mainmenu\]\n(.*?)(?=\n\[|\Z)', t, re.S)
+if mm:
+    body=mm.group(1)
+    if re.search(r'^icon=', body, re.M): body=re.sub(r'^icon=.*$', 'icon=%s'%icon, body, count=1, flags=re.M)
+    else: body='icon=%s\n'%icon+body
+    if not re.search(r'^shortcut=', body, re.M): body='shortcut=Ctrl+Escape\n'+body
+    t=t[:mm.start(1)]+body+t[mm.end(1):]
 open(p,'w').write(t)
 PY
-cp -f "$ASSETS/void-cachy-square.svg" "$SHARE/cachy-void/void-cachy-square.svg" 2>/dev/null
-ok "panel configured"
+    ok "panel -> top, thinner, desktop switcher dropped, menu icon swapped (mainmenu untouched otherwise)"
+else
+    warn "no panel.conf found (and no /etc/xdg default) — panel layout unchanged"
+fi
 
 # ============================================================ Plank dock
 if command -v plank >/dev/null 2>&1; then
-    log "Plank dock (flat, dodge-maximized)"
-    PT="$SHARE/plank/themes/void-tactical"; mkdir -p "$PT" "$CFG/plank/dock1/launchers" "$SHARE/applications"
+    log "Plank dock (flat, dodge-maximized, app launchers only)"
+    PT="$SHARE/plank/themes/void-tactical"; mkdir -p "$PT" "$CFG/plank/dock1/launchers"
     cp -f "$ASSETS/plank/void-tactical/dock.theme" "$PT/dock.theme"
-    # "start menu" dock item: the diamond -> rofi app launcher (LXQt panel plugins
-    # don't render our SVG reliably, so the visible menu button lives in the dock).
-    cp -f "$ASSETS/void-cachy-icon.svg" "$SHARE/cachy-void/void-cachy-icon.svg" 2>/dev/null
-    magick -background none "$SHARE/cachy-void/void-cachy-icon.svg" -resize 128x128 "$SHARE/cachy-void/void-cachy-icon.png" 2>/dev/null
-    printf '[Desktop Entry]\nType=Application\nName=Cachy-Void Menu\nIcon=%s/void-cachy-icon.png\nExec=rofi -show drun\nTerminal=false\nCategories=System;\n' "$SHARE/cachy-void" > "$SHARE/applications/cachy-menu.desktop"
-    printf '[PlankDockItemPreferences]\nLauncher=file://%s/applications/cachy-menu.desktop\n' "$SHARE" > "$CFG/plank/dock1/launchers/00-cachy-menu.dockitem"
     for app in pcmanfm-qt qterminal steam firefox; do
         f=$(ls /usr/share/applications/ 2>/dev/null | grep -iE "(^|\.)$app\.desktop$" | head -1)
         [ -n "$f" ] && printf '[PlankDockItemPreferences]\nLauncher=file:///usr/share/applications/%s\n' "$f" > "$CFG/plank/dock1/launchers/$app.dockitem"
@@ -221,7 +231,11 @@ if command -v plank >/dev/null 2>&1; then
     for kv in "theme void-tactical" "icon-size 40" "hide-mode dodge-maximized" "zoom-enabled false" "position bottom" "alignment center" "items-alignment center"; do
         gsettings set $DK ${kv%% *} "${kv#* }" 2>/dev/null
     done
-    printf '[Desktop Entry]\nType=Application\nName=plank\nExec=plank\n' > "$CFG/autostart/plank.desktop"
+    # delayed autostart: on this "this-PC" TV setup, Plank launching before the
+    # TV output is fully negotiated leaves it stranded near the old (laptop
+    # panel) screen center until next restart. A short delay lets X/xrandr
+    # settle on the real output first.
+    printf '[Desktop Entry]\nType=Application\nName=plank\nExec=sh -c "sleep 8 && exec plank"\n' > "$CFG/autostart/plank.desktop"
     ok "Plank configured"
 fi
 
@@ -233,8 +247,20 @@ cp -f "$ASSETS/rofi/config.rasi" "$CFG/rofi/config.rasi"
 # conky: fill host-specific iface + hwmon
 IFACE=$(ip route 2>/dev/null | awk '/^default/{print $5; exit}'); : "${IFACE:=eth0}"
 HW=$(for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name 2>/dev/null)" = coretemp ] && basename "$h" | tr -dc 0-9 && break; done); : "${HW:=0}"
-sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.in" > "$CFG/conky/conky.conf"
-printf '[Desktop Entry]\nType=Application\nName=conky\nExec=conky -c %s/conky/conky.conf\n' "$CFG" > "$CFG/autostart/conky.desktop"
+# GPU line: query the nvidia chip directly (nvidia-smi), not the game overlay
+# path — on legacy Optimus/PRIME render-offload, MangoHud/NVML load% is
+# unreliable, but nvidia-smi's own temp/util reads are direct chip queries and
+# hold up fine. execi caches for 5s so conky isn't spawning nvidia-smi every tick.
+GPU_LINE=""
+if command -v nvidia-smi >/dev/null 2>&1; then
+    GPU_LINE='${color1}gpu ${color}${execi 5 nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null}C   ${color2}${execi 5 nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null}%${color}'
+fi
+sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.in" | \
+    awk -v line="$GPU_LINE" '{ if ($0 ~ /@GPU_LINE@/) { if (line != "") print line } else print }' > "$CFG/conky/conky.conf"
+# delayed autostart: same TV-detection race as Plank — gap_x/gap_y anchoring
+# (top_right) gets computed against whatever screen geometry is live when
+# conky starts, so it drifts if that's the wrong output.
+printf '[Desktop Entry]\nType=Application\nName=conky\nExec=sh -c "sleep 8 && exec conky -c %s/conky/conky.conf"\n' "$CFG" > "$CFG/autostart/conky.desktop"
 # xcape: tap Super -> Ctrl+Escape (the mainmenu shortcut). lxqt-globalkeys can't
 # bind a bare modifier (lxqt#1387), so this is the standard bridge; tap-only, so
 # holding Super for other combos still works.

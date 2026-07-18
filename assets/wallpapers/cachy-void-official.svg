@@ -39,7 +39,7 @@
 
   <!-- honest schematic annotation, clear bottom-right corner, right-aligned -->
   <g font-family="'JetBrains Mono','IBM Plex Mono',ui-monospace,monospace" fill="#5c6370" text-anchor="end">
-    <text x="1864" y="978"  font-size="20" fill="#abb2bf" letter-spacing="2">void · cachy</text>
+    <text x="1864" y="978"  font-size="20" fill="#abb2bf" letter-spacing="2">cachy · void</text>
     <text x="1864" y="1004" font-size="14" letter-spacing="1">performance core</text>
     <text x="1864" y="1028" font-size="12" letter-spacing="1">runit · xbps · BORE · no-systemd</text>
   </g>

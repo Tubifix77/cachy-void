@@ -5,7 +5,7 @@
   <rect x="46" y="52" width="88" height="56" fill="none" stroke="#5c6370" stroke-width="1.2"/>
   <rect x="66" y="65" width="48" height="30" fill="none" stroke="#5c6370" stroke-width="0.8"/>
   <polygon points="90,68 102,80 90,92 78,80" fill="#478061"/>
-  <text x="180" y="72" fill="#abb2bf" font-size="30" letter-spacing="1.5">void · cachy</text>
+  <text x="180" y="72" fill="#abb2bf" font-size="30" letter-spacing="1.5">cachy · void</text>
   <text x="182" y="98" fill="#5c6370" font-size="15">performance core</text>
   <text x="182" y="122" fill="#478061" font-size="13">runit · xbps · x86-64-v3 · BORE</text>
 </svg>

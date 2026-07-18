@@ -222,7 +222,14 @@ ${color1}net  ${color}${downspeed} v  ${upspeed} ^
 ${color1}up   ${color}${uptime_short}
 ]]
 ```
-No bars, no rings, no meters — density through plain text is the point.
+No bars, no rings, no meters — density through plain text is the point. If
+`nvidia-smi` is present, `cachy-branding` adds a `gpu temp / util` line straight
+from the chip (`--query-gpu=temperature.gpu,utilization.gpu`) — legacy Optimus/
+PRIME render-offload makes in-game overlays (MangoHud/NVML) misreport load, but
+a direct `nvidia-smi` query holds up fine; the line is polled every 5s (`execi 5`),
+not every redraw. On multi-monitor "detached TV" setups where the real output
+isn't negotiated yet at login, Conky's autostart is delayed ~8s so its
+`top_right` anchor computes against the right screen, not a stale default.
 
 ### 5.6 The mark & wallpaper
 
@@ -250,13 +257,13 @@ core + tech line `#478061`, wordmark `#abb2bf`, tagline `#5c6370`. Do **not** us
 ```
 ╭─────────────╮
 │ ╭─────────╮ │
-│ │    ◆    │ │   void · cachy
+│ │    ◆    │ │   cachy · void
 │ ╰─────────╯ │   performance core
 ╰─────────────╯   runit · xbps · x86-64-v3 · BORE
 ```
 
 One-line nameplate (prompt or panel header):
-`◆ void·cachy ── performance core ── runit · xbps · v3 · BORE`
+`◆ cachy·void ── performance core ── runit · xbps · v3 · BORE`
 
 **Wallpaper set** (shipped in [`assets/wallpapers/`](assets/wallpapers/) as clean SVGs —
 crisp at any resolution, locked to the palette; render to PNG with `rsvg-convert`/ImageMagick):
@@ -281,15 +288,25 @@ pick one primary launcher/switcher and let everything else recede.
 
 **Recommended LXQt layout (played-down):**
 
-- **One panel, themed** — the LXQt panel (bottom) is the anchor: menu button (the mark),
+- **One panel, themed** — the LXQt panel is the anchor: menu button (the mark),
   task list, tray, clock. Kept thin and dark (the `void-tactical` LXQt theme). This alone
-  is a complete, honest desktop — the most Void choice.
+  is a complete, honest desktop — the most Void choice. `cachy-branding` edits the
+  user's *existing* `panel.conf` in place (position/size/plugin list only) rather
+  than fabricating one from scratch — a from-scratch `[panel1]`/`[mainmenu]` rewrite
+  was tried once and shipped a menu button that silently failed to render. The
+  `mainmenu` icon is swapped 1:1 for the diamond mark at the same size the theme
+  already used (no icon= reveals a rendering bug in that plugin, so the safest
+  form is: edit what's there, don't replace the section).
 - **A dock is *optional*, and must stay subtle.** If a dock is wanted, add **Plank** as a
   *minimal launcher only* — not a showpiece:
   - Flat/matte theme (§5.4): sharp corners, thin graphite stroke, obsidian fill, green
     active-indicator. **No** glass, **no** macOS zoom/bounce (`zoom-enabled=false`).
   - Small icons (~40 px), **auto-hide or dodge-windows** so it never competes with content
     or the wallpaper.
+  - Autostart delayed ~8s on multi-monitor "detached TV" setups — Plank docking
+    against whatever output is live at that instant means it can end up parked
+    near the old default (laptop-panel) screen center until the next restart if
+    the real display hasn't been negotiated yet.
   - Position it so it does **not** fight the panel: either move the LXQt panel to a thin
     **top** bar (tray/clock/menu) and give Plank the **bottom** for app launching, **or**
     keep the bottom panel and dodge-hide Plank on a **side** edge. Never two bars on the

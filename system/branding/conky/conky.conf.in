@@ -19,6 +19,7 @@ ${color1}CACHY-VOID${color}
 ${color2}${nodename} · ${kernel}${color}
 ${color1}cpu ${color}${cpu}%   ${color1}temp ${color}${hwmon @HWMON@ temp 1}°C
 ${color1}mem ${color}${memperc}%   ${color2}${mem}/${memmax}${color}
+@GPU_LINE@
 ${color1}net ${color}${downspeed @NET_IFACE@} v ${upspeed @NET_IFACE@} ^
 ${color1}up  ${color}${uptime_short}
 ]]
