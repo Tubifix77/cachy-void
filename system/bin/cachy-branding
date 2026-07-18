@@ -126,6 +126,9 @@ LXQtPanel[position="Right"] Plugin[NeedsHandle="true"] {
     margin: 0;
     padding: 0;
 }
+
+/* cachy-void: clock font = Hack, to match Conky's telemetry */
+#WorldClockContent { font-family: "Hack"; }
 QSS
     fi
     ok "LXQt theme -> void-tactical (handle dots removed)"
