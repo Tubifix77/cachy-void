@@ -125,6 +125,14 @@ if [ -d "$LXSRC" ]; then
      -e 's/#0050a0/#3a6b52/Ig' -e 's/#375778/#2e4d3f/Ig' -e 's/#385a7c/#2e4d3f/Ig' \
      -e 's/#345372/#2c4a3c/Ig' -e 's/#2e4964/#282c34/Ig' -e 's/#001e3c/#16211b/Ig' \
      -e 's/#001428/#121a15/Ig'
+    # underplay the panel background gradient. The base theme fades the bar to
+    # near-black (rgba(0,0,0,72%)) at its bottom edge, which reads as a hard dark
+    # band sitting on the obsidian wallpaper. Take that bottom stop down to just a
+    # tad darker than the wallpaper (~rgb(27,29,30)) instead, so the bar melts into
+    # the desktop — the crisp light-grey top edge is kept. The rgba string is unique
+    # to the four #BackgroundWidget rules, so this targeted replace is safe.
+    find "$D" -type f -name '*.qss' -print0 | xargs -0 sed -i \
+        's/rgba(0, 0, 0, 72%)/rgba(22, 24, 25, 90%)/g'
     # kill the plugin move-handle "dots" (the taskbar/tray grip). The theme draws
     # them via Plugin[NeedsHandle="true"] + plugin-handle-*.svg; lockPanel is meant
     # to hide them but doesn't in LXQt 2.4, so null the image (last-wins override,
