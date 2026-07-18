@@ -31,6 +31,7 @@ if [ "${1:-}" = "--remove" ]; then
     log "restoring pre-branding config from backups"
     for f in "$CFG"/lxqt/lxqt.conf "$CFG"/lxqt/session.conf "$CFG"/lxqt/panel.conf \
              "$CFG"/Kvantum/kvantum.kvconfig "$CFG"/openbox/rc.xml \
+             "$CFG"/lxqt/lxqt-powermanagement.conf \
              "$CFG"/pcmanfm-qt/lxqt/settings.conf; do
         [ -e "$f.pre-cachy.bak" ] && mv -f "$f.pre-cachy.bak" "$f" && ok "restored $f"
     done
@@ -38,6 +39,7 @@ if [ "${1:-}" = "--remove" ]; then
     rm -f "$CFG"/autostart/{picom,plank,conky,xcape}.desktop
     command -v papirus-folders >/dev/null 2>&1 && sudo papirus-folders -C blue -t Papirus-Dark 2>/dev/null
     pkill -x picom 2>/dev/null; pkill -x plank 2>/dev/null; pkill -x conky 2>/dev/null; pkill -x xcape 2>/dev/null
+    pkill -f lxqt-powermanagement 2>/dev/null; command -v lxqt-powermanagement >/dev/null 2>&1 && setsid lxqt-powermanagement >/dev/null 2>&1 &
     ok "removed — log out/in for a full reset."
     exit 0
 fi
@@ -333,13 +335,37 @@ if command -v nvidia-smi >/dev/null 2>&1 && [ -n "$(nvidia-smi -L 2>/dev/null)" 
     fi
     GPU_LINE="$seg"
 fi
+# Battery line: only on machines with a battery (laptops). We hide the lxqt-power
+# management tray icon (below) and surface charge + AC state here instead — honest
+# text, no widget. acpiacadapter reports on-line/off-line -> AC/batt via if_match.
+BAT_LINE=""
+BATDEV=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -1)
+if [ -n "$BATDEV" ]; then
+    BN=$(basename "$BATDEV")
+    ACDEV=$(ls -d /sys/class/power_supply/AC* /sys/class/power_supply/ADP* 2>/dev/null | head -1); AN=$(basename "${ACDEV:-AC0}")
+    BAT_LINE='${color1}bat ${color}${battery_percent '"$BN"'}%   ${color2}${if_match "${acpiacadapter '"$AN"'}"=="on-line"}AC${else}batt${endif}${color}'
+fi
 sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.in" | \
-    awk -v line="$GPU_LINE" '{ if ($0 ~ /@GPU_LINE@/) { if (line != "") print line } else print }' > "$CFG/conky/conky.conf"
+    awk -v gpu="$GPU_LINE" -v bat="$BAT_LINE" '
+        $0=="@GPU_LINE@" { if (gpu != "") print gpu; next }
+        $0=="@BAT_LINE@" { if (bat != "") print bat; next }
+        { print }' > "$CFG/conky/conky.conf"
 # delayed autostart: same TV-detection race as Plank — gap_x/gap_y anchoring
 # (top_right) gets computed against whatever screen geometry is live when
 # conky starts, so it drifts if that's the wrong output.
 printf '[Desktop Entry]\nType=Application\nName=conky\nExec=sh -c "sleep 8 && exec conky -c %s/conky/conky.conf"\n' "$CFG" > "$CFG/autostart/conky.desktop"
-ok "picom / rofi / conky configs"
+# hide lxqt-powermanagement's tray icon — its built-in charge indicator is a
+# code-drawn green ring (not themeable) and the theme/battery icon types render
+# blank on this stack; battery status lives in Conky instead (BAT_LINE above).
+# The daemon stays running (lid/idle/battery watching); only its icon is hidden.
+PMC="$CFG/lxqt/lxqt-powermanagement.conf"
+if [ -f "$PMC" ]; then
+    bak "$PMC"
+    if grep -q '^showIcon=' "$PMC"; then sed -i 's/^showIcon=.*/showIcon=false/' "$PMC"
+    elif grep -q '^\[General\]' "$PMC"; then sed -i '/^\[General\]/a showIcon=false' "$PMC"
+    else printf '[General]\nshowIcon=false\n' >> "$PMC"; fi
+fi
+ok "picom / rofi / conky configs (+ battery in conky, power tray icon hidden)"
 
 # ============================================================ apply live
 log "applying live"
@@ -374,6 +400,11 @@ for a in picom plank conky; do
         conky) setsid conky -c "$CFG/conky/conky.conf" >/dev/null 2>&1 & ;;
     esac
 done
+# restart power management so showIcon=false takes effect (drops the tray icon)
+if pgrep -f lxqt-powermanagement >/dev/null 2>&1; then
+    pkill -f lxqt-powermanagement 2>/dev/null; sleep 1
+    command -v lxqt-powermanagement >/dev/null 2>&1 && setsid lxqt-powermanagement >/dev/null 2>&1 &
+fi
 
 cat <<EOF
 

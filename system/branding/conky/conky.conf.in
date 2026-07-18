@@ -1,5 +1,7 @@
 -- Cachy-Void Conky — minimal honest telemetry (branding.md §5.5). Text only, no gauges.
--- @NET_IFACE@ and @HWMON@ are filled in by cachy-branding at apply time (host-specific).
+-- Host-specific fields (net iface, hwmon index, GPU and battery lines) are filled
+-- in by cachy-branding at apply time; GPU/BAT lines are dropped on machines that
+-- lack them. The placeholder tokens sit on their own lines in conky.text below.
 conky.config = {
     alignment = 'top_right', gap_x = 30, gap_y = 52,
     minimum_width = 210, maximum_width = 260,
@@ -20,6 +22,7 @@ ${color2}${nodename} · ${kernel}${color}
 ${color1}cpu ${color}${cpu}%   ${color1}temp ${color}${hwmon @HWMON@ temp 1}°C
 ${color1}mem ${color}${memperc}%   ${color2}${mem}/${memmax}${color}
 @GPU_LINE@
+@BAT_LINE@
 ${color1}net ${color}${downspeed @NET_IFACE@} v ${upspeed @NET_IFACE@} ^
 ${color1}up  ${color}${uptime_short}
 ]]
