@@ -55,7 +55,8 @@ cd cachy-void
 3. Installs the prerequisites from §1.
 4. Ensures a `void-packages` checkout at `~/void-packages` (clones it and runs
    `./xbps-src binary-bootstrap` if missing).
-5. Runs `deploy.sh --with-grub` (see §4) and seeds the initial
+5. Runs `deploy.sh --with-grub` (see §4) — which also **generates a default
+   `/etc/cachy-void/updater.toml`** (§6.1) — and seeds the initial
    `kernel-state.json` matrix.
 
 Override the checkout location with an environment variable:
@@ -64,7 +65,11 @@ Override the checkout location with an environment variable:
 VOID_PACKAGES=/srv/void-packages ./bootstrap.sh
 ```
 
-When it finishes, skip to §7 (First Update).
+When it finishes: **review the generated `/etc/cachy-void/updater.toml`** (its
+`[packages]` allowlist), and — only if you want the BORE kernel — **pin `bore.lock`
+for your kernel series** (§6.2). Then go to §7 (First Update). The performance
+overlay, gaming layer, and runtime tuning all work without the kernel step; the
+desktop look and unattended updates are opt-in (`--with-branding`, `--with-schedule`).
 
 ---
 
