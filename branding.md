@@ -399,6 +399,25 @@ Both the theme dir and the conf are ledger-tracked, so `deploy.sh --uninstall`
 reverts to the stock greeter. If SDDM ever fails to load the theme it falls back to
 its built-in greeter — login is never at risk.
 
+### 5.9 The bare "Openbox" session — a minimal branded fallback
+
+LXQt uses openbox as its WM, so the greeter also lists a bare **Openbox** session.
+Picked on its own, stock openbox draws *nothing* — no panel, no wallpaper — so it
+shows a **black screen**. That is normal openbox behaviour, not a crash (openbox
+runs; right-click gives its root menu), but it reads as "broken" to anyone who
+selects it by accident.
+
+`cachy-branding` therefore writes a minimal `~/.config/openbox/autostart` so the
+bare session is usable and on-brand without dragging in a whole DE: wallpaper (via
+`feh`), the Picom compositor, and the Conky telemetry — apps come from the openbox
+root menu or Super+Space (rofi). This file runs **only** under the bare Openbox
+session; LXQt uses its own XDG autostart and ignores it, so nothing double-starts.
+It is the "Cachy-Void, the WM way" default: the tuned substance (kernel, overlay,
+updater, gaming — all session-independent) with a light, self-assembled shell
+rather than a full desktop. Deliberately restrained — an openbox user who wants to
+rice from scratch just deletes the file (or `cachy-branding --remove` restores any
+pre-existing one). `deploy.sh --with-branding` installs `feh` for it.
+
 ---
 
 ## 6. Scope & rules

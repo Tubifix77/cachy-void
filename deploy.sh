@@ -430,6 +430,7 @@ install_branding() {
     ensure_pkg arc-theme optional        # GTK-app coherence
     ensure_pkg font-hack optional        # the engineered mono
     ensure_pkg ImageMagick optional      # renders the login wallpaper + flat panel
+    ensure_pkg feh optional              # wallpaper setter for the bare-openbox session
     # mirror read-only theme assets (dir is ledger-tracked; uninstall rm -rf's it)
     install_dir "$BRANDING_ASSETS" root
     if ! $DRY_RUN && [ -z "$ROOT" ]; then
