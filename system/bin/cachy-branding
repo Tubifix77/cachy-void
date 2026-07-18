@@ -35,7 +35,11 @@ if [ "${1:-}" = "--remove" ]; then
              "$CFG"/pcmanfm-qt/lxqt/settings.conf; do
         [ -e "$f.pre-cachy.bak" ] && mv -f "$f.pre-cachy.bak" "$f" && ok "restored $f"
     done
-    command -v gsettings >/dev/null 2>&1 && gsettings reset org.gnome.desktop.interface icon-theme 2>/dev/null
+    if command -v gsettings >/dev/null 2>&1; then
+        gsettings reset org.gnome.desktop.interface icon-theme 2>/dev/null
+        gsettings reset org.gnome.desktop.interface gtk-theme 2>/dev/null
+        gsettings reset org.gnome.desktop.interface color-scheme 2>/dev/null
+    fi
     rm -rf "$SHARE/icons/Luv-Void"
     rm -rf "$SHARE/lxqt/themes/void-tactical" "$CFG/Kvantum/void-tactical" "$HOME/.themes/void-tactical"
     rm -f "$CFG"/autostart/{picom,plank,conky,xcape}.desktop
@@ -129,6 +133,10 @@ LXQtPanel[position="Right"] Plugin[NeedsHandle="true"] {
 
 /* cachy-void: clock font = Hack, to match Conky's telemetry */
 #WorldClockContent { font-family: "Hack"; }
+
+/* cachy-void: flat active taskbar button (kills the base theme's metallic gradient) */
+#TaskBar QToolButton:on { background-color: #2e4d3f; border: 1px solid #478061; }
+#TaskBar QToolButton:hover:on { background-color: #3a6b52; border: 1px solid #478061; }
 QSS
     fi
     ok "LXQt theme -> void-tactical (handle dots removed)"
@@ -198,13 +206,23 @@ with open(p,'w') as f: c.write(f,space_around_delimiters=False)
 PY
 SC="$CFG/lxqt/session.conf"; bak "$SC"
 grep -q '^QT_STYLE_OVERRIDE=' "$SC" 2>/dev/null || { grep -q '^\[Environment\]' "$SC" 2>/dev/null || printf '\n[Environment]\n' >> "$SC"; printf 'QT_STYLE_OVERRIDE=kvantum\n' >> "$SC"; }
-# GTK apps + Plank use their OWN icon-theme setting (NOT lxqt.conf) — point them at ours
-command -v gsettings >/dev/null 2>&1 && gsettings set org.gnome.desktop.interface icon-theme "$ICON_THEME" 2>/dev/null
+# GTK apps + Plank use their OWN theme keys (NOT lxqt.conf) — point them at ours.
+# Widget theme: Arc-Dark (pairs with our KvArcDark-based Kvantum) so GTK apps like
+# Firefox get dark chrome; +prefer-dark so Firefox's "auto" theme picks dark. Falls
+# back to Adwaita-dark. (GTK reads its theme at startup — restart GTK apps to apply.)
+GTK_THEME="Adwaita-dark"; [ -d /usr/share/themes/Arc-Dark ] && GTK_THEME="Arc-Dark"
 mkdir -p "$CFG/gtk-3.0"; GT="$CFG/gtk-3.0/settings.ini"; bak "$GT"
-if grep -q '^gtk-icon-theme-name=' "$GT" 2>/dev/null; then sed -i "s/^gtk-icon-theme-name=.*/gtk-icon-theme-name=$ICON_THEME/" "$GT"
-elif grep -q '^\[Settings\]' "$GT" 2>/dev/null; then sed -i "/^\[Settings\]/a gtk-icon-theme-name=$ICON_THEME" "$GT"
-else printf '[Settings]\ngtk-icon-theme-name=%s\n' "$ICON_THEME" >> "$GT"; fi
-ok "lxqt.conf + session.conf + GTK icon theme"
+[ -s "$GT" ] || printf '[Settings]\n' > "$GT"
+setgtk(){ grep -q "^$1=" "$GT" && sed -i "s|^$1=.*|$1=$2|" "$GT" || sed -i "/^\[Settings\]/a $1=$2" "$GT"; }
+setgtk gtk-icon-theme-name "$ICON_THEME"
+setgtk gtk-theme-name "$GTK_THEME"
+setgtk gtk-application-prefer-dark-theme true
+if command -v gsettings >/dev/null 2>&1; then
+    gsettings set org.gnome.desktop.interface icon-theme "$ICON_THEME" 2>/dev/null
+    gsettings set org.gnome.desktop.interface gtk-theme "$GTK_THEME" 2>/dev/null
+    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null
+fi
+ok "lxqt.conf + session.conf + GTK theme ($GTK_THEME) + icon theme"
 
 # ============================================================ openbox titlebars
 log "openbox titlebars (void-tactical)"
