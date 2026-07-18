@@ -409,9 +409,18 @@ selects it by accident.
 
 `cachy-branding` therefore writes a minimal `~/.config/openbox/autostart` so the
 bare session is usable and on-brand without dragging in a whole DE: wallpaper (via
-`feh`), the Picom compositor, and the Conky telemetry — apps come from the openbox
-root menu or Super+Space (rofi). This file runs **only** under the bare Openbox
-session; LXQt uses its own XDG autostart and ignores it, so nothing double-starts.
+`feh`), the Picom compositor, a **tint2 panel**, and the Conky telemetry — apps come
+from the openbox root menu or Super+Space (rofi). This file runs **only** under the
+bare Openbox session; LXQt uses its own XDG autostart and ignores it, so nothing
+double-starts.
+
+The **tint2 panel is not optional polish — it's what makes the session usable.**
+Without a taskbar, a launched window can open behind another (or, on a multi-monitor
+box, on the *other* screen) with no way to find or switch to it — which reads as
+"I clicked Terminal and nothing happened" (the process is running; you just can't
+see or reach its window). tint2 (`system/branding/tint2/tint2rc`, obsidian/green,
+Hack font) gives a window list + clock + system tray so every open window is one
+click away. `deploy.sh --with-branding` installs `tint2` and `feh`.
 It is the "Cachy-Void, the WM way" default: the tuned substance (kernel, overlay,
 updater, gaming — all session-independent) with a light, self-assembled shell
 rather than a full desktop. Deliberately restrained — an openbox user who wants to

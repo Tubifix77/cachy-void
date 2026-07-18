@@ -57,15 +57,15 @@ PY
     rm -f "$CFG"/autostart/{picom,plank,conky,conky-system,xcape}.desktop
     rm -f "$CFG"/conky/conky-system.conf
     # openbox session autostart + root menu: restore a pre-existing one, else drop ours
-    for _obf in autostart menu.xml; do
-        if [ -e "$CFG/openbox/$_obf.pre-cachy.bak" ]; then
-            mv -f "$CFG/openbox/$_obf.pre-cachy.bak" "$CFG/openbox/$_obf"
+    for _obf in openbox/autostart openbox/menu.xml tint2/tint2rc; do
+        if [ -e "$CFG/$_obf.pre-cachy.bak" ]; then
+            mv -f "$CFG/$_obf.pre-cachy.bak" "$CFG/$_obf"
         else
-            rm -f "$CFG/openbox/$_obf"
+            rm -f "$CFG/$_obf"
         fi
     done
     command -v papirus-folders >/dev/null 2>&1 && sudo papirus-folders -C blue -t Papirus-Dark 2>/dev/null
-    pkill -x picom 2>/dev/null; pkill -x plank 2>/dev/null; pkill -x conky 2>/dev/null; pkill -x xcape 2>/dev/null
+    pkill -x picom 2>/dev/null; pkill -x plank 2>/dev/null; pkill -x conky 2>/dev/null; pkill -x xcape 2>/dev/null; pkill -x tint2 2>/dev/null
     pkill -f lxqt-powermanagement 2>/dev/null; command -v lxqt-powermanagement >/dev/null 2>&1 && setsid lxqt-powermanagement >/dev/null 2>&1 &
     ok "removed — log out/in for a full reset."
     exit 0
@@ -301,6 +301,10 @@ else warn "no openbox rc.xml — titlebar theme + rofi keybind skipped"; fi
 # nothing double-starts. Minimal + WM-appropriate: wallpaper (feh) + compositor +
 # Conky telemetry; launch apps via the openbox root menu or Super+Space (rofi).
 log "openbox session autostart (branded bare-openbox)"
+# tint2 panel config (the taskbar — without it, launched windows can hide behind
+# others / on another monitor with no way to reach them: "nothing happens").
+mkdir -p "$CFG/tint2"; TT="$CFG/tint2/tint2rc"; bak "$TT"
+[ -f "$ASSETS/tint2/tint2rc" ] && cp -f "$ASSETS/tint2/tint2rc" "$TT"
 OBA="$CFG/openbox/autostart"; bak "$OBA"
 _wp="$SHARE/cachy-void/cachy-void-official.png"
 _kbd="$(setxkbmap -query 2>/dev/null | awk '/^layout/{print $2}')"
@@ -313,6 +317,7 @@ _kbd="$(setxkbmap -query 2>/dev/null | awk '/^layout/{print $2}')"
         printf 'feh --no-fehbg --bg-fill "%s" 2>/dev/null &\n' "$_wp"
     [ -f "$CFG/picom/picom.conf" ] && \
         printf 'picom --config "$HOME/.config/picom/picom.conf" 2>/dev/null &\n'
+    command -v tint2 >/dev/null 2>&1 && printf 'tint2 2>/dev/null &\n'
     [ -f "$CFG/conky/conky.conf" ] && \
         printf '(sleep 2; conky -c "$HOME/.config/conky/conky.conf") &\n'
     [ -f "$CFG/conky/conky-system.conf" ] && \
@@ -320,7 +325,7 @@ _kbd="$(setxkbmap -query 2>/dev/null | awk '/^layout/{print $2}')"
 } > "$OBA"
 chmod +x "$OBA"
 command -v feh >/dev/null 2>&1 || warn "feh not installed — openbox session has no wallpaper (deploy.sh --with-branding installs it)"
-ok "openbox autostart -> wallpaper + picom + conky${_kbd:+ + keyboard $_kbd}"
+ok "openbox autostart -> wallpaper + picom + conky${_kbd:+ + keyboard $_kbd}$(command -v tint2 >/dev/null 2>&1 && printf ' + tint2 panel')"
 
 # Curated openbox ROOT MENU (right-click). Openbox's stock /etc/xdg/openbox/menu.xml
 # is a generic 48-entry list hard-coding apps from every DE (KDE/GNOME/XFCE/OpenOffice)

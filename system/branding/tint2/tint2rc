@@ -1,0 +1,49 @@
+# Cachy-Void tint2 — minimal dark panel for the bare Openbox session (branding.md §5.9).
+# The point is the TASKBAR: without a panel, launched windows can open behind others
+# (or on another monitor) with no way to find/switch them — which reads as "nothing
+# happens". This gives a window list + clock + system tray, in the obsidian/green
+# palette. LXQt never sees this (it has lxqt-panel); it's for the Openbox session only.
+
+# Background 1 = panel, Background 2 = active task (green-accented)
+rounded = 0
+border_width = 0
+background_color = #1b1d1e 88
+border_color = #000000 0
+
+rounded = 2
+border_width = 1
+background_color = #2e4d3f 95
+border_color = #478061 100
+
+panel_monitor = all
+panel_position = bottom center horizontal
+panel_size = 100% 28
+panel_margin = 0 0
+panel_padding = 4 2 6
+panel_background_id = 1
+panel_layer = top
+wm_menu = 1
+
+taskbar_mode = single_monitor
+taskbar_padding = 2 0 4
+taskbar_background_id = 0
+task_maximum_size = 220 26
+task_padding = 6 2
+task_background_id = 0
+task_active_background_id = 2
+task_text = 1
+task_icon = 1
+task_font = Hack 9
+task_font_color = #abb2bf 100
+task_active_font_color = #ffffff 100
+
+systray = 1
+systray_padding = 4 2 5
+systray_background_id = 0
+systray_icon_size = 18
+
+time1_format = %H:%M
+time1_font = Hack 9
+clock_font_color = #abb2bf 100
+clock_padding = 8 0
+clock_background_id = 0
