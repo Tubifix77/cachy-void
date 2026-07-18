@@ -9,10 +9,10 @@ existing sudo-NOPASSWD boundary. Being a Qt5 app, it inherits the LXQt Kvantum
 "void-tactical" theme automatically.
 
 Sections mirror the update model (architecture.md §4/§7/§8):
-  * Update      — system (upstream Void) + the performance overlay, together
-  * Kernel      — the BORE linux-cachy kernel (compiles; needs a reboot)
-  * Maintenance — orphans / cache / old kernels          (CLI support: pending)
-  * GPU         — detected GPU + DKMS health             (CLI support: pending)
+  * Update      — system (upstream Void) + the performance overlay  (--commit --no-kernel)
+  * Kernel      — full commit incl. the BORE kernel; reboot-gated   (--commit)
+  * Clean up    — remove orphans + clean the package cache          (--clean)
+  * GPU         — detected card, driver, DKMS health (read-only)    (--gpu)
 The "Check" button runs `--status` and shows the read-only overview.
 """
 import shutil
@@ -61,9 +61,10 @@ class Updater(QWidget):
         self.btn_update = QPushButton("Update  (system + performance)")
         self.btn_kernel = QPushButton("Update kernel  (BORE — compiles, reboot)")
         self.btn_clean = QPushButton("Clean up")
-        self.btn_clean.setEnabled(False)
-        self.btn_clean.setToolTip("Coming soon — orphans / cache / old kernels")
-        for b in (self.btn_update, self.btn_kernel, self.btn_clean):
+        self.btn_clean.setToolTip("Remove orphaned packages and clean the package cache")
+        self.btn_gpu = QPushButton("GPU / drivers")
+        self.btn_gpu.setToolTip("Detected card, driver status, DKMS health (read-only)")
+        for b in (self.btn_update, self.btn_kernel, self.btn_clean, self.btn_gpu):
             actions.addWidget(b)
         root.addLayout(actions)
 
@@ -80,8 +81,11 @@ class Updater(QWidget):
         self.btn_check.clicked.connect(self.check)
         self.btn_update.clicked.connect(self.update_userspace)
         self.btn_kernel.clicked.connect(self.update_kernel)
+        self.btn_clean.clicked.connect(self.clean)
+        self.btn_gpu.clicked.connect(self.gpu)
 
-        self._buttons = (self.btn_check, self.btn_update, self.btn_kernel)
+        self._buttons = (self.btn_check, self.btn_update, self.btn_kernel,
+                         self.btn_clean, self.btn_gpu)
         self.check()  # populate on open
 
     # -- process plumbing -------------------------------------------------
@@ -129,13 +133,26 @@ class Updater(QWidget):
         self._run(["--status"], self.status)
 
     def update_userspace(self):
-        self._run(["--commit", "--yes"], self.out, done=self.check,
-                  confirm="Update the system and rebuild the performance overlay now?")
+        # userspace only — the kernel is the explicit "Update kernel" button
+        self._run(["--commit", "--yes", "--no-kernel"], self.out, done=self.check,
+                  confirm="Update the system and rebuild the performance overlay now?"
+                          "\n\n(The BORE kernel is left alone — use 'Update kernel' "
+                          "for that.)")
 
     def update_kernel(self):
+        # full commit: userspace + the BORE kernel (compiles, reboot-gated)
         self._run(["--commit", "--yes"], self.out, done=self.check,
-                  confirm="Update the BORE kernel now?\n\nThis compiles the kernel "
-                          "(can take a while) and a reboot is needed to switch to it.")
+                  confirm="Update everything, including the BORE kernel, now?\n\nThis "
+                          "compiles the kernel (can take a while) and a reboot is "
+                          "needed to switch to it.")
+
+    def clean(self):
+        self._run(["--clean", "--yes"], self.out, done=self.check,
+                  confirm="Remove orphaned packages and clean the package cache now?"
+                          "\n\n(Old kernels are never auto-removed.)")
+
+    def gpu(self):
+        self._run(["--gpu"], self.out)   # read-only advisory, no confirm
 
 
 def main():

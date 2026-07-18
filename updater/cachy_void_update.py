@@ -59,6 +59,7 @@ EXIT_INSTALL = 51
 EXIT_VERIFY = 52
 EXIT_SNAPSHOT_UNAVAIL = 53
 EXIT_SNAPSHOT_FAILED = 54
+EXIT_CLEAN = 55
 EXIT_SERVICES = 60
 EXIT_KERNEL = 70
 
@@ -837,6 +838,179 @@ def cmd_rollback(config: Config, out=print, run=_run) -> int:
 
 
 # ==========================================================================
+# Maintenance / cleanup (§4.7 note; extends the §4.1 sudo boundary)
+# ==========================================================================
+def cmd_clean(config: Config, *, assume_yes: bool, out=print, run=_run,
+              confirm=input) -> int:
+    """Reclaim disk: remove orphaned packages and clean the obsolete package
+    cache. Preview-then-confirm; every removal goes through the §4.1 sudo
+    boundary (this adds exactly the two ``xbps-remove`` maintenance forms — the
+    minimal widening, nothing that can name a package).
+
+    Old kernels are **suggested, never purged**: §2.5/§4.7 make kernel removal a
+    manual step (always keep the last known-good kernel until the new one has
+    survived a real session), so this only prints ``vkpurge list`` output. The
+    ``vkpurge`` binary is deliberately absent from the sudoers grant.
+    """
+    sudo = _sudo(run)
+
+    def _lines(cp):
+        return [l for l in (cp.stdout or "").splitlines() if l.strip()]
+
+    out("Cachy-Void — cleanup")
+    out("=" * 46)
+
+    # -- preview (dry-run, through sudo so it works whether or not root is needed)
+    try:
+        orphans = _lines(sudo(["xbps-remove", "-o", "-n"]))
+    except OSError as exc:
+        out(f"error: cannot preview orphans: {exc}")
+        return EXIT_CLEAN
+    try:
+        cache = _lines(sudo(["xbps-remove", "-O", "-n"]))
+    except OSError:
+        cache = []
+
+    out(f"\norphaned packages to remove: {len(orphans)}")
+    for l in orphans:
+        out("    " + l)
+    out(f"obsolete cached packages to clean: {len(cache)}")
+
+    # old kernels — SUGGEST ONLY (never purge; §2.5/§4.7)
+    try:
+        old = _lines(run(["vkpurge", "list"]))
+    except OSError:
+        old = []
+    if old:
+        out("\nold kernels present (NOT removed — kernel purges are manual, "
+            "§2.5/§4.7):")
+        for k in old:
+            out(f"    {k}")
+        out("    keep the last known-good kernel; when ready: sudo vkpurge rm <ver>")
+
+    if not orphans and not cache:
+        out("\nnothing to clean — no orphans, cache already tidy.")
+        return EXIT_OK
+
+    if not assume_yes:
+        if confirm("\nremove orphans and clean the cache? [y/N] ").strip().lower() \
+                not in ("y", "yes"):
+            out("aborted by user.")
+            return EXIT_OK
+
+    rc = EXIT_OK
+    if orphans:
+        if sudo(["xbps-remove", "-o", "-y"]).returncode == 0:
+            out(f"removed {len(orphans)} orphaned package(s).")
+        else:
+            out("error: removing orphans failed.")
+            rc = EXIT_CLEAN
+    if cache:
+        if sudo(["xbps-remove", "-O", "-y"]).returncode == 0:
+            out("cleaned obsolete package cache.")
+        else:
+            out("error: cleaning the cache failed.")
+            rc = EXIT_CLEAN
+    out("cleanup complete." if rc == EXIT_OK else "cleanup finished with errors.")
+    return rc
+
+
+# ==========================================================================
+# GPU / driver advisory (read-only)
+# ==========================================================================
+# Coarse NVIDIA family → recommended driver series. Precise per-device mapping
+# needs a PCI-ID table; this keeps a human-checkable rule of thumb keyed on the
+# marketing name that lspci already prints.
+_NVIDIA_LEGACY_HINT = (
+    "NVIDIA driver series by GPU family: Kepler (GeForce 6xx/7xx) -> nvidia470; "
+    "Fermi (4xx/5xx) -> nvidia390; Maxwell and newer (9xx/10xx/16xx/20xx+) -> "
+    "nvidia (current). Match your card above; the wrong series will not load.")
+
+
+def cmd_gpu(xbps, config: Config, out=print, run=_run) -> int:
+    """Read-only GPU/driver advisory: detect the card, report the installed
+    driver + whether an update is pending (applied by a normal Update, since
+    drivers are upstream binaries), and surface DKMS health. Best-effort — every
+    probe degrades to 'unknown' and the command never mutates or fails."""
+    def _lines(cp):
+        return [l for l in (cp.stdout or "").splitlines() if l.strip()]
+
+    out("Cachy-Void — GPU & drivers")
+    out("=" * 46)
+
+    gpus: list[str] = []
+    try:
+        gpus = [g.split(": ", 1)[-1] if ": " in g else g
+                for g in _lines(run(["sh", "-c",
+                                     "lspci | grep -Ei 'vga|3d|display'"]))]
+    except OSError:
+        pass
+    if gpus:
+        out("\ndetected:")
+        for g in gpus:
+            out("    " + g)
+    else:
+        out("\ndetected: unknown (lspci unavailable)")
+    blob = " ".join(gpus).lower()
+
+    if "nvidia" in blob:
+        out("\nNVIDIA card present.")
+        # which proprietary driver package is installed?
+        try:
+            drv = sorted(b for b in xbps.installed()
+                         if re.fullmatch(r"nvidia\d*(-dkms)?", b))
+        except (XbpsError, OSError):
+            drv = []
+        if drv:
+            for d in drv:
+                try:
+                    out(f"    driver package: {d} {xbps.inst_pkgver(d)}")
+                except (XbpsError, KeyError, OSError):
+                    out(f"    driver package: {d}")
+            # driver updates ride the normal upstream update (dry-run check)
+            try:
+                pend = _lines(run(["xbps-install", "-un", *drv]))
+                out("    update pending — apply via Update (system)" if pend
+                    else "    driver up to date")
+            except OSError:
+                pass
+        else:
+            out("    no proprietary NVIDIA driver package installed "
+                "(running nouveau, or driver not set up).")
+        try:
+            ver = open("/sys/module/nvidia/version", encoding="utf-8").read().strip()
+            out(f"    kernel module loaded: nvidia {ver}")
+        except OSError:
+            out("    kernel module: nvidia not loaded")
+        out("    " + _NVIDIA_LEGACY_HINT)
+    elif "amd" in blob or "ati" in blob or "radeon" in blob:
+        out("\nAMD card — driver is Mesa (amdgpu/RADV), no proprietary package "
+            "needed; it updates with the normal system Update.")
+    elif "intel" in blob:
+        out("\nIntel graphics — driver is Mesa (built-in), no proprietary "
+            "package needed; it updates with the normal system Update.")
+
+    # DKMS health (applies to any out-of-tree driver, nvidia*-dkms included)
+    try:
+        ds = _lines(run(["dkms", "status"]))
+        if ds:
+            out(f"\nDKMS modules ({len(ds)}):")
+            for l in ds:
+                out("    " + l)
+            if any("installed" not in l.lower() for l in ds):
+                out("    warning: a DKMS module is NOT 'installed' — it may be "
+                    "missing for the running kernel (rebuild: sudo "
+                    "xbps-reconfigure -f <driver>-dkms).")
+        else:
+            out("\nDKMS: no out-of-tree modules (driver is in-tree or absent).")
+    except OSError:
+        pass
+
+    out("")
+    return EXIT_OK
+
+
+# ==========================================================================
 # Deploy helper
 # ==========================================================================
 def _deploy(config: Config, deploy_bins, xbps, out, run) -> int:
@@ -1033,11 +1207,17 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--status", action="store_true", help="read-only overview of all update tiers")
     action.add_argument("--commit", action="store_true", help="Stages 3-4: build, deploy, stage kernel")
     action.add_argument("--rollback", action="store_true", help="re-pin the known-good kernel")
+    action.add_argument("--clean", action="store_true",
+                        help="reclaim disk: remove orphans + clean the package cache")
+    action.add_argument("--gpu", action="store_true",
+                        help="read-only GPU/driver advisory (card, driver, DKMS)")
     action.add_argument("--health-daemon", dest="health_daemon", action="store_true",
                         help="§8.7: run the post-boot health watchdog loop")
     p.add_argument("--config", default=DEFAULT_CONFIG, help=f"config path (default {DEFAULT_CONFIG})")
     p.add_argument("--dry-run", action="store_true", help="plan only; make no changes")
     p.add_argument("--yes", action="store_true", help="assume yes; run unattended")
+    p.add_argument("--no-kernel", dest="no_kernel", action="store_true",
+                   help="userspace only: skip all kernel synthesis/build/staging this run")
     return p
 
 
@@ -1052,9 +1232,17 @@ def main(argv: Optional[Sequence[str]] = None, *,
             out(f"error: cannot load config {args.config}: {exc}")
             return EXIT_USAGE
 
+    # --no-kernel: scope this run to userspace only. Disabling kernel_enable up
+    # front gates synthesis, the G2 gate, build and staging uniformly (the GUI's
+    # "Update" button uses this; "Update kernel" runs a full --commit).
+    if getattr(args, "no_kernel", False):
+        config.kernel_enable = False
+
     try:
         if args.rollback:
             return cmd_rollback(config, out=out)
+        if args.clean:
+            return cmd_clean(config, assume_yes=args.yes, out=out)
         if args.health_daemon:
             outcome = build_health_daemon(config, out=out).run_loop()
             if outcome == DEGRADED:
@@ -1071,6 +1259,8 @@ def main(argv: Optional[Sequence[str]] = None, *,
             return cmd_check(xbps, config, out=out)
         if args.status:
             return cmd_status(xbps, config, out=out)
+        if args.gpu:
+            return cmd_gpu(xbps, config, out=out)
         if args.sync:
             return cmd_sync(config, out=out)
         if args.commit:

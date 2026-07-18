@@ -734,5 +734,154 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(rc, cli.EXIT_OK)
 
 
+class CleanCommandTests(unittest.TestCase):
+    """--clean: preview -> confirm -> remove orphans + cache; never purges kernels."""
+
+    def _run(self, *, orphans="orphan1-1_1\norphan2-2_1\n", cache="cached-1_1\n",
+             kernels="6.12.30_1\n", apply_rc=0):
+        calls = []
+
+        def run(args):
+            a = list(args)
+            if a[:2] == ["sudo", "-n"]:
+                a = a[2:]
+            calls.append(a)
+            if a[:3] == ["xbps-remove", "-o", "-n"]:
+                return cp(0, orphans)
+            if a[:3] == ["xbps-remove", "-O", "-n"]:
+                return cp(0, cache)
+            if a[:2] == ["vkpurge", "list"]:
+                return cp(0, kernels)
+            if a[:3] == ["xbps-remove", "-o", "-y"]:
+                return cp(apply_rc)
+            if a[:3] == ["xbps-remove", "-O", "-y"]:
+                return cp(apply_rc)
+            return cp(0, "")
+        return run, calls
+
+    def test_previews_and_removes_with_yes(self):
+        run, calls = self._run()
+        out = Sink()
+        rc = cli.cmd_clean(_config([]), assume_yes=True, out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        t = out.text()
+        self.assertIn("orphaned packages to remove: 2", t)
+        self.assertIn("removed 2 orphaned package(s)", t)
+        self.assertIn("cleaned obsolete package cache", t)
+        self.assertIn(["xbps-remove", "-o", "-y"], calls)
+        self.assertIn(["xbps-remove", "-O", "-y"], calls)
+
+    def test_suggests_old_kernels_but_never_purges(self):
+        run, calls = self._run()
+        out = Sink()
+        cli.cmd_clean(_config([]), assume_yes=True, out=out, run=run)
+        self.assertIn("old kernels present", out.text())
+        self.assertIn("6.12.30_1", out.text())
+        # the invariant: no vkpurge rm is ever issued (§2.5/§4.7)
+        self.assertFalse(any(c[:2] == ["vkpurge", "rm"] for c in calls))
+
+    def test_nothing_to_clean(self):
+        run, calls = self._run(orphans="", cache="")
+        out = Sink()
+        rc = cli.cmd_clean(_config([]), assume_yes=True, out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("nothing to clean", out.text())
+        self.assertFalse(any(c[:3] == ["xbps-remove", "-o", "-y"] for c in calls))
+
+    def test_abort_on_no_confirmation(self):
+        run, calls = self._run()
+        out = Sink()
+        rc = cli.cmd_clean(_config([]), assume_yes=False, out=out, run=run,
+                           confirm=lambda *_: "n")
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("aborted by user", out.text())
+        self.assertFalse(any(c[:3] == ["xbps-remove", "-o", "-y"] for c in calls))
+
+    def test_removal_failure_is_exit_clean(self):
+        run, _ = self._run(apply_rc=1)
+        out = Sink()
+        rc = cli.cmd_clean(_config([]), assume_yes=True, out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_CLEAN)
+
+
+class GpuCommandTests(unittest.TestCase):
+    """--gpu: read-only advisory; detects card, driver, DKMS; degrades gracefully."""
+
+    @staticmethod
+    def _run_nvidia(args):
+        a = list(args)
+        if a[0] == "sh":
+            return cp(0, "01:00.0 VGA compatible controller: NVIDIA GT 730M\n")
+        if a[0] == "dkms":
+            return cp(0, "nvidia/470.256.02, 6.12.95_1-cachy, x86_64: installed\n")
+        if a[:2] == ["xbps-install", "-un"]:
+            return cp(0, "")
+        return cp(0, "")
+
+    def test_nvidia_advisory(self):
+        xb = FakeXbps(installed=["nvidia470"], inst_ver={"nvidia470": "470.256.02_1"})
+        out = Sink()
+        rc = cli.cmd_gpu(xb, _config([]), out=out, run=self._run_nvidia)
+        self.assertEqual(rc, cli.EXIT_OK)
+        t = out.text()
+        self.assertIn("NVIDIA card present", t)
+        self.assertIn("nvidia470 470.256.02_1", t)
+        self.assertIn("Kepler", t)          # the legacy-series hint
+        self.assertIn("470.256.02", t)      # dkms line
+
+    def test_dkms_not_installed_warns(self):
+        def run(args):
+            a = list(args)
+            if a[0] == "sh":
+                return cp(0, "01:00.0 VGA: NVIDIA GT 730M\n")
+            if a[0] == "dkms":
+                return cp(0, "nvidia/470.256.02, 6.18.38_1, x86_64: added\n")
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_gpu(FakeXbps(), _config([]), out=out, run=run)
+        self.assertIn("NOT 'installed'", out.text())
+
+    def test_amd_path(self):
+        def run(args):
+            if list(args)[0] == "sh":
+                return cp(0, "01:00.0 VGA: Advanced Micro Devices AMD Radeon\n")
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_gpu(FakeXbps(), _config([]), out=out, run=run)
+        self.assertIn("AMD card", out.text())
+
+    def test_degrades_when_tools_missing(self):
+        def boom(args):
+            raise OSError("no lspci")
+        out = Sink()
+        rc = cli.cmd_gpu(FakeXbps(), _config([]), out=out, run=boom)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("GPU & drivers", out.text())
+
+    def test_gpu_wired_into_main(self):
+        out = Sink()
+        rc = cli.main(["--gpu"], xbps=FakeXbps(), config=_config([]), out=out)
+        self.assertEqual(rc, cli.EXIT_OK)
+
+
+class NoKernelScopeTests(unittest.TestCase):
+    """--no-kernel scopes a run to userspace by disabling kernel_enable."""
+
+    def test_flag_disables_kernel_enable(self):
+        cfg = _config(["mesa"])              # kernel_enable defaults True
+        self.assertTrue(cfg.kernel_enable)
+        xb = FakeXbps(installed=["mesa"], src_map={"mesa": "mesa"},
+                      inst_ver={"mesa": "1.0_1"}, repo_ver={"mesa": "1.0_1"},
+                      local_updates=[])
+        cli.main(["--check", "--no-kernel"], xbps=xb, config=cfg, out=Sink())
+        self.assertFalse(cfg.kernel_enable)
+
+    def test_kernel_gate_off_yields_no_kernel_build(self):
+        # with kernel_enable False, the K-exemption never queues linux-cachy
+        cfg = _config(["mesa"])
+        cfg.kernel_enable = False
+        self.assertEqual(cli._always_build(cfg), [])
+
+
 if __name__ == "__main__":
     unittest.main()

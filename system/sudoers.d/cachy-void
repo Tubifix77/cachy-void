@@ -11,8 +11,14 @@
 # The user in the grant line below is filled in by deploy.sh.
 # §9.5 (optional btrfs snapshots) adds exactly three btrfs subvolume ops —
 # snapshot -r / delete / list — for the pre-deploy rollback net + its prune.
+# --clean (maintenance) adds exactly the two xbps-remove forms below: orphan
+# removal (-o) and obsolete-cache cleaning (-O), each preview (-n) and apply
+# (-y). These flags cannot name a package, so the grant can only remove orphans
+# or tidy the cache — never an arbitrary package. Kernel purges stay MANUAL
+# (§2.5/§4.7): vkpurge is deliberately NOT granted here.
 Cmnd_Alias CACHY_VOID_UPDATE = /usr/bin/xbps-install, /usr/bin/sv, /usr/bin/xcheckrestart, \
     /usr/bin/xbps-pkgdb, /usr/bin/grub-set-default, /usr/bin/grub-reboot, /usr/bin/grub-editenv, \
-    /usr/sbin/btrfs subvolume snapshot -r *, /usr/sbin/btrfs subvolume delete *, /usr/sbin/btrfs subvolume list *
+    /usr/sbin/btrfs subvolume snapshot -r *, /usr/sbin/btrfs subvolume delete *, /usr/sbin/btrfs subvolume list *, \
+    /usr/bin/xbps-remove -o -n, /usr/bin/xbps-remove -o -y, /usr/bin/xbps-remove -O -n, /usr/bin/xbps-remove -O -y
 
 @USER@ ALL=(root) NOPASSWD: CACHY_VOID_UPDATE
