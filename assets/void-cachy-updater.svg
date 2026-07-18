@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="cachy-void updater">
+  <!-- Cachy-Void updater icon: the brand diamond core wrapped in refresh arrows.
+       grey #abb2bf arrows (foreground) + one green #478061 accent core. transparent bg. -->
+  <g fill="none" stroke="#abb2bf" stroke-width="4" stroke-linecap="round">
+    <!-- two ~200° arcs forming a broken ring (refresh) -->
+    <path d="M14 20 A22 22 0 0 1 50 20"/>
+    <path d="M50 44 A22 22 0 0 1 14 44"/>
+  </g>
+  <!-- arrowheads (grey), one at each arc's end -->
+  <g fill="#abb2bf">
+    <polygon points="50,12 58,22 46,23"/>
+    <polygon points="14,52 6,42 18,41"/>
+  </g>
+  <!-- brand core diamond (the one green accent) -->
+  <polygon points="32,22 42,32 32,42 22,32" fill="#478061"/>
+  <!-- tiny void at the core's centre (Void inside Cachy) -->
+  <polygon points="32,28 36,32 32,36 28,32" fill="#1b1d1e"/>
+</svg>
