@@ -448,6 +448,14 @@ install_branding() {
             git clone --depth 1 https://github.com/Nitrux/luv-icon-theme.git "$dst/luv" 2>/dev/null \
                 || warn "could not fetch Luv icon theme — branding falls back to Papirus-Dark"
         fi
+        # qterminal void-tactical color scheme -> the SYSTEM qtermwidget dir. qterminal
+        # only reads the system color-schemes dir (not ~/.local/share), so it must live
+        # here; cachy-branding then just points qterminal.ini at it (per-user).
+        local qcs; for qcs in /usr/share/qtermwidget6 /usr/share/qtermwidget5; do
+            [ -d "$qcs/color-schemes" ] && [ -f "$dst/qterminal/void-tactical.colorscheme" ] && {
+                cp -f "$dst/qterminal/void-tactical.colorscheme" "$qcs/color-schemes/" \
+                    && ok "qterminal void-tactical scheme -> $qcs/color-schemes"; break; }
+        done
     fi
     install_file "$SYS_DIR/bin/cachy-branding" "$CACHY_BRANDING_BIN" 0755 root root
     # graphical updater front-end (PyQt5, inherits the Kvantum theme) + its launcher

@@ -4,8 +4,11 @@
 # config is per-user; never root). OPT-IN and REVERSIBLE: every file it changes
 # is backed up once as <file>.pre-cachy.bak, and `--remove` restores them.
 #
-#   cachy-branding            apply the void-tactical desktop
-#   cachy-branding --remove   restore the pre-branding desktop from backups
+#   cachy-branding              apply the void-tactical desktop (terminal skin included;
+#                               your shell is NOT changed)
+#   cachy-branding --shell zsh  ...and switch to a restrained, capable zsh (plugins)
+#   cachy-branding --shell bash ...and brand bash in place (prompt + colours; stays bash)
+#   cachy-branding --remove     restore the pre-branding desktop from backups
 #
 # Composes: Kvantum widget skin (fork of KvArcDark, recoloured), LXQt panel theme
 # (fork of the 'kvantum' theme, blue->green), Papirus-Dark + grey folders, openbox
@@ -27,14 +30,31 @@ bak(){ [ -e "$1" ] && [ ! -e "$1.pre-cachy.bak" ] && cp -a "$1" "$1.pre-cachy.ba
 [ "$(id -u)" -ne 0 ] || { warn "run as your normal user, not root (LXQt config is per-user)"; exit 1; }
 [ -d "$ASSETS" ] || { warn "branding assets not found at $ASSETS (deploy.sh installs them)"; exit 1; }
 
+# --- args: --remove, and the opt-in shell choice --shell bash|zsh ---
+SHELL_CHOICE=""
+_prev=""
+for _arg in "$@"; do
+    [ "$_prev" = "--shell" ] && { SHELL_CHOICE="$_arg"; _prev=""; continue; }
+    _prev="$_arg"
+done
+case "$SHELL_CHOICE" in ""|bash|zsh) : ;; *) warn "--shell must be 'bash' or 'zsh'"; exit 1 ;; esac
+
 if [ "${1:-}" = "--remove" ]; then
     log "restoring pre-branding config from backups"
     for f in "$CFG"/lxqt/lxqt.conf "$CFG"/lxqt/session.conf "$CFG"/lxqt/panel.conf \
              "$CFG"/Kvantum/kvantum.kvconfig "$CFG"/openbox/rc.xml \
              "$CFG"/lxqt/lxqt-powermanagement.conf "$CFG"/gtk-3.0/settings.ini \
-             "$CFG"/pcmanfm-qt/lxqt/settings.conf; do
+             "$CFG"/pcmanfm-qt/lxqt/settings.conf "$CFG"/qterminal.org/qterminal.ini; do
         [ -e "$f.pre-cachy.bak" ] && mv -f "$f.pre-cachy.bak" "$f" && ok "restored $f"
     done
+    # shell: strip our bash block; drop/restore our zsh rc; switch login shell back to bash
+    [ -f "$HOME/.bashrc" ] && sed -i '/# >>> cachy-void >>>/,/# <<< cachy-void <<</d' "$HOME/.bashrc"
+    if grep -q '^# cachy-void zsh' "$HOME/.zshrc" 2>/dev/null; then
+        if [ -e "$HOME/.zshrc.pre-cachy.bak" ]; then mv -f "$HOME/.zshrc.pre-cachy.bak" "$HOME/.zshrc"; else rm -f "$HOME/.zshrc"; fi
+    fi
+    case "$(getent passwd "$USER" | cut -d: -f7)" in
+        */zsh) sudo chsh -s /bin/bash "$USER" 2>/dev/null && ok "login shell -> bash" ;;
+    esac
     if command -v gsettings >/dev/null 2>&1; then
         gsettings reset org.gnome.desktop.interface icon-theme 2>/dev/null
         gsettings reset org.gnome.desktop.interface gtk-theme 2>/dev/null
@@ -370,6 +390,19 @@ OBE="$CFG/openbox/environment"; bak "$OBE"
   printf 'export QT_STYLE_OVERRIDE=kvantum\n'
 } > "$OBE"
 ok "openbox session -> dark Qt (Kvantum) for qterminal/pcmanfm-qt/updater"
+
+# ============================================================ qterminal skin
+# Point qterminal at the void-tactical color scheme + Hack. The scheme FILE ships to
+# the system qtermwidget dir via deploy.sh --with-branding (qterminal only reads the
+# system dir). Shell is a separate, opt-in choice (--shell); this is pure appearance.
+log "qterminal skin (void-tactical + Hack)"
+QT="$CFG/qterminal.org/qterminal.ini"; mkdir -p "$CFG/qterminal.org"; bak "$QT"
+[ -s "$QT" ] || printf '[General]\n' > "$QT"
+grep -q '^\[General\]' "$QT" || sed -i '1i [General]' "$QT"
+setqt(){ grep -q "^$1=" "$QT" && sed -i "s|^$1=.*|$1=$2|" "$QT" || sed -i "/^\[General\]/a $1=$2" "$QT"; }
+setqt colorScheme void-tactical
+setqt fontFamily Hack
+ok "qterminal -> void-tactical + Hack"
 
 # ============================================================ Papirus grey folders (only on the Papirus fallback)
 if [ "$ICON_THEME" = "Papirus-Dark" ] && command -v papirus-folders >/dev/null 2>&1; then
@@ -765,6 +798,60 @@ done
 if pgrep -f lxqt-powermanagement >/dev/null 2>&1; then
     pkill -f lxqt-powermanagement 2>/dev/null; sleep 1
     command -v lxqt-powermanagement >/dev/null 2>&1 && setsid lxqt-powermanagement >/dev/null 2>&1 &
+fi
+
+# ============================================================ shell (OPT-IN, --shell)
+# The terminal SKIN above is unconditional (pure appearance). Changing the shell is a
+# bigger, personal decision, so it only happens if asked. Two branded flavours, same
+# restrained prompt (dim path + git + honest green/red prompt char), one green accent:
+#   bash  — brand in place, stays bash (no new packages, no shell switch)
+#   zsh   — "do more": autosuggestions + syntax-highlighting, switches login shell
+if [ "$SHELL_CHOICE" = bash ]; then
+    log "shell: bash (branded in place)"
+    BRC="$HOME/.bashrc"; touch "$BRC"; bak "$BRC"
+    sed -i '/# >>> cachy-void >>>/,/# <<< cachy-void <<</d' "$BRC"
+    cat >> "$BRC" <<'BASHRC'
+# >>> cachy-void >>>
+# Restrained prompt: dim path + git branch + honest prompt char (green ok / red on error).
+__cv_ps1() {
+    local ec=$?
+    local br; br=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); [ -n "$br" ] && br=" $br"
+    local c='\[\e[32m\]'; [ "$ec" -ne 0 ] && c='\[\e[31m\]'
+    PS1="\[\e[90m\]\w${br}\[\e[0m\] ${c}❯\[\e[0m\] "
+}
+PROMPT_COMMAND=__cv_ps1
+alias ls='ls --color=auto'; alias ll='ls -lah --color=auto'; alias grep='grep --color=auto'
+# <<< cachy-void <<<
+BASHRC
+    ok "bash branded — open a new terminal to see it (still bash; --remove reverts)"
+elif [ "$SHELL_CHOICE" = zsh ]; then
+    log "shell: zsh (restrained + capable)"
+    command -v zsh >/dev/null 2>&1 || { log "installing zsh + plugins"; sudo xbps-install -y zsh zsh-autosuggestions zsh-syntax-highlighting || warn "could not install zsh packages"; }
+    if command -v zsh >/dev/null 2>&1; then
+        bak "$HOME/.zshrc"
+        cat > "$HOME/.zshrc" <<'ZRC'
+# cachy-void zsh — lean shell, pimped to DO MORE, downplayed look.
+HISTFILE="$HOME/.zsh_history"; HISTSIZE=10000; SAVEHIST=10000
+setopt hist_ignore_all_dups hist_reduce_blanks share_history inc_append_history auto_cd interactive_comments
+bindkey -e
+autoload -Uz compinit; compinit -d "$HOME/.cache/zcompdump"
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+autoload -Uz vcs_info; zstyle ':vcs_info:*' enable git
+zstyle ':vcs_info:git:*' formats ' %F{8}%b%f'
+setopt prompt_subst; precmd() { vcs_info }
+PROMPT='%F{8}%~%f${vcs_info_msg_0_} %(?.%F{green}.%F{red})❯%f '
+alias ls='ls --color=auto'; alias ll='ls -lah --color=auto'; alias grep='grep --color=auto'
+ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=8'
+[ -f /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh ] && source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+[ -f /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ] && source /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+ZRC
+        if sudo chsh -s "$(command -v zsh)" "$USER" 2>/dev/null; then
+            ok "login shell -> zsh (bash stays for scripts). Log out/in or run 'zsh'."
+        else
+            warn "wrote ~/.zshrc but chsh failed — run: chsh -s $(command -v zsh)"
+        fi
+    fi
 fi
 
 cat <<EOF

@@ -436,6 +436,37 @@ only shows what's installed, so it never goes stale); entries self-adjust to the
 terminal / file-manager / browser actually present, plus Reconfigure and Log Out /
 Reboot / Shut Down (`loginctl`).
 
+### 5.10 The terminal — skin ships, shell is a choice
+
+Same lean-tool ethos, one layer deeper: **qterminal** stays the base (it's already
+Qt, so it inherits Kvantum), and it's *pimped to do more, downplayed to look*. A
+full zsh with powerline swirls + gradients would be the terminal's version of the
+3D-Plank/metallic-gradient look we removed everywhere — so we don't. Restraint is
+the point: capability under the hood, calm on the surface.
+
+**The skin ships (unconditional, pure appearance).** `cachy-branding` sets qterminal
+to the **void-tactical** color scheme (obsidian bg, One-Dark-family palette, brand
+green) + **Hack** font. The scheme *file* installs to the system `qtermwidget6/
+color-schemes` dir via `deploy.sh --with-branding` (qterminal only reads the system
+dir, never `~/.local/share`); `cachy-branding` just points `qterminal.ini` at it.
+Dark Qt in the openbox session is handled by §5.9's `openbox/environment`.
+
+**The shell is opt-in, two branded flavours** (your login shell is never changed
+without asking — a distro shouldn't do that behind your back):
+- `cachy-branding --shell zsh` — the *do-more* path: `zsh-autosuggestions` (dim
+  history hints) + `zsh-syntax-highlighting` (typo shows red before Enter) + a
+  restrained prompt; switches your login shell to zsh (bash stays for scripts).
+- `cachy-branding --shell bash` — the *lean* path: brands bash **in place** (a marked
+  block in `~/.bashrc`) with the same restrained prompt + `--color` aliases; no new
+  packages, no shell switch.
+- plain `cachy-branding` — skin only, shell untouched.
+
+Both prompts are the same honest design: dim short path, git branch **only in a
+repo**, and a single green **❯** that turns **red** on a non-zero exit — the shell
+version of the Conky's "honest numbers, not a dashboard." `cachy-branding --remove`
+reverts the skin, strips the bash block / removes our `~/.zshrc`, and switches the
+login shell back to bash.
+
 ---
 
 ## 6. Scope & rules
