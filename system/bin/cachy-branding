@@ -607,7 +607,11 @@ with open(tmpl, encoding="utf-8") as f: t = f.read()
 with open(dest, "w", encoding="utf-8") as f:
     f.write(t.replace("@SYSTEM_TEXT@", "\n".join(out)))
 PY
-printf '[Desktop Entry]\nType=Application\nName=conky-system\nExec=sh -c "sleep 8 && exec conky -c %s/conky/conky-system.conf"\n' "$CFG" > "$CFG/autostart/conky-system.desktop"
+# Force a UTF-8 ctype on launch: the panel's ─ / × / · glyphs render as mojibake if
+# conky decodes the (UTF-8) config under a non-UTF-8 LC_CTYPE. The panel has no
+# locale-sensitive numbers, so pinning LC_CTYPE=C.UTF-8 is a no-downside guarantee
+# (unlike the telemetry Conky, whose decimal formatting we leave to the session locale).
+printf '[Desktop Entry]\nType=Application\nName=conky-system\nExec=sh -c "sleep 8 && exec env LC_CTYPE=C.UTF-8 conky -c %s/conky/conky-system.conf"\n' "$CFG" > "$CFG/autostart/conky-system.desktop"
 # hide lxqt-powermanagement's tray icon — its built-in charge indicator is a
 # code-drawn green ring (not themeable) and the theme/battery icon types render
 # blank on this stack; battery status lives in Conky instead (BAT_LINE above).
@@ -661,7 +665,7 @@ for a in picom plank conky; do
         picom) setsid picom --config "$CFG/picom/picom.conf" >/dev/null 2>&1 & ;;
         plank) setsid plank >/dev/null 2>&1 & ;;
         conky) setsid conky -c "$CFG/conky/conky.conf" >/dev/null 2>&1 &
-               [ -f "$CFG/conky/conky-system.conf" ] && setsid conky -c "$CFG/conky/conky-system.conf" >/dev/null 2>&1 & ;;
+               [ -f "$CFG/conky/conky-system.conf" ] && setsid env LC_CTYPE=C.UTF-8 conky -c "$CFG/conky/conky-system.conf" >/dev/null 2>&1 & ;;
     esac
 done
 # restart power management so showIcon=false takes effect (drops the tray icon)
