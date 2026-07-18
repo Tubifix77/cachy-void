@@ -502,6 +502,24 @@ install_greeter() {
     }
     [ -f "$T/metadata.desktop" ] && sed -i 's/^Name=.*/Name=Void Tactical/' "$T/metadata.desktop"
 
+    # Match the greeter keyboard layout to the SYSTEM's. SDDM's greeter X does NOT
+    # reliably inherit /etc/X11/xorg.conf.d keyboard config, so a non-US session
+    # (e.g. Danish, where æøå type fine in-session) still lands on a US LOGIN
+    # screen. Read the configured layout and force it in Xsetup via setxkbmap.
+    local xkb=""
+    xkb="$(grep -rhiE 'XkbLayout' /etc/X11/xorg.conf.d/*.conf 2>/dev/null \
+           | sed -nE 's/.*XkbLayout"?[[:space:]"]+([a-z0-9,]+).*/\1/p' | head -1)"
+    [ -n "$xkb" ] || xkb="$(awk -F= '/^[[:space:]]*KEYMAP=/{gsub(/"/,"",$2);print $2}' \
+                            /etc/rc.conf 2>/dev/null | head -1)"
+    if [ -n "$xkb" ] && [ "$xkb" != us ]; then
+        ensure_pkg setxkbmap optional        # provides setxkbmap for the greeter X
+        local xtmp; xtmp="$(mktemp)"
+        printf '#!/bin/sh\n# Xsetup - run as root before the login dialog appears\n# cachy-void: match the greeter keyboard layout to the system layout.\nsetxkbmap %s 2>/dev/null || true\n' "$xkb" > "$xtmp"
+        install_file "$xtmp" /usr/share/sddm/scripts/Xsetup 0755 root root
+        rm -f -- "$xtmp"
+        ok "SDDM greeter keyboard layout -> $xkb"
+    fi
+
     install -d -- /etc/sddm.conf.d
     install_file "$SYS_DIR/sddm/10-cachy.conf" /etc/sddm.conf.d/10-cachy.conf 0644 root root
     log "SDDM greeter branded (void-tactical, forked from $base) — visible at next login"
