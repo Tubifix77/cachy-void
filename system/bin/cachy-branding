@@ -43,6 +43,8 @@ if [ "${1:-}" = "--remove" ]; then
     rm -rf "$SHARE/icons/Luv-Void"
     _desk=$(xdg-user-dir DESKTOP 2>/dev/null); [ -d "$_desk" ] || _desk="$HOME/Desktop"
     rm -f "$_desk/cachy-updater.desktop" "$CFG/plank/dock1/launchers/00-cachy-updater.dockitem"
+    rm -f "$SHARE/applications/cachy-trash.desktop" "$CFG/plank/dock1/launchers/zz-trash.dockitem"
+    # (restoring pcmanfm settings.conf above brings the desktop shortcut icons back on next login)
     rm -rf "$SHARE/lxqt/themes/void-tactical" "$CFG/Kvantum/void-tactical" "$HOME/.themes/void-tactical"
     rm -f "$CFG"/autostart/{picom,plank,conky,xcape}.desktop
     command -v papirus-folders >/dev/null 2>&1 && sudo papirus-folders -C blue -t Papirus-Dark 2>/dev/null
@@ -269,9 +271,25 @@ WPV="$SHARE/cachy-void/cachy-void-official-$(date +%s).png"
 cp -f "$WP" "$WPV" 2>/dev/null && find "$SHARE/cachy-void" -maxdepth 1 -name 'cachy-void-official-*.png' ! -name "$(basename "$WPV")" -delete 2>/dev/null
 [ -f "$WPV" ] || WPV="$WP"
 PS="$CFG/pcmanfm-qt/lxqt/settings.conf"
-[ -f "$PS" ] && { bak "$PS"; sed -i -E "s#^Wallpaper=.*#Wallpaper=$WPV#; s#^WallpaperMode=.*#WallpaperMode=stretch#" "$PS"; }
+if [ -f "$PS" ]; then
+    bak "$PS"
+    sed -i -E "s#^Wallpaper=.*#Wallpaper=$WPV#; s#^WallpaperMode=.*#WallpaperMode=stretch#" "$PS"
+    # clean desktop (played-down §5.7): NO desktop icons — the file manager (Plank)
+    # is the single entry point; home/computer/network/trash are reached inside it.
+    # DesktopShortcuts= empty removes the special icons; HideItems MUST stay false
+    # (HideItems=true blanks the wallpaper too). pcmanfm materializes the shortcuts
+    # as ~/Desktop/*.desktop files AND rewrites DesktopShortcuts back to defaults on
+    # a graceful exit — so apply-live kills it with -9 (no write-back) and this edit
+    # lands for the next clean start (a re-login applies it definitively).
+    grep -q '^DesktopShortcuts=' "$PS" && sed -i 's/^DesktopShortcuts=.*/DesktopShortcuts=/' "$PS" || sed -i '/^\[Desktop\]/a DesktopShortcuts=' "$PS"
+    grep -q '^HideItems=' "$PS" && sed -i 's/^HideItems=.*/HideItems=false/' "$PS" || sed -i '/^\[Desktop\]/a HideItems=false' "$PS"
+fi
+rm -f "$HOME"/Desktop/{computer,network,trash-can,user-home,steam}.desktop 2>/dev/null
+# keep trash reachable: a Trash launcher (mono icon) — pinned to Plank below
+mkdir -p "$SHARE/applications"
+printf '[Desktop Entry]\nType=Application\nName=Trash\nComment=Open the trash\nExec=pcmanfm-qt trash:///\nIcon=user-trash\nTerminal=false\nCategories=System;\n' > "$SHARE/applications/cachy-trash.desktop"
 command -v pcmanfm-qt >/dev/null 2>&1 && pcmanfm-qt --set-wallpaper="$WPV" --wallpaper-mode=stretch 2>/dev/null
-ok "wallpaper rendered + set"
+ok "wallpaper set; desktop icons cleared (Plank is the launcher)"
 
 # ============================================================ panel: top bar
 # Surgical: keep the user's existing (working) panel.conf and only nudge
@@ -362,6 +380,9 @@ if command -v plank >/dev/null 2>&1; then
     # the Cachy-Void updater, if its launcher is installed (deploy.sh --with-branding)
     [ -f /usr/share/applications/cachy-updater.desktop ] && \
         printf '[PlankDockItemPreferences]\nLauncher=file:///usr/share/applications/cachy-updater.desktop\n' > "$CFG/plank/dock1/launchers/00-cachy-updater.dockitem"
+    # trash (replaces the removed desktop trash icon) — last in the dock
+    [ -f "$SHARE/applications/cachy-trash.desktop" ] && \
+        printf '[PlankDockItemPreferences]\nLauncher=file://%s/applications/cachy-trash.desktop\n' "$SHARE" > "$CFG/plank/dock1/launchers/zz-trash.dockitem"
     DK="net.launchpad.plank.dock.settings:/net/launchpad/plank/docks/dock1/"
     for kv in "theme void-tactical" "icon-size 40" "hide-mode dodge-maximized" "zoom-enabled false" "position bottom" "alignment center" "items-alignment center"; do
         gsettings set $DK ${kv%% *} "${kv#* }" 2>/dev/null
@@ -480,9 +501,13 @@ PY
 command -v lxqt-globalkeysd >/dev/null 2>&1 && setsid lxqt-globalkeysd >/dev/null 2>&1 &
 pkill -9 -x lxqt-panel 2>/dev/null; sleep 2   # lxqt-session respawns exactly one (reads new config)
 command -v openbox >/dev/null 2>&1 && openbox --reconfigure 2>/dev/null
-# reload the desktop so its icons pick up the new icon theme (pcmanfm-qt caches them)
+# reload the desktop so it picks up the new icon theme + the cleared shortcuts.
+# MUST be -9: a graceful pcmanfm-qt exit rewrites settings.conf, restoring
+# DesktopShortcuts to defaults and clobbering our clean-desktop edit. SIGKILL
+# skips that write, so the fresh instance reads our config. (A re-login is the
+# definitive apply — the closing message says so.)
 if pgrep -x pcmanfm-qt >/dev/null 2>&1; then
-    pkill -x pcmanfm-qt 2>/dev/null; sleep 2
+    pkill -9 -x pcmanfm-qt 2>/dev/null; sleep 2
     pgrep -x pcmanfm-qt >/dev/null 2>&1 || setsid pcmanfm-qt --desktop --profile=lxqt >/dev/null 2>&1 &
 fi
 for a in picom plank conky; do
