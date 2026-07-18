@@ -102,6 +102,7 @@ Key flags:
 | `--with-grub` | Adds `usbcore.autosuspend=-1` to the kernel cmdline **and** sets `GRUB_DEFAULT=saved` (required for one-shot kernel boot-testing). |
 | `--with-schedule` | Also **enable** the §4.9 `cachy-void-update` runit timer for unattended daily `--sync`+`--commit`. Without it the service is provisioned but left disabled (opt-in). |
 | `--hud-profile auto\|full\|minimal` | Which MangoHud config to install (§3.4). **`auto`** (default) picks `minimal` on a legacy NVIDIA Optimus laptop (driver ≤ 470 — GPU sensors read a misleading 0%) and `full` everywhere else. Force with `full`/`minimal`. |
+| `--with-branding` | Install the opt-in **void-tactical** LXQt desktop toolkit (Kvantum, Papirus, Plank, Rofi, Conky, Picom) + the `cachy-branding` applier + theme assets. Apply the look afterwards as your user: `cachy-branding` (see §14). |
 | `--march ARCH` | Compiler ABI level. Default: **auto-detected** from `/proc/cpuinfo` via the §1.2 ladder (v4 → v3 → v2 → baseline), so pre-Haswell CPUs get `x86-64-v2` automatically instead of SIGILL-ing on v3 binaries. Pass explicitly to override (e.g. when provisioning a disk for a different machine via `--root`). |
 | `--jobs N` | Build parallelism (default: `nproc`). |
 | `--tag NAME` | Ledger tag for this run (`core` default; use `test`/`opt` per route — see §9). |
@@ -531,3 +532,48 @@ and the updater's one-shot staging becomes available.
 > distro's kernel updates. Leaving GRUB with the distro you update most (or the
 > one you treat as the recovery escape hatch) is a perfectly valid choice — the
 > updater degrades gracefully either way.
+
+---
+
+## 14. Desktop Branding — the `void-tactical` look (opt-in)
+
+Cachy-Void ships an **optional** low-key desktop identity for **LXQt on X11** (the
+design spec is [`branding.md`](branding.md)): matte obsidian + one green accent, a
+schematic wallpaper, a thin top bar, a flat Plank dock, Rofi, Conky telemetry, and
+Picom shadows. It is opt-in and fully reversible — a Cachy-Void that leaves no scars.
+
+**1. Install the toolkit** (as root — packages + assets + the applier):
+
+```bash
+sudo ./deploy.sh --with-branding --user "$USER" --void-packages ~/void-packages
+```
+
+**2. Apply the look** (as your **normal user** — LXQt config is per-user):
+
+```bash
+cachy-branding          # apply the void-tactical desktop
+# then log out and back in once so every app picks up the Kvantum style + env
+```
+
+What it composes (all in the branding palette, all backed up first):
+
+- **Kvantum** widget skin (fork of KvArcDark, recoloured) + LXQt panel theme
+- **Papirus-Dark** icons with **grey** folders
+- **openbox** dark titlebars (green active border)
+- a thin **top panel** (menu/tray/clock) + a flat **Plank** dock (launchers, dodges maximized windows)
+- **Picom** matte shadows, **Rofi** launcher on **Super+Space**, **Conky** text telemetry
+- the flagship **`cachy-void-official`** wallpaper (4-take set in `assets/wallpapers/`)
+
+**Revert** everything:
+
+```bash
+cachy-branding --remove   # restores your pre-branding config from backups
+```
+
+Notes:
+
+- **LXQt/X11 only.** On a non-LXQt session `cachy-branding` warns and still writes
+  the config, but the desktop pieces (panel/Plank/Conky) assume LXQt + openbox + X11.
+- Grey folders use `papirus-folders`, which edits the system icon theme (needs
+  `sudo`); if unavailable the folders stay blue and everything else still applies.
+- Conky auto-detects the network interface and CPU-temp sensor for this host.

@@ -1,0 +1,22 @@
+/* Cachy-Void Rofi theme — branding.md §5.2 palette. Bound to Super+Space by cachy-branding. */
+* {
+    bg:     #1b1d1e;
+    panel:  #282c34;
+    fg:     #abb2bf;
+    accent: #478061;
+    dim:    #5c6370;
+    background-color: transparent;
+    text-color: @fg;
+    font: "Hack 11";
+}
+window   { background-color: @bg; border: 2px; border-color: @panel; border-radius: 6px; width: 600px; padding: 14px; }
+mainbox  { children: [ inputbar, listview ]; spacing: 12px; }
+inputbar { background-color: @panel; padding: 8px; border-radius: 4px; children: [ prompt, entry ]; }
+prompt   { text-color: @accent; margin: 0px 8px 0px 0px; }
+entry    { text-color: @fg; placeholder: "run…"; placeholder-color: @dim; }
+listview { lines: 8; scrollbar: false; spacing: 4px; }
+element  { padding: 6px; border-radius: 4px; }
+element normal normal   { text-color: @fg; }
+element selected normal { background-color: @accent; text-color: @bg; }
+element-text { background-color: inherit; text-color: inherit; }
+element-icon { size: 20px; background-color: inherit; }

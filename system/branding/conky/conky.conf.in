@@ -1,0 +1,20 @@
+-- Cachy-Void Conky — minimal honest telemetry (branding.md §5.5). Text only, no gauges.
+-- @NET_IFACE@ and @HWMON@ are filled in by cachy-branding at apply time (host-specific).
+conky.config = {
+    alignment = 'top_right', gap_x = 30, gap_y = 52,
+    minimum_width = 210, maximum_width = 260,
+    own_window = true, own_window_type = 'desktop',
+    own_window_argb_visual = true, own_window_argb_value = 0, own_window_transparent = true,
+    own_window_hints = 'undecorated,below,sticky,skip_taskbar,skip_pager',
+    double_buffer = true, update_interval = 2.0,
+    draw_shades = false, draw_borders = false, use_xft = true,
+    font = 'Hack:size=9', default_color = 'abb2bf', color1 = '478061', color2 = '5c6370',
+}
+conky.text = [[
+${color1}CACHY-VOID${color}
+${color2}${nodename} · ${kernel}${color}
+${color1}cpu ${color}${cpu}%   ${color1}temp ${color}${hwmon @HWMON@ temp 1}°C
+${color1}mem ${color}${memperc}%   ${color2}${mem}/${memmax}${color}
+${color1}net ${color}${downspeed @NET_IFACE@} v ${upspeed @NET_IFACE@} ^
+${color1}up  ${color}${uptime_short}
+]]

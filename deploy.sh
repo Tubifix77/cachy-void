@@ -24,7 +24,7 @@
 #
 # Usage:
 #   sudo ./deploy.sh [--user NAME] [--void-packages DIR] [--march ARCH]
-#                    [--jobs N] [--with-grub] [--with-schedule]
+#                    [--jobs N] [--with-grub] [--with-schedule] [--with-branding]
 #                    [--hud-profile auto|full|minimal]
 #                    [--tag core|test|opt] [--simulate] [--dry-run] [--root DIR]
 #   sudo ./deploy.sh --log                 [--root DIR]
@@ -64,6 +64,11 @@ readonly PKG_XZ="xz"                        # cachy-proton extracts .tar.xz rele
 readonly CACHY_GAME_WRAPPER="/usr/local/bin/cachy-game"
 readonly CACHY_PROTON_HELPER="/usr/local/bin/cachy-proton"
 readonly MANGOHUD_CONF="/etc/xdg/MangoHud/MangoHud.conf"
+# §branding: void-tactical LXQt desktop (opt-in, --with-branding). The applier
+# runs per-user (cachy-branding); deploy.sh only installs packages + assets.
+readonly PKG_BRANDING="kvantum papirus-icon-theme papirus-folders plank rofi conky picom"
+readonly BRANDING_ASSETS="/usr/share/cachy-void/branding"
+readonly CACHY_BRANDING_BIN="/usr/local/bin/cachy-branding"
 
 # Fixed install location for the mirrored Python engine (§6/§8.9).
 readonly CACHY_ENGINE="/usr/libexec/cachy-void-updater"
@@ -79,6 +84,7 @@ DO_LOG=false
 DRY_RUN=false
 WITH_GRUB=false
 WITH_SCHEDULE=false       # §4.9: also ENABLE the unattended cachy-void-update timer
+WITH_BRANDING=false       # branding: install the void-tactical desktop toolkit + applier
 HUD_PROFILE="auto"        # §3.4 MangoHud config: auto|full|minimal (minimal = legacy Optimus)
 SIMULATE=false            # WSL2/sandbox: lay down files, skip init-dependent ops
 ROOT=""                   # offline mode: mounted Void tree prefix ("" = live)
@@ -133,6 +139,7 @@ parse_args() {
             --simulate)       SIMULATE=true ;;
             --with-grub)      WITH_GRUB=true ;;
             --with-schedule)  WITH_SCHEDULE=true ;;
+            --with-branding)  WITH_BRANDING=true ;;
             --hud-profile)    HUD_PROFILE="${2:?--hud-profile needs auto|full|minimal}"; shift ;;
             --user)           UPDATER_USER="${2:?--user needs a value}"; shift ;;
             --void-packages)  VOID_PACKAGES="${2:?--void-packages needs a value}"; shift ;;
@@ -402,6 +409,29 @@ install_gaming_userspace() {
     esac
     install_file "$hud_src" "$MANGOHUD_CONF" 0644 root root
     log "gaming layer ready — launch: cachy-game %command% | Proton-CachyOS: run 'cachy-proton' (per-user)"
+}
+
+# install_branding — the opt-in void-tactical LXQt desktop (branding.md). Installs
+# the toolkit packages + mirrors the theme assets + the per-user `cachy-branding`
+# applier. The look itself is applied by the USER running `cachy-branding` (LXQt
+# config is per-user; deploy.sh never writes into a user's ~/.config here).
+install_branding() {
+    local p
+    for p in $PKG_BRANDING; do ensure_pkg "$p"; done
+    ensure_pkg arc-theme optional        # GTK-app coherence
+    ensure_pkg font-hack optional        # the engineered mono
+    # mirror read-only theme assets (dir is ledger-tracked; uninstall rm -rf's it)
+    install_dir "$BRANDING_ASSETS" root
+    if ! $DRY_RUN && [ -z "$ROOT" ]; then
+        local dst; dst="$(rp "$BRANDING_ASSETS")"
+        cp -rf "$SYS_DIR/branding/." "$dst/"
+        cp -f  "$SYS_DIR/config/picom.conf" "$dst/picom.conf"
+        install -d -- "$dst/wallpapers"
+        cp -f "$SRC_DIR"/assets/wallpapers/*.svg "$dst/wallpapers/" 2>/dev/null || true
+        cp -f "$SRC_DIR"/assets/void-cachy-*.svg "$dst/" 2>/dev/null || true
+    fi
+    install_file "$SYS_DIR/bin/cachy-branding" "$CACHY_BRANDING_BIN" 0755 root root
+    log "branding toolkit installed — apply the look by running (as your user): cachy-branding"
 }
 
 grub_regen() {
@@ -684,6 +714,11 @@ do_install() {
     log "[8/10] gaming userspace layer: gamemode + MangoHud + cachy-game (§3.4)"
     install_gaming_userspace
 
+    if $WITH_BRANDING; then
+        log "[+] void-tactical desktop branding (opt-in, --with-branding)"
+        install_branding
+    fi
+
     log "[9/10] pre-deploy snapshot subvol (§9.5, btrfs hosts only)"
     install_snapshot_subvol
 
@@ -711,6 +746,9 @@ Next steps / notes:
     daily cachy-void-update timer (edit /etc/sv/cachy-void-update/conf for the time).
   * Pre-deploy snapshots (§9.5) auto-arm on btrfs. If you convert to btrfs LATER,
     re-run deploy.sh once so it creates the $SNAP_DIR_DEFAULT subvol.
+  * Desktop branding (void-tactical LXQt) is opt-in: re-run with --with-branding to
+    install the toolkit, then apply the look as your user:  cachy-branding
+    (revert with: cachy-branding --remove).
   * Inspect the change ledger any time:  sudo $0 --log
   * Roll back everything:                sudo $0 --uninstall
   * Roll back one route's changes:       sudo $0 --uninstall-tag $DEPLOY_TAG

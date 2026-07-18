@@ -1,12 +1,14 @@
 # Cachy-Void — Branding & Desktop Identity
 
-> **Status: design spec — not yet applied in practice.** Aesthetic direction, the
-> canonical palette, and a component-by-component theming plan for a Cachy-Void
-> desktop. Everything here is **opt-in and DE-aware** (see `architecture.md` §0 and
-> `future-ideas.md` §2/§6): a user's existing look is never overridden. Current
-> reference target is **LXQt on X11** (the nvidia470 testbed); Wayland notes are
-> flagged for future modern-GPU targets. Authoritative implementation spec remains
-> `architecture.md` — this is the *look*, not the machinery.
+> **Status: IMPLEMENTED.** This design spec is now shipped as the `cachy-branding`
+> applier (`system/bin/cachy-branding`) + theme assets (`system/branding/`,
+> `assets/wallpapers/`), installed opt-in by `deploy.sh --with-branding` and applied
+> per-user by running `cachy-branding` (see INSTALL.md §14). First applied live on the
+> LXQt/nvidia470 testbed, 2026-07-18. Everything here stays **opt-in and DE-aware**
+> (see `architecture.md` §0 and `future-ideas.md` §2/§6): a user's existing look is
+> never overridden, and `cachy-branding --remove` restores it. Reference target is
+> **LXQt on X11**; Wayland notes are flagged for future modern-GPU targets.
+> Authoritative implementation spec remains `architecture.md` — this is the *look*.
 
 ---
 

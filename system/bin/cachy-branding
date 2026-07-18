@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# cachy-branding — apply (or remove) the Cachy-Void "void-tactical" LXQt look.
+# branding.md is the design spec; this is the applier. Runs as YOUR user (LXQt
+# config is per-user; never root). OPT-IN and REVERSIBLE: every file it changes
+# is backed up once as <file>.pre-cachy.bak, and `--remove` restores them.
+#
+#   cachy-branding            apply the void-tactical desktop
+#   cachy-branding --remove   restore the pre-branding desktop from backups
+#
+# Composes: Kvantum widget skin (fork of KvArcDark, recoloured), LXQt panel theme
+# (fork of the 'kvantum' theme, blue->green), Papirus-Dark + grey folders, openbox
+# void-tactical titlebars, top-bar + Plank dock layout, Picom matte shadows, Rofi
+# launcher (Super+Space), Conky telemetry, and the flagship wallpaper.
+set -uo pipefail
+
+ASSETS="${CACHY_BRANDING_ASSETS:-/usr/share/cachy-void/branding}"
+BG=1b1d1e; PANEL=282c34; FG=abb2bf; ACCENT=478061; DIM=5c6370
+CFG="$HOME/.config"; SHARE="$HOME/.local/share"
+
+if [ -t 1 ]; then C=$'\033[0;36m'; K=$'\033[0;32m'; W=$'\033[0;33m'; Z=$'\033[0m'
+else C=""; K=""; W=""; Z=""; fi
+log(){ printf '%s==>%s %s\n' "$C" "$Z" "$*"; }
+ok(){ printf '%s ok%s %s\n' "$K" "$Z" "$*"; }
+warn(){ printf '%swarn%s %s\n' "$W" "$Z" "$*" >&2; }
+bak(){ [ -e "$1" ] && [ ! -e "$1.pre-cachy.bak" ] && cp -a "$1" "$1.pre-cachy.bak"; }
+
+[ "$(id -u)" -ne 0 ] || { warn "run as your normal user, not root (LXQt config is per-user)"; exit 1; }
+[ -d "$ASSETS" ] || { warn "branding assets not found at $ASSETS (deploy.sh installs them)"; exit 1; }
+
+if [ "${1:-}" = "--remove" ]; then
+    log "restoring pre-branding config from backups"
+    for f in "$CFG"/lxqt/lxqt.conf "$CFG"/lxqt/session.conf "$CFG"/lxqt/panel.conf \
+             "$CFG"/Kvantum/kvantum.kvconfig "$CFG"/openbox/rc.xml \
+             "$CFG"/pcmanfm-qt/lxqt/settings.conf; do
+        [ -e "$f.pre-cachy.bak" ] && mv -f "$f.pre-cachy.bak" "$f" && ok "restored $f"
+    done
+    rm -rf "$SHARE/lxqt/themes/void-tactical" "$CFG/Kvantum/void-tactical" "$HOME/.themes/void-tactical"
+    rm -f "$CFG"/autostart/{picom,plank,conky}.desktop
+    command -v papirus-folders >/dev/null 2>&1 && sudo papirus-folders -C blue -t Papirus-Dark 2>/dev/null
+    pkill -x picom 2>/dev/null; pkill -x plank 2>/dev/null; pkill -x conky 2>/dev/null
+    ok "removed — log out/in for a full reset."
+    exit 0
+fi
+
+# --- session env (so live restarts reach the running LXQt) ---
+SP=$(pgrep -u "$USER" -x lxqt-session | head -1)
+if [ -n "$SP" ]; then while IFS= read -r -d '' kv; do export "$kv"; done < "/proc/$SP/environ"; fi
+case "${XDG_CURRENT_DESKTOP:-}" in *LXQt*) : ;; *) warn "not an LXQt session — this look targets LXQt/X11; applying config anyway" ;; esac
+
+# ============================================================ Kvantum widget skin
+log "Kvantum widget skin (void-tactical)"
+KVSRC=/usr/share/Kvantum/KvArcDark
+if [ -d "$KVSRC" ]; then
+    D="$CFG/Kvantum/void-tactical"; mkdir -p "$D"
+    cp -f "$KVSRC/KvArcDark.svg" "$D/void-tactical.svg"
+    sed -i -E "s/#5294e2/#$ACCENT/Ig; s/#4d8fd8/#$ACCENT/Ig; s/#4877b1/#3a6b52/Ig; s/#0582ff/#$ACCENT/Ig; s/#4693e6/#$ACCENT/Ig; s/#58acff/#5a9678/Ig; s/#3176bf/#3a6b52/Ig; s/#b74aff/#$DIM/Ig" "$D/void-tactical.svg"
+    python3 - "$KVSRC/KvArcDark.kvconfig" "$D/void-tactical.kvconfig" "$BG" "$PANEL" "$FG" "$ACCENT" "$DIM" <<'PY'
+import re,sys
+src,dst,BG,PANEL,FG,ACCENT,DIM=sys.argv[1:8]
+t=open(src).read()
+gc=f"""[GeneralColors]
+window.color=#{BG}
+base.color=#{BG}
+alt.base.color=#202327
+button.color=#{PANEL}
+light.color=#3a3f4b
+mid.light.color=#23262b
+dark.color=#0f1011
+mid.color=#141517
+highlight.color=#{ACCENT}
+inactive.highlight.color=#3a4d43
+text.color=#{FG}
+window.text.color=#{FG}
+button.text.color=#{FG}
+disabled.text.color=#{DIM}
+tooltip.text.color=#{FG}
+highlight.text.color=#{BG}
+link.color=#{ACCENT}
+link.visited.color=#{DIM}
+progress.indicator.text.color=#{BG}
+"""
+t=re.sub(r"\[GeneralColors\].*?(?=\n\[)",gc.rstrip()+"\n",t,count=1,flags=re.S)
+for b in ("#5796e8","#009DFF","#5294e2"): t=t.replace(b,"#"+ACCENT)
+t=t.replace("#9E4FFF","#"+DIM)
+for wv in ("#ffffffc8","#eefcff","#ffffffd2"): t=t.replace(wv,"#"+FG)
+for wv in ("#ffffff96","#ffffff78","#ffffff73","#000000b4"): t=t.replace(wv,"#"+DIM)
+open(dst,"w").write(t)
+PY
+    printf '[General]\ntheme=void-tactical\n' > "$CFG/Kvantum/kvantum.kvconfig"
+    ok "Kvantum -> void-tactical"
+else warn "KvArcDark not installed (kvantum pkg) — skipping Kvantum skin"; fi
+
+# ============================================================ LXQt panel theme
+log "LXQt panel theme (void-tactical, blue->green)"
+LXSRC=/usr/share/lxqt/themes/kvantum
+if [ -d "$LXSRC" ]; then
+    D="$SHARE/lxqt/themes/void-tactical"; rm -rf "$D"; mkdir -p "$D"; cp -rf "$LXSRC"/. "$D"/
+    find "$D" -type f \( -name '*.qss' -o -name '*.svg' \) -print0 | xargs -0 sed -i -E \
+     -e 's/#55aaff/#6a9d84/Ig' -e 's/#80c0ff/#7fae95/Ig' -e 's/#81c0ff/#7fae95/Ig' \
+     -e 's/#4da6ff/#5a9678/Ig' -e 's/#488cc8/#4f8a6b/Ig' -e 's/#4584be/#4f8a6b/Ig' \
+     -e 's/#4d8fd2/#558f70/Ig' -e 's/#3a72a0/#3f7259/Ig' -e 's/#3a5f84/#3a6b52/Ig' \
+     -e 's/#436d98/#45775c/Ig' -e 's/#2878c8/#478061/Ig' -e 's/#246cb4/#3f7259/Ig' \
+     -e 's/#006edc/#4a8666/Ig' -e 's/#0064c8/#478061/Ig' -e 's/#005ab4/#3f7259/Ig' \
+     -e 's/#0050a0/#3a6b52/Ig' -e 's/#375778/#2e4d3f/Ig' -e 's/#385a7c/#2e4d3f/Ig' \
+     -e 's/#345372/#2c4a3c/Ig' -e 's/#2e4964/#282c34/Ig' -e 's/#001e3c/#16211b/Ig' \
+     -e 's/#001428/#121a15/Ig'
+    ok "LXQt theme -> void-tactical"
+else warn "LXQt 'kvantum' theme not present — panel keeps current theme"; fi
+
+# ============================================================ LXQt appearance (lxqt.conf / session.conf)
+log "LXQt appearance (Kvantum style, Papirus-Dark, Hack, palette)"
+mkdir -p "$CFG/lxqt"; LX="$CFG/lxqt/lxqt.conf"; bak "$LX"
+python3 - "$LX" "$BG" "$PANEL" "$FG" "$ACCENT" "$DIM" <<'PY'
+import sys,configparser,os
+p,BG,PANEL,FG,ACCENT,DIM=sys.argv[1:7]
+c=configparser.RawConfigParser(); c.optionxform=str
+if os.path.exists(p): c.read(p)
+def s(sec,k,v):
+    if not c.has_section(sec): c.add_section(sec)
+    c.set(sec,k,v)
+s('General','__userfile__','true'); s('General','icon_theme','Papirus-Dark'); s('General','theme','void-tactical')
+s('Qt','style','kvantum'); s('Qt','font_family','Hack'); s('Qt','font_point_size','10')
+for k,v in {'base_color':'#'+BG,'window_color':'#'+BG,'text_color':'#'+FG,'window_text_color':'#'+FG,
+            'highlight_color':'#'+ACCENT,'highlighted_text_color':'#'+BG,'link_color':'#'+ACCENT,
+            'link_visited_color':'#'+DIM,'tooltip_base_color':'#000000','tooltip_text_color':'#'+FG}.items():
+    s('Palette',k,v)
+with open(p,'w') as f: c.write(f,space_around_delimiters=False)
+PY
+SC="$CFG/lxqt/session.conf"; bak "$SC"
+grep -q '^QT_STYLE_OVERRIDE=' "$SC" 2>/dev/null || { grep -q '^\[Environment\]' "$SC" 2>/dev/null || printf '\n[Environment]\n' >> "$SC"; printf 'QT_STYLE_OVERRIDE=kvantum\n' >> "$SC"; }
+ok "lxqt.conf + session.conf"
+
+# ============================================================ openbox titlebars
+log "openbox titlebars (void-tactical)"
+OT="$HOME/.themes/void-tactical/openbox-3"; mkdir -p "$OT"; cp -f "$ASSETS/openbox/void-tactical/themerc" "$OT/themerc"
+RC="$CFG/openbox/rc.xml"; mkdir -p "$CFG/openbox"
+[ -f "$RC" ] || { [ -f /etc/xdg/openbox/rc.xml ] && cp /etc/xdg/openbox/rc.xml "$RC"; }
+bak "$RC"
+if [ -f "$RC" ]; then
+    python3 - "$RC" <<'PY'
+import re,sys
+p=sys.argv[1]; t=open(p).read()
+if re.search(r'<theme>.*?<name>',t,re.S): t=re.sub(r'(<theme>.*?<name>).*?(</name>)',r'\1void-tactical\2',t,count=1,flags=re.S)
+elif '</openbox_config>' in t: t=t.replace('</openbox_config>','<theme><name>void-tactical</name></theme>\n</openbox_config>')
+# Super+Space -> rofi
+if '</keyboard>' in t and 'rofi -show' not in t:
+    t=t.replace('</keyboard>','  <keybind key="W-space"><action name="Execute"><command>rofi -show drun</command></action></keybind>\n</keyboard>')
+open(p,'w').write(t)
+PY
+    ok "openbox -> void-tactical (+ Super+Space rofi)"
+else warn "no openbox rc.xml — titlebar theme + rofi keybind skipped"; fi
+
+# ============================================================ Papirus grey folders
+if command -v papirus-folders >/dev/null 2>&1; then
+    log "folder colour: grey"; sudo papirus-folders -C grey -t Papirus-Dark >/dev/null 2>&1 && ok "folders grey" || warn "papirus-folders needs sudo — folders unchanged"
+fi
+
+# ============================================================ wallpaper
+log "wallpaper (cachy-void-official)"
+WP="$SHARE/cachy-void/cachy-void-official.png"; mkdir -p "$SHARE/cachy-void"
+if [ ! -f "$WP" ] && [ -f "$ASSETS/wallpapers/cachy-void-official.svg" ]; then
+    if command -v rsvg-convert >/dev/null 2>&1; then rsvg-convert -w 1920 -h 1080 "$ASSETS/wallpapers/cachy-void-official.svg" -o "$WP"
+    else magick -background none "$ASSETS/wallpapers/cachy-void-official.svg" -resize 1920x1080 "$WP" 2>/dev/null; fi
+fi
+PS="$CFG/pcmanfm-qt/lxqt/settings.conf"
+[ -f "$PS" ] && { bak "$PS"; sed -i -E "s#^Wallpaper=.*#Wallpaper=$WP#; s#^WallpaperMode=.*#WallpaperMode=stretch#" "$PS"; }
+command -v pcmanfm-qt >/dev/null 2>&1 && pcmanfm-qt --set-wallpaper="$WP" --wallpaper-mode=stretch 2>/dev/null
+ok "wallpaper set"
+
+# ============================================================ panel: top bar
+log "panel: thin top bar + logo menu button"
+PC="$CFG/lxqt/panel.conf"; bak "$PC"
+python3 - "$PC" "$SHARE/cachy-void/void-cachy-square.svg" <<'PY'
+import sys,re,os
+p,icon=sys.argv[1],sys.argv[2]
+t=open(p).read() if os.path.exists(p) else "[General]\n__userfile__=true\n"
+if 'panels=' not in t: t=t.replace('[General]\n','[General]\npanels=panel1\n',1)
+if '[panel1]' not in t:
+    t+="\n[panel1]\nposition=Top\npanelSize=30\niconSize=22\nlineCount=1\nalignment=-1\nhidable=false\nplugins=mainmenu, desktopswitch, mount, tray, volume, worldclock\n"
+else:
+    t=re.sub(r'^position=.*$','position=Top',t,count=1,flags=re.M) if re.search(r'^position=',t,re.M) else t.replace('[panel1]\n','[panel1]\nposition=Top\n',1)
+# mainmenu icon
+if '[mainmenu]' not in t: t+="\n[mainmenu]\nicon=%s\n"%icon
+elif 'icon=' not in t.split('[mainmenu]')[1].split('[')[0]: t=t.replace('[mainmenu]\n','[mainmenu]\nicon=%s\n'%icon,1)
+open(p,'w').write(t)
+PY
+cp -f "$ASSETS/void-cachy-square.svg" "$SHARE/cachy-void/void-cachy-square.svg" 2>/dev/null
+ok "panel configured"
+
+# ============================================================ Plank dock
+if command -v plank >/dev/null 2>&1; then
+    log "Plank dock (flat, dodge-maximized)"
+    PT="$SHARE/plank/themes/void-tactical"; mkdir -p "$PT" "$CFG/plank/dock1/launchers"
+    cp -f "$ASSETS/plank/void-tactical/dock.theme" "$PT/dock.theme"
+    for app in pcmanfm-qt qterminal steam firefox; do
+        f=$(ls /usr/share/applications/ 2>/dev/null | grep -iE "(^|\.)$app\.desktop$" | head -1)
+        [ -n "$f" ] && printf '[PlankDockItemPreferences]\nLauncher=file:///usr/share/applications/%s\n' "$f" > "$CFG/plank/dock1/launchers/$app.dockitem"
+    done
+    DK="net.launchpad.plank.dock.settings:/net/launchpad/plank/docks/dock1/"
+    for kv in "theme void-tactical" "icon-size 40" "hide-mode dodge-maximized" "zoom-enabled false" "position bottom" "alignment center" "items-alignment center"; do
+        gsettings set $DK ${kv%% *} "${kv#* }" 2>/dev/null
+    done
+    printf '[Desktop Entry]\nType=Application\nName=plank\nExec=plank\n' > "$CFG/autostart/plank.desktop"
+    ok "Plank configured"
+fi
+
+# ============================================================ Picom / Rofi / Conky configs
+mkdir -p "$CFG/picom" "$CFG/rofi" "$CFG/conky" "$CFG/autostart"
+[ -f "$ASSETS/picom.conf" ] && cp -f "$ASSETS/picom.conf" "$CFG/picom/picom.conf"
+printf '[Desktop Entry]\nType=Application\nName=picom\nExec=picom --config %s/picom/picom.conf\n' "$CFG" > "$CFG/autostart/picom.desktop"
+cp -f "$ASSETS/rofi/config.rasi" "$CFG/rofi/config.rasi"
+# conky: fill host-specific iface + hwmon
+IFACE=$(ip route 2>/dev/null | awk '/^default/{print $5; exit}'); : "${IFACE:=eth0}"
+HW=$(for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name 2>/dev/null)" = coretemp ] && basename "$h" | tr -dc 0-9 && break; done); : "${HW:=0}"
+sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.in" > "$CFG/conky/conky.conf"
+printf '[Desktop Entry]\nType=Application\nName=conky\nExec=conky -c %s/conky/conky.conf\n' "$CFG" > "$CFG/autostart/conky.desktop"
+ok "picom / rofi / conky configs"
+
+# ============================================================ apply live
+log "applying live"
+pkill -9 -x lxqt-panel 2>/dev/null; sleep 2   # lxqt-session respawns exactly one (reads new config)
+command -v openbox >/dev/null 2>&1 && openbox --reconfigure 2>/dev/null
+for a in picom plank conky; do
+    command -v "$a" >/dev/null 2>&1 || continue
+    pkill -x "$a" 2>/dev/null; sleep 1
+    case "$a" in
+        picom) setsid picom --config "$CFG/picom/picom.conf" >/dev/null 2>&1 & ;;
+        plank) setsid plank >/dev/null 2>&1 & ;;
+        conky) setsid conky -c "$CFG/conky/conky.conf" >/dev/null 2>&1 & ;;
+    esac
+done
+
+cat <<EOF
+
+${K}Cachy-Void desktop applied.${Z}
+  * Log out / back in once for every app to pick up the Kvantum style + env.
+  * Launcher:  Super+Space (Rofi)
+  * Revert:    cachy-branding --remove   (then log out/in)
+EOF

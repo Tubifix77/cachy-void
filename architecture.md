@@ -459,8 +459,11 @@ cachy-void/
 │   ├── sudoers.d/cachy-void             # §4 privilege boundary
 │   ├── bin/cachy-game                   # §3.4 game launch wrapper (→ /usr/local/bin)
 │   ├── bin/cachy-proton                 # §3.4 Proton-CachyOS installer (→ /usr/local/bin)
+│   ├── bin/cachy-branding               # branding.md applier, per-user (→ /usr/local/bin)
 │   ├── xdg/MangoHud.conf                # §3.4 full HUD (→ /etc/xdg/MangoHud/)
 │   ├── xdg/MangoHud-minimal.conf        # §3.4 legacy-Optimus HUD (no GPU sensors)
+│   ├── config/picom.conf               # branding.md §5.3 compositor (matte shadows)
+│   ├── branding/{openbox,plank,rofi,conky}/  # branding.md theme assets (→ /usr/share/cachy-void/branding)
 │   ├── sv/zramen/{run,finish,conf}      # §3.2 zram service (run: override template)
 │   ├── sv/cachy-health/{run,conf}       # §8.7 post-boot health daemon service
 │   └── sv/cachy-void-update/{run,conf,log/run}  # §4.9 scheduled-update service (opt-in)
