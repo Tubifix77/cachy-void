@@ -205,8 +205,14 @@ ok "panel configured"
 # ============================================================ Plank dock
 if command -v plank >/dev/null 2>&1; then
     log "Plank dock (flat, dodge-maximized)"
-    PT="$SHARE/plank/themes/void-tactical"; mkdir -p "$PT" "$CFG/plank/dock1/launchers"
+    PT="$SHARE/plank/themes/void-tactical"; mkdir -p "$PT" "$CFG/plank/dock1/launchers" "$SHARE/applications"
     cp -f "$ASSETS/plank/void-tactical/dock.theme" "$PT/dock.theme"
+    # "start menu" dock item: the diamond -> rofi app launcher (LXQt panel plugins
+    # don't render our SVG reliably, so the visible menu button lives in the dock).
+    cp -f "$ASSETS/void-cachy-icon.svg" "$SHARE/cachy-void/void-cachy-icon.svg" 2>/dev/null
+    magick -background none "$SHARE/cachy-void/void-cachy-icon.svg" -resize 128x128 "$SHARE/cachy-void/void-cachy-icon.png" 2>/dev/null
+    printf '[Desktop Entry]\nType=Application\nName=Cachy-Void Menu\nIcon=%s/void-cachy-icon.png\nExec=rofi -show drun\nTerminal=false\nCategories=System;\n' "$SHARE/cachy-void" > "$SHARE/applications/cachy-menu.desktop"
+    printf '[PlankDockItemPreferences]\nLauncher=file://%s/applications/cachy-menu.desktop\n' "$SHARE" > "$CFG/plank/dock1/launchers/00-cachy-menu.dockitem"
     for app in pcmanfm-qt qterminal steam firefox; do
         f=$(ls /usr/share/applications/ 2>/dev/null | grep -iE "(^|\.)$app\.desktop$" | head -1)
         [ -n "$f" ] && printf '[PlankDockItemPreferences]\nLauncher=file:///usr/share/applications/%s\n' "$f" > "$CFG/plank/dock1/launchers/$app.dockitem"
