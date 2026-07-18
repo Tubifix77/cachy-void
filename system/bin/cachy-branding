@@ -31,10 +31,12 @@ if [ "${1:-}" = "--remove" ]; then
     log "restoring pre-branding config from backups"
     for f in "$CFG"/lxqt/lxqt.conf "$CFG"/lxqt/session.conf "$CFG"/lxqt/panel.conf \
              "$CFG"/Kvantum/kvantum.kvconfig "$CFG"/openbox/rc.xml \
-             "$CFG"/lxqt/lxqt-powermanagement.conf \
+             "$CFG"/lxqt/lxqt-powermanagement.conf "$CFG"/gtk-3.0/settings.ini \
              "$CFG"/pcmanfm-qt/lxqt/settings.conf; do
         [ -e "$f.pre-cachy.bak" ] && mv -f "$f.pre-cachy.bak" "$f" && ok "restored $f"
     done
+    command -v gsettings >/dev/null 2>&1 && gsettings reset org.gnome.desktop.interface icon-theme 2>/dev/null
+    rm -rf "$SHARE/icons/Luv-Void"
     rm -rf "$SHARE/lxqt/themes/void-tactical" "$CFG/Kvantum/void-tactical" "$HOME/.themes/void-tactical"
     rm -f "$CFG"/autostart/{picom,plank,conky,xcape}.desktop
     command -v papirus-folders >/dev/null 2>&1 && sudo papirus-folders -C blue -t Papirus-Dark 2>/dev/null
@@ -129,18 +131,61 @@ QSS
     ok "LXQt theme -> void-tactical (handle dots removed)"
 else warn "LXQt 'kvantum' theme not present — panel keeps current theme"; fi
 
+# ============================================================ icon theme (Luv-Void — mono)
+# Build "Luv-Void": the Luv icon theme (deploy.sh fetches it to $ASSETS/luv) with
+# every colour desaturated to its luminance grey. Done at the SVG level (not a
+# grayscale <filter>, which Qt's SVG renderer ignores) so it renders mono in both
+# LXQt/Qt AND GTK/Plank. Full app coverage means no colourful hicolor leak (Steam
+# stays grey). Falls back to Papirus-Dark if the Luv source isn't present.
+log "icon theme (Luv-Void — mono)"
+ICON_THEME="Papirus-Dark"
+LUVSRC="$ASSETS/luv/Luv"; LVDST="$SHARE/icons/Luv-Void"
+if [ -d "$LUVSRC" ]; then
+    if [ ! -f "$LVDST/index.theme" ]; then
+        rm -rf "$LVDST"; mkdir -p "$SHARE/icons"
+        cp -rL "$LUVSRC" "$LVDST"   # -L flattens symlinks so desaturation reaches every file
+        python3 - "$LVDST" <<'PY'
+import re,os,sys
+root=sys.argv[1]
+def lum(r,g,b):
+    y=round(0.299*r+0.587*g+0.114*b); return '#%02x%02x%02x'%(y,y,y)
+h6=re.compile(r'#([0-9a-fA-F]{6})\b'); h3=re.compile(r'#([0-9a-fA-F]{3})\b')
+rf=re.compile(r'rgb\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)\)')
+r6=lambda m:lum(int(m.group(1)[0:2],16),int(m.group(1)[2:4],16),int(m.group(1)[4:6],16))
+r3=lambda m:lum(int(m.group(1)[0]*2,16),int(m.group(1)[1]*2,16),int(m.group(1)[2]*2,16))
+rr=lambda m:lum(int(m.group(1)),int(m.group(2)),int(m.group(3)))
+for dp,_,fs in os.walk(root):
+    for f in fs:
+        if f.endswith('.svg'):
+            q=os.path.join(dp,f)
+            try: t=open(q,encoding='utf-8',errors='ignore').read()
+            except: continue
+            t2=rf.sub(rr,h3.sub(r3,h6.sub(r6,t)))
+            if t2!=t: open(q,'w',encoding='utf-8').write(t2)
+PY
+        # alias LXQt/dock names Luv lacks -> Luv's own equivalents (mono)
+        for d in "$LVDST"/apps/*/; do
+            [ -f "${d}system-file-manager.svg" ] && ln -sf system-file-manager.svg "${d}pcmanfm-qt.svg"
+            [ -f "${d}utilities-terminal.svg" ] && ln -sf utilities-terminal.svg "${d}qterminal.svg"
+        done
+        command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -f "$LVDST" 2>/dev/null
+    fi
+    [ -f "$LVDST/index.theme" ] && ICON_THEME="Luv-Void"
+fi
+ok "icon theme = $ICON_THEME"
+
 # ============================================================ LXQt appearance (lxqt.conf / session.conf)
-log "LXQt appearance (Kvantum style, Papirus-Dark, Hack, palette)"
+log "LXQt appearance (Kvantum style, $ICON_THEME, Hack, palette)"
 mkdir -p "$CFG/lxqt"; LX="$CFG/lxqt/lxqt.conf"; bak "$LX"
-python3 - "$LX" "$BG" "$PANEL" "$FG" "$ACCENT" "$DIM" <<'PY'
+python3 - "$LX" "$BG" "$PANEL" "$FG" "$ACCENT" "$DIM" "$ICON_THEME" <<'PY'
 import sys,configparser,os
-p,BG,PANEL,FG,ACCENT,DIM=sys.argv[1:7]
+p,BG,PANEL,FG,ACCENT,DIM,ICON=sys.argv[1:8]
 c=configparser.RawConfigParser(); c.optionxform=str
 if os.path.exists(p): c.read(p)
 def s(sec,k,v):
     if not c.has_section(sec): c.add_section(sec)
     c.set(sec,k,v)
-s('General','__userfile__','true'); s('General','icon_theme','Papirus-Dark'); s('General','theme','void-tactical')
+s('General','__userfile__','true'); s('General','icon_theme',ICON); s('General','theme','void-tactical')
 s('Qt','style','kvantum'); s('Qt','font_family','Hack'); s('Qt','font_point_size','10')
 for k,v in {'base_color':'#'+BG,'window_color':'#'+BG,'text_color':'#'+FG,'window_text_color':'#'+FG,
             'highlight_color':'#'+ACCENT,'highlighted_text_color':'#'+BG,'link_color':'#'+ACCENT,
@@ -150,7 +195,13 @@ with open(p,'w') as f: c.write(f,space_around_delimiters=False)
 PY
 SC="$CFG/lxqt/session.conf"; bak "$SC"
 grep -q '^QT_STYLE_OVERRIDE=' "$SC" 2>/dev/null || { grep -q '^\[Environment\]' "$SC" 2>/dev/null || printf '\n[Environment]\n' >> "$SC"; printf 'QT_STYLE_OVERRIDE=kvantum\n' >> "$SC"; }
-ok "lxqt.conf + session.conf"
+# GTK apps + Plank use their OWN icon-theme setting (NOT lxqt.conf) — point them at ours
+command -v gsettings >/dev/null 2>&1 && gsettings set org.gnome.desktop.interface icon-theme "$ICON_THEME" 2>/dev/null
+mkdir -p "$CFG/gtk-3.0"; GT="$CFG/gtk-3.0/settings.ini"; bak "$GT"
+if grep -q '^gtk-icon-theme-name=' "$GT" 2>/dev/null; then sed -i "s/^gtk-icon-theme-name=.*/gtk-icon-theme-name=$ICON_THEME/" "$GT"
+elif grep -q '^\[Settings\]' "$GT" 2>/dev/null; then sed -i "/^\[Settings\]/a gtk-icon-theme-name=$ICON_THEME" "$GT"
+else printf '[Settings]\ngtk-icon-theme-name=%s\n' "$ICON_THEME" >> "$GT"; fi
+ok "lxqt.conf + session.conf + GTK icon theme"
 
 # ============================================================ openbox titlebars
 log "openbox titlebars (void-tactical)"
@@ -175,8 +226,8 @@ PY
     ok "openbox -> void-tactical (+ 1 desktop, Super+Space rofi)"
 else warn "no openbox rc.xml — titlebar theme + rofi keybind skipped"; fi
 
-# ============================================================ Papirus grey folders
-if command -v papirus-folders >/dev/null 2>&1; then
+# ============================================================ Papirus grey folders (only on the Papirus fallback)
+if [ "$ICON_THEME" = "Papirus-Dark" ] && command -v papirus-folders >/dev/null 2>&1; then
     log "folder colour: grey"; sudo papirus-folders -C grey -t Papirus-Dark >/dev/null 2>&1 && ok "folders grey" || warn "papirus-folders needs sudo — folders unchanged"
 fi
 
@@ -253,7 +304,7 @@ if m:
     pm=re.search(r'^plugins=(.*)$', body, re.M)
     if pm:
         items=[x.strip() for x in pm.group(1).split(',') if x.strip()]
-        items=[x for x in items if x not in ('desktopswitch','pager')]
+        items=[x for x in items if x not in ('desktopswitch','pager','showdesktop')]
         for cand in items:
             if cand.split('_')[0] in ('fancymenu','mainmenu'): menu=cand; break
         body=re.sub(r'^plugins=.*$', 'plugins='+', '.join(items), body, count=1, flags=re.M)
@@ -391,6 +442,11 @@ PY
 command -v lxqt-globalkeysd >/dev/null 2>&1 && setsid lxqt-globalkeysd >/dev/null 2>&1 &
 pkill -9 -x lxqt-panel 2>/dev/null; sleep 2   # lxqt-session respawns exactly one (reads new config)
 command -v openbox >/dev/null 2>&1 && openbox --reconfigure 2>/dev/null
+# reload the desktop so its icons pick up the new icon theme (pcmanfm-qt caches them)
+if pgrep -x pcmanfm-qt >/dev/null 2>&1; then
+    pkill -x pcmanfm-qt 2>/dev/null; sleep 2
+    pgrep -x pcmanfm-qt >/dev/null 2>&1 || setsid pcmanfm-qt --desktop --profile=lxqt >/dev/null 2>&1 &
+fi
 for a in picom plank conky; do
     command -v "$a" >/dev/null 2>&1 || continue
     pkill -x "$a" 2>/dev/null; sleep 1

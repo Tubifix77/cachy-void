@@ -231,6 +231,24 @@ not every redraw. On multi-monitor "detached TV" setups where the real output
 isn't negotiated yet at login, Conky's autostart is delayed ~8s so its
 `top_right` anchor computes against the right screen, not a stale default.
 
+### 5.5b App icons — Luv-Void (monochrome)
+
+App/desktop icons must not fight the obsidian field or the thin-line wallpaper. The
+rule is the same "one restrained accent": icons in the grey-white foreground, green
+reserved for the mark. Ready-made packs fail this two ways — most keep vendor brand
+colours (Steam blue leaks even in "dark" packs, because apps ship their own icon to
+`hicolor`), and the few truly-monochrome packs have almost no app coverage.
+
+The fix `cachy-branding` ships: fork the **Luv** icon theme (chosen for full app
+coverage + minimal rounding — round logos like Steam/Firefox stay circular, which is
+honest to the logo) and **desaturate every icon's colours to their luminance grey**
+at the SVG level → **`Luv-Void`**. SVG-level (not a grayscale `<filter>`, which Qt's
+SVG renderer ignores) so it renders mono in **both** LXQt/Qt and GTK. It's set for
+LXQt *and* the separate GTK icon-theme key — **Plank and GTK apps ignore lxqt.conf**,
+so both must be pointed at it. `deploy.sh` fetches Luv (network, optional); if absent,
+branding falls back to Papirus-Dark + grey folders. App names Luv lacks (`pcmanfm-qt`,
+`qterminal`) are aliased to Luv's own equivalents so nothing leaks colour.
+
 ### 5.6 The mark & wallpaper
 
 **Canonical logo set** (SVGs in [`assets/`](assets/) — dark-surface: grey/green on a

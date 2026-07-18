@@ -429,6 +429,13 @@ install_branding() {
         install -d -- "$dst/wallpapers"
         cp -f "$SRC_DIR"/assets/wallpapers/*.svg "$dst/wallpapers/" 2>/dev/null || true
         cp -f "$SRC_DIR"/assets/void-cachy-*.svg "$dst/" 2>/dev/null || true
+        # icon-theme source: fetch Luv (cachy-branding desaturates it -> "Luv-Void"
+        # mono at apply time). Optional/network — falls back to Papirus-Dark if absent.
+        if command -v git >/dev/null 2>&1 && [ ! -f "$dst/luv/Luv/index.theme" ]; then
+            rm -rf "$dst/luv"
+            git clone --depth 1 https://github.com/Nitrux/luv-icon-theme.git "$dst/luv" 2>/dev/null \
+                || warn "could not fetch Luv icon theme — branding falls back to Papirus-Dark"
+        fi
     fi
     install_file "$SYS_DIR/bin/cachy-branding" "$CACHY_BRANDING_BIN" 0755 root root
     log "branding toolkit installed — apply the look by running (as your user): cachy-branding"
