@@ -60,6 +60,7 @@ EXIT_VERIFY = 52
 EXIT_SNAPSHOT_UNAVAIL = 53
 EXIT_SNAPSHOT_FAILED = 54
 EXIT_CLEAN = 55
+EXIT_FLATPAK = 56
 EXIT_SERVICES = 60
 EXIT_KERNEL = 70
 
@@ -607,6 +608,20 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
     except OSError:
         pass
 
+    out("\n[6] Flatpak apps")
+    try:
+        if run(["flatpak", "--version"]).returncode == 0:
+            cp = run(["flatpak", "remote-ls", "--updates"])
+            if cp.returncode == 0:
+                n = len(_lines(cp))
+                out(f"    {n} app(s) updatable" + ("" if n else " — up to date"))
+            else:
+                out("    unknown — could not query Flatpak remotes")
+        else:
+            out("    flatpak not installed")
+    except OSError:
+        out("    flatpak not installed")
+
     out("")
     return EXIT_OK
 
@@ -662,8 +677,12 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
         plan = build_queue(xbps, config.targets, config.blacklist,
                            config.repo_strs, always_build=_always_build(config))
         if not plan.q_build and not plan.q_deploy:
-            out("queue empty — nothing to do.")
-            return EXIT_OK
+            out("queue empty — nothing to build or deploy.")
+            # Flatpak is independent of the XBPS queue: an Update must still refresh
+            # apps even when the overlay/system is already in sync (dry-run excepted).
+            if dry_run:
+                return EXIT_OK
+            return _update_flatpak(config, out, run)
         order = topo_order(xbps, plan.q_build)
     except MappingError as exc:
         out(f"error: srcpkg mapping anomaly: {exc}")
@@ -775,6 +794,10 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
     # dropped the ssh lifeline mid-run); a controlled `sv restart` is the fix.
     rc_services = _cycle_services(config, out, run, service_root=service_root)
 
+    # Flatpak apps (independent of XBPS) — "update everything" or don't call it an
+    # updater. No-op if Flatpak isn't installed; loud on failure.
+    rc_flatpak = _update_flatpak(config, out, run)
+
     # §8.6 kernel staging (F1/F7: real staging inside a GrubError boundary)
     rc_kernel = EXIT_OK
     if config.kernel_enable and KERNEL_TARGET in q_deploy:
@@ -795,7 +818,8 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
 
     journal.finish()
     # Severity order: kernel staging failure (70) > service cycling partial
-    # (60) > clean. Userspace is already deployed in every branch.
+    # (60) > flatpak partial (56) > clean. Userspace is already deployed in every
+    # branch; a flatpak failure never undoes the XBPS deploy, only reports.
     if rc_kernel != EXIT_OK:
         out("commit complete — userspace deployed, kernel staging FAILED (see above).")
         return rc_kernel
@@ -803,6 +827,10 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
         out("commit complete — deployed & staged; some services need a manual "
             "restart or relogin (§4.7).")
         return rc_services
+    if rc_flatpak != EXIT_OK:
+        out("commit complete — system deployed; some Flatpak updates did NOT apply "
+            "(see above).")
+        return rc_flatpak
     out("commit complete.")
     return EXIT_OK
 
@@ -1182,6 +1210,60 @@ def _cycle_services(config: Config, out, run,
             out(f"  {desc}")
 
     return EXIT_OK if not (skipped or incomplete) else EXIT_SERVICES
+
+
+# ==========================================================================
+# Flatpak — the "update everything" promise (independent of XBPS)
+# ==========================================================================
+def _flatpak_present(run) -> bool:
+    try:
+        return run(["flatpak", "--version"]).returncode == 0
+    except OSError:
+        return False
+
+
+def _update_flatpak(config, out, run) -> int:
+    """Update Flatpak apps as part of a userspace Update.
+
+    An updater that silently ignored Flatpaks would give a false sense of "fully
+    updated" — worse than any scope concern — so this runs on every ``--commit``.
+    Best-effort by PRESENCE only: no Flatpak installed → silent no-op; a Flatpak
+    that IS present but fails to update is surfaced LOUDLY (EXIT_FLATPAK), never
+    swallowed. Per-user installs need no privilege; system installs go through the
+    §4.1 sudo boundary (``flatpak update --system``) and are only touched when
+    system apps actually exist (no spurious sudo/polkit hit otherwise).
+    """
+    if not _flatpak_present(run):
+        return EXIT_OK
+    out("\nflatpak: updating apps")
+    ok = True
+
+    # per-user installs — no privilege needed
+    try:
+        if run(["flatpak", "update", "--user", "-y"]).returncode != 0:
+            out("warning: flatpak --user update failed"); ok = False
+    except OSError as exc:
+        out(f"warning: flatpak --user update error: {exc}"); ok = False
+
+    # system installs — only if any exist, and through the sudo boundary
+    has_system = False
+    try:
+        cp = run(["flatpak", "list", "--system", "--columns=application"])
+        has_system = cp.returncode == 0 and bool(
+            [l for l in (cp.stdout or "").splitlines() if l.strip()])
+    except OSError:
+        pass
+    if has_system:
+        try:
+            if _sudo(run)(["flatpak", "update", "--system", "-y"]).returncode != 0:
+                out("warning: flatpak --system update failed — check the sudo grant "
+                    "or run `sudo flatpak update` manually"); ok = False
+        except OSError as exc:
+            out(f"warning: flatpak --system update error: {exc}"); ok = False
+
+    out("flatpak: up to date." if ok
+        else "flatpak: some updates did NOT apply (see above).")
+    return EXIT_OK if ok else EXIT_FLATPAK
 
 
 def _emit_tail(path: str, out, lines: int = 60) -> None:

@@ -706,6 +706,10 @@ class StatusTests(unittest.TestCase):
             return cp(0, "01:00.0 VGA compatible controller: NVIDIA GT 730M\n")
         if a[0] == "dkms":
             return cp(0, "nvidia/470.256.02, 6.12.95_1-cachy, x86_64: installed\n")
+        if a[:2] == ["flatpak", "--version"]:
+            return cp(0, "Flatpak 1.15.0\n")
+        if a[:3] == ["flatpak", "remote-ls", "--updates"]:
+            return cp(0, "org.mozilla.firefox\n")
         return cp(0, "")
 
     def test_reports_all_sections(self):
@@ -716,7 +720,8 @@ class StatusTests(unittest.TestCase):
         t = out.text()
         for marker in ("[1] System", "2 upstream", "[2] Performance overlay",
                        "[3] Kernel", "[4] Maintenance", "orphaned packages: 1",
-                       "6.12.30_1", "[5] GPU", "GT 730M", "nvidia/470"):
+                       "6.12.30_1", "[5] GPU", "GT 730M", "nvidia/470",
+                       "[6] Flatpak", "1 app(s) updatable"):
             self.assertIn(marker, t)
 
     def test_degrades_when_tools_missing(self):
@@ -864,6 +869,84 @@ class GpuCommandTests(unittest.TestCase):
         out = Sink()
         rc = cli.main(["--gpu"], xbps=FakeXbps(), config=_config([]), out=out)
         self.assertEqual(rc, cli.EXIT_OK)
+
+
+class FlatpakTests(unittest.TestCase):
+    """Flatpak is folded into the Update — present→update, absent→silent no-op,
+    failure→loud (never false 'up to date')."""
+
+    @staticmethod
+    def _fp(*, present=True, has_system=False, user_rc=0, sys_rc=0):
+        calls = []
+
+        def run(args):
+            a = list(args)
+            if a[:2] == ["sudo", "-n"]:
+                a = a[2:]
+            calls.append(a)
+            if a[:2] == ["flatpak", "--version"]:
+                return cp(0 if present else 127, "1.15\n" if present else "")
+            if a[:3] == ["flatpak", "update", "--user"]:
+                return cp(user_rc)
+            if a[:3] == ["flatpak", "list", "--system"]:
+                return cp(0, "org.foo.App\n" if has_system else "")
+            if a[:3] == ["flatpak", "update", "--system"]:
+                return cp(sys_rc)
+            return cp(0, "")
+        return run, calls
+
+    def test_noop_when_flatpak_absent(self):
+        run, calls = self._fp(present=False)
+        out = Sink()
+        rc = cli._update_flatpak(_config([]), out, run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertFalse(any(c[:3] == ["flatpak", "update", "--user"] for c in calls))
+
+    def test_updates_user_only_when_no_system_apps(self):
+        run, calls = self._fp(present=True, has_system=False)
+        out = Sink()
+        rc = cli._update_flatpak(_config([]), out, run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn(["flatpak", "update", "--user", "-y"], calls)
+        # no spurious system update (would trigger a needless sudo/polkit hit)
+        self.assertFalse(any(c[:3] == ["flatpak", "update", "--system"] for c in calls))
+
+    def test_updates_system_when_system_apps_present(self):
+        run, calls = self._fp(present=True, has_system=True)
+        out = Sink()
+        rc = cli._update_flatpak(_config([]), out, run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn(["flatpak", "update", "--system", "-y"], calls)
+
+    def test_failure_is_loud_not_silent(self):
+        run, _ = self._fp(present=True, user_rc=1)
+        out = Sink()
+        rc = cli._update_flatpak(_config([]), out, run)
+        self.assertEqual(rc, cli.EXIT_FLATPAK)          # never a false 'up to date'
+        self.assertIn("did NOT apply", out.text())
+
+    def test_commit_empty_queue_still_updates_flatpak(self):
+        cfg = _config(["mesa"], kernel_enable=False)
+        origin = cfg.repo_strs[0]                        # match overlay → empty queue
+        xb = FakeXbps(installed=["mesa"], src_map={"mesa": "mesa"},
+                      inst_ver={"mesa": "1.0_1"}, repo_ver={"mesa": "1.0_1"},
+                      local_updates=[], origins={"mesa": origin})
+        run, calls = self._fp(present=True)
+        out = Sink()
+        rc = cli.cmd_commit(xb, cfg, assume_yes=True, dry_run=False, out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("queue empty", out.text())
+        self.assertIn(["flatpak", "update", "--user", "-y"], calls)
+
+    def test_dry_run_does_not_touch_flatpak(self):
+        cfg = _config(["mesa"], kernel_enable=False)
+        origin = cfg.repo_strs[0]
+        xb = FakeXbps(installed=["mesa"], src_map={"mesa": "mesa"},
+                      inst_ver={"mesa": "1.0_1"}, repo_ver={"mesa": "1.0_1"},
+                      local_updates=[], origins={"mesa": origin})
+        run, calls = self._fp(present=True)
+        cli.cmd_commit(xb, cfg, assume_yes=True, dry_run=True, out=Sink(), run=run)
+        self.assertFalse(any(c[:2] == ["flatpak", "update"] for c in calls))
 
 
 class NoKernelScopeTests(unittest.TestCase):

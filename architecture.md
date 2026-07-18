@@ -426,6 +426,28 @@ exec snooze -H 5 -M 30 /usr/local/bin/cachy-void-update --yes
   the default install leaves it disabled and one `ln -s` (or a re-run with the
   flag) away.
 
+### 4.10 User-facing actions (amendment)
+
+The engine exposes a small front-end surface (driven by the GUI, §6) beyond the
+build/deploy core. Two are read-only; two extend the §4.1 sudo boundary by a
+minimal, non-package-naming set:
+
+- **`--no-kernel`** — scopes a `--commit` to userspace (disables `kernel_enable`
+  for the run, gating synthesis/G2/build/staging). The GUI maps *Update* →
+  `--commit --no-kernel` and *Update kernel* → full `--commit`.
+- **`--clean`** — preview→confirm removal of orphans + obsolete cache. Grants
+  **exactly** `xbps-remove -o|-O -n|-y` (flags that cannot name a package).
+  **Kernel purges stay manual** (§2.5/§4.7): it only *prints* `vkpurge list`;
+  `vkpurge` is never granted.
+- **`--gpu`** — read-only advisory (card, installed driver + pending update,
+  legacy-series hint, DKMS health). No mutation, no grant.
+- **Flatpak** — an updater that silently skipped Flatpaks would give a false
+  "fully updated" — so `flatpak update` is folded into every `--commit` (and a
+  `[6]` line in `--status`). Per-user installs need no privilege; system installs
+  add **exactly** `flatpak update --system -y` (updates installed refs only; no
+  install/remove). No-op when Flatpak is absent; failures are surfaced, never
+  swallowed. Exit 56 on a Flatpak-only failure (never undoes the XBPS deploy).
+
 ---
 
 ## 5. Recovery Runbook
