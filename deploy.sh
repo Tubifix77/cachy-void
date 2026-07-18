@@ -429,6 +429,7 @@ install_branding() {
     for p in $PKG_BRANDING; do ensure_pkg "$p"; done
     ensure_pkg arc-theme optional        # GTK-app coherence
     ensure_pkg font-hack optional        # the engineered mono
+    ensure_pkg ImageMagick optional      # renders the login wallpaper + flat panel
     # mirror read-only theme assets (dir is ledger-tracked; uninstall rm -rf's it)
     install_dir "$BRANDING_ASSETS" root
     if ! $DRY_RUN && [ -z "$ROOT" ]; then
@@ -451,7 +452,59 @@ install_branding() {
     install_file "$SYS_DIR/bin/cachy-updater-gui" "$CACHY_UPDATER_GUI" 0755 root root
     install_file "$SYS_DIR/applications/cachy-updater.desktop" \
                  /usr/share/applications/cachy-updater.desktop 0644 root root
+    install_greeter        # SDDM login screen (system-level; needs root, done here)
     log "branding toolkit installed — apply the look by running (as your user): cachy-branding"
+}
+
+# install_greeter — brand the SDDM login screen (branding.md §5.8). System-level
+# (root), so it lives in deploy.sh, NOT the per-user cachy-branding. Forks the
+# stock `elarun` theme (like cachy-branding forks KvArcDark): swaps in the login
+# wallpaper, flattens the metallic login panel to a dark tactical one, recolours
+# the blue accent to brand green, and selects it via /etc/sddm.conf.d. Live-only
+# (renders images); offline/--root and dry-run are skipped with a note. The theme
+# dir + conf are ledger-tracked, so uninstall reverts to the stock greeter.
+install_greeter() {
+    if $DRY_RUN || [ -n "$ROOT" ]; then
+        log "SDDM greeter branding is live-only — skipped (re-run on the booted system)"
+        return 0
+    fi
+    local themes="/usr/share/sddm/themes" base T svg
+    [ -d "$themes" ] || { log "no SDDM installed — greeter branding skipped"; return 0; }
+    base=elarun; [ -d "$themes/$base" ] || base=maldives
+    [ -d "$themes/$base" ] || { warn "no SDDM base theme (elarun/maldives) — greeter branding skipped"; return 0; }
+    svg="$(rp "$BRANDING_ASSETS")/wallpapers/cachy-void-login.svg"
+    [ -f "$svg" ] || { warn "login wallpaper missing at $svg — greeter branding skipped"; return 0; }
+
+    T="$themes/void-tactical"
+    install_dir "$T" root                 # tracked → uninstall rm -rf's it
+    cp -rf "$themes/$base/." "$T/"        # fork the stock theme
+
+    # background: our login wallpaper (prefer rsvg; fall back to magick)
+    if command -v rsvg-convert >/dev/null 2>&1; then
+        rsvg-convert -w 1920 -h 1080 "$svg" -o "$T/background.png"
+    elif command -v magick >/dev/null 2>&1; then
+        magick -background none "$svg" -resize 1920x1080 "$T/background.png"
+    else
+        warn "no rsvg-convert/magick — greeter keeps the stock background"
+    fi
+    printf '[General]\nbackground=background.png\n' > "$T/theme.conf"
+
+    # flatten elarun's metallic login panel → dark tactical panel; kill the sheen
+    if command -v magick >/dev/null 2>&1 && [ -f "$T/images/rectangle.png" ]; then
+        magick -size 416x262 xc:none -fill '#181a1be6' -stroke '#3a3f4b' -strokewidth 2 \
+            -draw 'roundrectangle 1,1 414,260 4,4' "$T/images/rectangle.png"
+        [ -f "$T/images/rectangle_overlay.png" ] && magick -size 4x4 xc:none "$T/images/rectangle_overlay.png"
+    fi
+    # recolour the blue accent → brand green; darken the top session/layout bar
+    [ -f "$T/Main.qml" ] && {
+        sed -i 's/#0b678c/#478061/Ig' "$T/Main.qml"
+        sed -i 's/width: parent.width; height: 40/width: parent.width; height: 40; color: "#1b1d1e"; opacity: 0.85/' "$T/Main.qml"
+    }
+    [ -f "$T/metadata.desktop" ] && sed -i 's/^Name=.*/Name=Void Tactical/' "$T/metadata.desktop"
+
+    install -d -- /etc/sddm.conf.d
+    install_file "$SYS_DIR/sddm/10-cachy.conf" /etc/sddm.conf.d/10-cachy.conf 0644 root root
+    log "SDDM greeter branded (void-tactical, forked from $base) — visible at next login"
 }
 
 grub_regen() {

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-label="Cachy-Void login wallpaper — performance core (schematic)">
+  <!-- Login variant of the flagship wallpaper (branding.md palette). Same obsidian
+       field + blueprint grid + one green core, but composed for a greeter: the emblem
+       and wordmark sit in the TOP band and the tagline in the bottom-right corner, so
+       the vertical centre stays clear for the (centred) login box. -->
+  <defs>
+    <pattern id="grid" width="120" height="120" patternUnits="userSpaceOnUse">
+      <path d="M120 0 H0 V120" fill="none" stroke="#282c34" stroke-width="1" opacity="0.24"/>
+    </pattern>
+  </defs>
+  <rect width="1920" height="1080" fill="#1b1d1e"/>
+  <rect width="1920" height="1080" fill="url(#grid)"/>
+
+  <!-- corner registration ticks (tactical framing, clear of the login box) -->
+  <g stroke="#3a3f4b" stroke-width="1.6" fill="none">
+    <path d="M40 72 V40 H72"/><path d="M1848 40 H1880 V72"/>
+    <path d="M1880 1008 V1040 H1848"/><path d="M72 1040 H40 V1008"/>
+  </g>
+
+  <!-- emblem: concentric frames + rotated diamond + the green core, upper band -->
+  <g transform="translate(960,214)" fill="none">
+    <rect x="-56"  y="-56"  width="112" height="112" stroke="#abb2bf" stroke-width="2"/>
+    <rect x="-94"  y="-94"  width="188" height="188" stroke="#5c6370" stroke-width="1.5"/>
+    <rect x="-74"  y="-74"  width="148" height="148" transform="rotate(45)" stroke="#3a3f4b" stroke-width="1.2" opacity="0.75"/>
+    <!-- green performance core with a small VOID punched at its centre -->
+    <polygon points="0,-30 30,0 0,30 -30,0" fill="#478061"/>
+    <polygon points="0,-10 10,0 0,10 -10,0" fill="#1b1d1e"/>
+  </g>
+
+  <!-- wordmark, still in the top band (login box sits below, ~y390+) -->
+  <g font-family="'JetBrains Mono','IBM Plex Mono',ui-monospace,monospace" text-anchor="middle">
+    <text x="960" y="344" font-size="30" fill="#abb2bf" letter-spacing="6">cachy · void</text>
+    <text x="960" y="372" font-size="14" fill="#5c6370" letter-spacing="3">performance core</text>
+  </g>
+
+  <!-- honest tagline, clear bottom-right corner -->
+  <g font-family="'JetBrains Mono','IBM Plex Mono',ui-monospace,monospace" fill="#5c6370" text-anchor="end">
+    <text x="1856" y="1030" font-size="12" letter-spacing="1">runit · xbps · BORE · no-systemd</text>
+  </g>
+</svg>

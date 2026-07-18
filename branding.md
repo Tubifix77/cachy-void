@@ -372,6 +372,33 @@ pick one primary launcher/switcher and let everything else recede.
 *mostly wallpaper* — a calm obsidian field with the mark — with at most one thin bar. If two
 elements are both asking for attention, remove or auto-hide one.
 
+### 5.8 The login screen (SDDM greeter)
+
+The greeter is the *first* impression and the one surface the per-user
+`cachy-branding` can't reach — it renders before login, as root, system-wide. An
+unbranded greeter (Void's SDDM falls back to the light-blue **maldives** theme)
+undoes the whole look before the user even lands on the desktop, so it's branded
+by `deploy.sh --with-branding` (root; §install_greeter).
+
+The approach mirrors the Kvantum skin — **fork the stock theme, don't ship one**:
+copy `elarun` (the dark SDDM theme present wherever SDDM is) to `void-tactical` and
+retint it, so it always matches the installed SDDM version. Changes: (1) swap the
+background for a **login-specific wallpaper** (`assets/wallpapers/cachy-void-login.svg`
+— same obsidian/grid/green-core language as the desktop, but the emblem + wordmark
+sit in the *top band* and the tagline bottom-right, leaving the vertical centre
+clear for the login box); (2) **flatten elarun's metallic login panel** to a dark
+obsidian panel with a thin graphite border (the same "kill the gradient" fix as the
+taskbar — done by regenerating `images/rectangle.png` with ImageMagick, no QML
+surgery); (3) recolour elarun's blue accent (`#0b678c`, the clock + hostname) to
+brand green (`#478061`) and darken the top session/layout bar. Selected via
+`/etc/sddm.conf.d/10-cachy.conf` (`[Theme] Current=void-tactical`).
+
+Preview without logging out: `sddm-greeter --test-mode --theme /usr/share/sddm/
+themes/void-tactical` renders it in the running X session (screenshot to verify).
+Both the theme dir and the conf are ledger-tracked, so `deploy.sh --uninstall`
+reverts to the stock greeter. If SDDM ever fails to load the theme it falls back to
+its built-in greeter — login is never at risk.
+
 ---
 
 ## 6. Scope & rules
