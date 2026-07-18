@@ -106,3 +106,9 @@ Everything is reversible — `sudo ./deploy.sh --uninstall` restores from a per-
 - **Fail-fast, system-intact** — a failure at any stage leaves the running system bootable and unchanged.
 - **Preserve Void** — runit, no systemd, clean XBPS resolution; the bootstrap layer always comes from upstream mirrors.
 - **The spec is law** — `architecture.md` is the single source of truth; code and docs are kept in lockstep with it.
+
+---
+
+## License
+
+The fusion extends to the licensing. **Cachy-Void's own code** (installer, engine, tooling) is **BSD-2-Clause** — the same permissive license Void uses for the `void-packages` build system this project overlays (Void's *form*). The **performance substance it builds** keeps its upstream copyleft terms, unchanged: `linux-cachy` and the BORE patch are **GPL-2.0** (CachyOS's *substance*). Permissive form, copyleft substance — see [LICENSE](LICENSE).

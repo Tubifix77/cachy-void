@@ -1,0 +1,48 @@
+BSD 2-Clause License
+
+Copyright (c) 2026, Cachy-Void contributors
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+================================================================================
+Cachy-Void is a fusion: Void's FORM and CachyOS's SUBSTANCE. So is its licensing.
+================================================================================
+
+FORM (this repository's own code) — the BSD 2-Clause license above.
+The Cachy-Void installer, the update engine, and all the tooling in this
+repository are BSD-2-Clause — the same permissive license Void Linux uses for
+its own `void-packages` build system, which this project overlays. Minimal,
+permissive, no strings. That is the Void form.
+
+SUBSTANCE (what the tooling builds) — the upstream copyleft licenses, unchanged.
+This project only orchestrates; it relicenses nothing. The performance artifacts
+it produces carry their own terms:
+
+  * `linux-cachy` is a derivative work of the Linux kernel  ->  GPL-2.0-only.
+  * The BORE scheduler patch it applies
+    (https://github.com/firelzrd/bore-scheduler)             ->  GPL-2.0.
+  * Every package rebuilt from the overlay allowlist retains its own upstream
+    license; only the compiler flags change, not the license.
+
+Building, running, or redistributing those artifacts is governed by their own
+(copyleft) terms. That is the CachyOS substance — honored, not collapsed into
+permissive. Neither philosophy is given up: permissive form, copyleft substance.
