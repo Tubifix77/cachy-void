@@ -238,6 +238,22 @@ not every redraw. On multi-monitor "detached TV" setups where the real output
 isn't negotiated yet at login, Conky's autostart is delayed ~8s so its
 `top_right` anchor computes against the right screen, not a stale default.
 
+**Two Conkys, and why.** The telemetry column above hugs the top-right, and the
+wallpaper wordmark sits bottom-right — so with only that column the composition
+leans right, leaving the left half empty. A second Conky (`conky-system.conf.in`,
+anchored `middle_left`) counterweights both: a static **SYSTEM** spec-sheet — the
+"what it *is*" to the telemetry's "what it's *doing*". It splits the fusion in two
+columns of its own — Void form (`os / libc / arch / init / pkg / cron`) and CachyOS
+substance (`sched / tick / preempt / thp / vm.swap / mitig.`) plus a `HARDWARE`
+block. Every value is **read from the running system** by `cachy-branding` at apply
+time (`/proc/config.gz` for the kernel character, `/proc/cpuinfo` flags for the real
+`x86-64-vN` level the CPU supports, `nvidia-smi` / `/sys/module/nvidia/version`,
+`findmnt`, `/proc/meminfo`…) and self-adjusts — a field that can't be determined is
+dropped, never shown as `[N/A]`. It's the fastfetch *flavour*, disciplined: no ASCII
+distro logo to fight the centre diamond, and no live gauges duplicating the right
+column. Same font/colours/`own_window_class='Conky'` as the telemetry Conky so
+picom's shadow-exclude covers both; content is static, so it refreshes lazily.
+
 ### 5.5b App icons — Luv-Void (monochrome)
 
 App/desktop icons must not fight the obsidian field or the thin-line wallpaper. The

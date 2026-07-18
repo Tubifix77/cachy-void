@@ -54,7 +54,8 @@ PY
     rm -f "$SHARE/applications/cachy-trash.desktop" "$CFG/plank/dock1/launchers/zz-trash.dockitem"
     # (restoring pcmanfm settings.conf above brings the desktop shortcut icons back on next login)
     rm -rf "$SHARE/lxqt/themes/void-tactical" "$CFG/Kvantum/void-tactical" "$HOME/.themes/void-tactical"
-    rm -f "$CFG"/autostart/{picom,plank,conky,xcape}.desktop
+    rm -f "$CFG"/autostart/{picom,plank,conky,conky-system,xcape}.desktop
+    rm -f "$CFG"/conky/conky-system.conf
     command -v papirus-folders >/dev/null 2>&1 && sudo papirus-folders -C blue -t Papirus-Dark 2>/dev/null
     pkill -x picom 2>/dev/null; pkill -x plank 2>/dev/null; pkill -x conky 2>/dev/null; pkill -x xcape 2>/dev/null
     pkill -f lxqt-powermanagement 2>/dev/null; command -v lxqt-powermanagement >/dev/null 2>&1 && setsid lxqt-powermanagement >/dev/null 2>&1 &
@@ -490,6 +491,123 @@ sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.i
 # (top_right) gets computed against whatever screen geometry is live when
 # conky starts, so it drifts if that's the wrong output.
 printf '[Desktop Entry]\nType=Application\nName=conky\nExec=sh -c "sleep 8 && exec conky -c %s/conky/conky.conf"\n' "$CFG" > "$CFG/autostart/conky.desktop"
+
+# --- left "SYSTEM" identity panel (the "what it IS" spec-sheet) --------------
+# A second, static Conky anchored middle-left, to balance the two right-side
+# blocks (telemetry top-right + wordmark bottom-right). Every value is read from
+# the running system here at apply time — honest, self-adjusting (unknown fields
+# are dropped, never printed as [N/A]), so it also documents the actual fusion:
+# Void form (runit/xbps/glibc/snooze) + CachyOS substance (BORE/1000Hz/preempt).
+# Python reads the template + writes the final conf itself (encoding='utf-8') — going
+# through a shell $(...) var + awk double-encodes the box's UTF-8 glyphs (─ × ·) when
+# the ssh/login locale isn't UTF-8. Keeping it all in Python is byte-safe.
+python3 - "$ASSETS/conky/conky-system.conf.in" "$CFG/conky/conky-system.conf" <<'PY'
+import gzip, os, re, shutil, subprocess, sys
+
+def sh(*c):
+    try: return subprocess.run(c, capture_output=True, text=True, timeout=6).stdout
+    except Exception: return ""
+
+def read(p):
+    try:
+        with open(p) as f: return f.read()
+    except Exception: return ""
+
+# -- SYSTEM ---------------------------------------------------------------
+osname = ""
+for ln in read("/etc/os-release").splitlines():
+    if ln.startswith("PRETTY_NAME="): osname = ln.split("=",1)[1].strip().strip('"'); break
+osname = osname or "Void Linux"
+
+libc = ""
+v = sh("ldd", "--version")
+m = re.search(r"GNU libc\)\s*([0-9.]+)", v) or re.search(r"\b([0-9]+\.[0-9]+)\b", v)
+if "musl" in v.lower() or os.path.exists("/lib/ld-musl-x86_64.so.1"):
+    libc = "musl" + (" " + m.group(1) if m else "")
+elif m:
+    libc = "glibc " + m.group(1)
+
+flags = set()
+model = ""
+for ln in read("/proc/cpuinfo").splitlines():
+    if ln.startswith("flags") and not flags: flags = set(ln.split(":",1)[1].split())
+    if ln.startswith("model name") and not model: model = ln.split(":",1)[1].strip()
+if {"avx512f"} <= flags:                                 arch = "x86_64-v4"
+elif {"avx2","bmi2","fma"} <= flags:                     arch = "x86_64-v3"
+elif {"sse4_2","popcnt"} <= flags:                       arch = "x86_64-v2"
+else:                                                    arch = "x86_64"
+
+cron = "snooze" if shutil.which("snooze") else ""
+
+# -- KERNEL (read the RUNNING kernel's config, not assumptions) -----------
+kcfg = ""
+try: kcfg = gzip.open("/proc/config.gz","rt").read()
+except Exception: kcfg = read("/boot/config-" + os.uname().release)
+def has(sym): return re.search(r"^%s=y" % re.escape(sym), kcfg, re.M) is not None
+ksched = "BORE" if has("CONFIG_SCHED_BORE") else ("EEVDF" if kcfg else "")
+mhz = re.search(r"^CONFIG_HZ=(\d+)", kcfg, re.M)
+ktick = (mhz.group(1) + " Hz") if mhz else ""
+kpreempt = "full" if has("CONFIG_PREEMPT") else ("voluntary" if has("CONFIG_PREEMPT_VOLUNTARY") else ("none" if kcfg else ""))
+thp = ""
+mt = re.search(r"\[(\w+)\]", read("/sys/kernel/mm/transparent_hugepage/enabled"))
+if mt: thp = mt.group(1)
+mit = "off" if "mitigations=off" in read("/proc/cmdline") else "on"
+swp = read("/proc/sys/vm/swappiness").strip()
+
+# -- HARDWARE -------------------------------------------------------------
+cpu = re.sub(r"\(R\)|\(TM\)", "", model)
+cpu = re.sub(r"\s*@.*$", "", cpu)
+cpu = re.sub(r"\b(Intel|Core|CPU|Processor)\b", "", cpu)
+cpu = re.sub(r"\s+", " ", cpu).strip()
+if cpu and os.cpu_count(): cpu += " ×%d" % os.cpu_count()
+
+gpu = sh("nvidia-smi", "--query-gpu=name", "--format=csv,noheader").strip().splitlines()
+gpu = gpu[0] if gpu else ""
+if not gpu:
+    for ln in sh("sh","-c","lspci 2>/dev/null | grep -Ei 'vga|3d'").splitlines():
+        gpu = re.sub(r".*: ", "", ln).strip(); break
+gpu = re.sub(r"NVIDIA\s*|GeForce\s*|Corporation\s*", "", gpu).strip()
+
+drvver = read("/sys/module/nvidia/version").strip()
+driver = ("nvidia " + drvver) if drvver else ""
+
+memkb = re.search(r"MemTotal:\s*(\d+)", read("/proc/meminfo"))
+mem = ("%.2f GiB" % (int(memkb.group(1))/1048576)) if memkb else ""
+
+root = ""
+for ln in read("/proc/mounts").splitlines():
+    p = ln.split()
+    if len(p) > 2 and p[1] == "/": root = p[2]; break
+
+zram = "active" if os.path.exists("/sys/block/zram0") else ""
+if zram and shutil.which("zramen"): zram += " · zramen"
+
+# -- render ---------------------------------------------------------------
+def line(label, val):
+    return "${color1}%-8s${color}%s" % (label, val) if val else None
+
+out = []
+def section(title, items):
+    body = [x for x in (line(l, v) for l, v in items) if x]
+    if not body: return
+    if out: out.append("")
+    out.append("${color1}%s${color}" % title)
+    out.append("${color2}%s${color}" % ("─" * 16))
+    out.extend(body)
+
+section("SYSTEM", [("os", osname), ("libc", libc), ("arch", arch),
+                   ("init", "runit"), ("pkg", "xbps"), ("cron", cron)])
+section("KERNEL", [("sched", ksched), ("tick", ktick), ("preempt", kpreempt),
+                   ("thp", thp), ("vm.swap", swp), ("mitig.", mit)])
+section("HARDWARE", [("cpu", cpu), ("gpu", gpu), ("driver", driver),
+                     ("mem", mem), ("root", root), ("zram", zram)])
+
+tmpl, dest = sys.argv[1], sys.argv[2]
+with open(tmpl, encoding="utf-8") as f: t = f.read()
+with open(dest, "w", encoding="utf-8") as f:
+    f.write(t.replace("@SYSTEM_TEXT@", "\n".join(out)))
+PY
+printf '[Desktop Entry]\nType=Application\nName=conky-system\nExec=sh -c "sleep 8 && exec conky -c %s/conky/conky-system.conf"\n' "$CFG" > "$CFG/autostart/conky-system.desktop"
 # hide lxqt-powermanagement's tray icon — its built-in charge indicator is a
 # code-drawn green ring (not themeable) and the theme/battery icon types render
 # blank on this stack; battery status lives in Conky instead (BAT_LINE above).
@@ -542,7 +660,8 @@ for a in picom plank conky; do
     case "$a" in
         picom) setsid picom --config "$CFG/picom/picom.conf" >/dev/null 2>&1 & ;;
         plank) setsid plank >/dev/null 2>&1 & ;;
-        conky) setsid conky -c "$CFG/conky/conky.conf" >/dev/null 2>&1 & ;;
+        conky) setsid conky -c "$CFG/conky/conky.conf" >/dev/null 2>&1 &
+               [ -f "$CFG/conky/conky-system.conf" ] && setsid conky -c "$CFG/conky/conky-system.conf" >/dev/null 2>&1 & ;;
     esac
 done
 # restart power management so showIcon=false takes effect (drops the tray icon)

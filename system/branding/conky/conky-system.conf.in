@@ -1,0 +1,21 @@
+-- Cachy-Void Conky (left) — the static "what it IS" identity panel (branding.md §5.5).
+-- Counterweights the two right-side blocks (live telemetry top-right + wallpaper
+-- wordmark bottom-right) so the composition isn't right-heavy; anchored middle-left.
+-- Every value is READ from the running system by cachy-branding at apply time (honest
+-- spec-sheet, not marketing) and self-adjusts — unknown fields are dropped, never
+-- shown as [N/A]. Same font/colours/window handling as the telemetry Conky, so picom's
+-- own_window_class='Conky' shadow-exclude covers it too. Content is static, so it
+-- refreshes lazily. cachy-branding fills the placeholder below with the generated body.
+conky.config = {
+    alignment = 'middle_left', gap_x = 34, gap_y = 0,
+    minimum_width = 220, maximum_width = 320,
+    own_window = true, own_window_type = 'normal', own_window_class = 'Conky',
+    own_window_argb_visual = true, own_window_argb_value = 0, own_window_transparent = true,
+    own_window_hints = 'undecorated,below,sticky,skip_taskbar,skip_pager',
+    double_buffer = true, update_interval = 60.0,
+    draw_shades = false, draw_borders = false, use_xft = true,
+    font = 'Hack:size=9', default_color = 'abb2bf', color1 = '478061', color2 = '5c6370',
+}
+conky.text = [[
+@SYSTEM_TEXT@
+]]
