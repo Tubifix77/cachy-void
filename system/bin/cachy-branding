@@ -41,6 +41,8 @@ if [ "${1:-}" = "--remove" ]; then
         gsettings reset org.gnome.desktop.interface color-scheme 2>/dev/null
     fi
     rm -rf "$SHARE/icons/Luv-Void"
+    _desk=$(xdg-user-dir DESKTOP 2>/dev/null); [ -d "$_desk" ] || _desk="$HOME/Desktop"
+    rm -f "$_desk/cachy-updater.desktop" "$CFG/plank/dock1/launchers/00-cachy-updater.dockitem"
     rm -rf "$SHARE/lxqt/themes/void-tactical" "$CFG/Kvantum/void-tactical" "$HOME/.themes/void-tactical"
     rm -f "$CFG"/autostart/{picom,plank,conky,xcape}.desktop
     command -v papirus-folders >/dev/null 2>&1 && sudo papirus-folders -C blue -t Papirus-Dark 2>/dev/null
@@ -357,6 +359,9 @@ if command -v plank >/dev/null 2>&1; then
         f=$(ls /usr/share/applications/ 2>/dev/null | grep -iE "(^|\.)$app\.desktop$" | head -1)
         [ -n "$f" ] && printf '[PlankDockItemPreferences]\nLauncher=file:///usr/share/applications/%s\n' "$f" > "$CFG/plank/dock1/launchers/$app.dockitem"
     done
+    # the Cachy-Void updater, if its launcher is installed (deploy.sh --with-branding)
+    [ -f /usr/share/applications/cachy-updater.desktop ] && \
+        printf '[PlankDockItemPreferences]\nLauncher=file:///usr/share/applications/cachy-updater.desktop\n' > "$CFG/plank/dock1/launchers/00-cachy-updater.dockitem"
     DK="net.launchpad.plank.dock.settings:/net/launchpad/plank/docks/dock1/"
     for kv in "theme void-tactical" "icon-size 40" "hide-mode dodge-maximized" "zoom-enabled false" "position bottom" "alignment center" "items-alignment center"; do
         gsettings set $DK ${kv%% *} "${kv#* }" 2>/dev/null
@@ -367,6 +372,18 @@ if command -v plank >/dev/null 2>&1; then
     # settle on the real output first.
     printf '[Desktop Entry]\nType=Application\nName=plank\nExec=sh -c "sleep 8 && exec plank"\n' > "$CFG/autostart/plank.desktop"
     ok "Plank configured"
+fi
+
+# ============================================================ updater launcher on the desktop
+if [ -f /usr/share/applications/cachy-updater.desktop ]; then
+    DESK=$(xdg-user-dir DESKTOP 2>/dev/null); [ -d "$DESK" ] || DESK="$HOME/Desktop"
+    if [ -d "$DESK" ]; then
+        cp -f /usr/share/applications/cachy-updater.desktop "$DESK/cachy-updater.desktop"
+        chmod +x "$DESK/cachy-updater.desktop"
+        # pcmanfm-qt honours the trusted flag → launches without the "untrusted" prompt
+        command -v gio >/dev/null 2>&1 && gio set "$DESK/cachy-updater.desktop" metadata::trusted true 2>/dev/null
+        ok "updater launcher on the desktop ($DESK)"
+    fi
 fi
 
 # ============================================================ Picom / Rofi / Conky configs

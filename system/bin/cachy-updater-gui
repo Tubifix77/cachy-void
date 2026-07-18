@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Cachy-Void Updater — graphical front-end.
+
+A clickable updater so updates actually happen (a terminal command gets skipped,
+and skipped updates = driver/perf left on the floor). It's a thin PyQt5 shell over
+the tested `cachy-void-update` CLI: every action runs the CLI via QProcess with
+live output, so nothing blocks the window and privilege stays inside the CLI's
+existing sudo-NOPASSWD boundary. Being a Qt5 app, it inherits the LXQt Kvantum
+"void-tactical" theme automatically.
+
+Sections mirror the update model (architecture.md §4/§7/§8):
+  * Update      — system (upstream Void) + the performance overlay, together
+  * Kernel      — the BORE linux-cachy kernel (compiles; needs a reboot)
+  * Maintenance — orphans / cache / old kernels          (CLI support: pending)
+  * GPU         — detected GPU + DKMS health             (CLI support: pending)
+The "Check" button runs `--status` and shows the read-only overview.
+"""
+import shutil
+import sys
+
+from PyQt5.QtCore import QProcess, Qt
+from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtWidgets import (
+    QApplication, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit,
+    QPushButton, QVBoxLayout, QWidget,
+)
+
+CLI = shutil.which("cachy-void-update") or "/usr/local/bin/cachy-void-update"
+ICON = "/usr/share/cachy-void/branding/void-cachy-updater.svg"
+
+
+class Updater(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.proc = None
+        self.setWindowTitle("Cachy-Void Updater")
+        self.setWindowIcon(QIcon(ICON))
+        self.resize(760, 620)
+
+        root = QVBoxLayout(self)
+
+        header = QHBoxLayout()
+        title = QLabel("Cachy-Void Updater")
+        tf = title.font(); tf.setPointSize(15); tf.setBold(True); title.setFont(tf)
+        header.addWidget(title)
+        header.addStretch(1)
+        self.btn_check = QPushButton("Check for updates")
+        header.addWidget(self.btn_check)
+        root.addLayout(header)
+
+        # status overview (read-only --status output)
+        status_box = QGroupBox("What's pending")
+        sb = QVBoxLayout(status_box)
+        self.status = QPlainTextEdit(readOnly=True)
+        self.status.setPlaceholderText("Click 'Check for updates' to see what's pending…")
+        sb.addWidget(self.status)
+        root.addWidget(status_box, 3)
+
+        # action buttons
+        actions = QHBoxLayout()
+        self.btn_update = QPushButton("Update  (system + performance)")
+        self.btn_kernel = QPushButton("Update kernel  (BORE — compiles, reboot)")
+        self.btn_clean = QPushButton("Clean up")
+        self.btn_clean.setEnabled(False)
+        self.btn_clean.setToolTip("Coming soon — orphans / cache / old kernels")
+        for b in (self.btn_update, self.btn_kernel, self.btn_clean):
+            actions.addWidget(b)
+        root.addLayout(actions)
+
+        # live command output
+        out_box = QGroupBox("Output")
+        ob = QVBoxLayout(out_box)
+        self.out = QPlainTextEdit(readOnly=True)
+        ob.addWidget(self.out)
+        root.addWidget(out_box, 4)
+
+        mono = QFont("Hack"); mono.setStyleHint(QFont.Monospace)
+        self.status.setFont(mono); self.out.setFont(mono)
+
+        self.btn_check.clicked.connect(self.check)
+        self.btn_update.clicked.connect(self.update_userspace)
+        self.btn_kernel.clicked.connect(self.update_kernel)
+
+        self._buttons = (self.btn_check, self.btn_update, self.btn_kernel)
+        self.check()  # populate on open
+
+    # -- process plumbing -------------------------------------------------
+    def _busy(self, yes):
+        for b in self._buttons:
+            b.setEnabled(not yes)
+
+    def _run(self, args, target, *, done=None, confirm=None):
+        if self.proc and self.proc.state() != QProcess.NotRunning:
+            return
+        if confirm and QMessageBox.question(
+                self, "Confirm", confirm,
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        target.clear()
+        self._busy(True)
+        self.proc = QProcess(self)
+        self.proc.setProcessChannelMode(QProcess.MergedChannels)
+        self.proc.readyRead.connect(lambda: self._drain(target))
+
+        def _on_error(err):
+            # if the CLI can't even start, finished() won't fire — un-busy here
+            if err == QProcess.FailedToStart:
+                target.appendPlainText(
+                    f"[could not run {CLI} — is the updater installed? "
+                    "(deploy.sh installs it)]")
+                self._busy(False)
+        self.proc.errorOccurred.connect(_on_error)
+        self.proc.finished.connect(lambda code, _st: self._finished(target, code, done))
+        self.proc.start(CLI, args)
+
+    def _drain(self, target):
+        chunk = bytes(self.proc.readAll()).decode("utf-8", "replace")
+        if chunk:
+            target.appendPlainText(chunk.rstrip("\n"))
+
+    def _finished(self, target, code, done):
+        self._busy(False)
+        target.appendPlainText(f"\n— done (exit {code}) —")
+        if done:
+            done()
+
+    # -- actions ----------------------------------------------------------
+    def check(self):
+        self._run(["--status"], self.status)
+
+    def update_userspace(self):
+        self._run(["--commit", "--yes"], self.out, done=self.check,
+                  confirm="Update the system and rebuild the performance overlay now?")
+
+    def update_kernel(self):
+        self._run(["--commit", "--yes"], self.out, done=self.check,
+                  confirm="Update the BORE kernel now?\n\nThis compiles the kernel "
+                          "(can take a while) and a reboot is needed to switch to it.")
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName("Cachy-Void Updater")
+    app.setDesktopFileName("cachy-updater")
+    win = Updater()
+    win.show()
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    main()

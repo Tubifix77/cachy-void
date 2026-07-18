@@ -66,7 +66,8 @@ readonly CACHY_PROTON_HELPER="/usr/local/bin/cachy-proton"
 readonly MANGOHUD_CONF="/etc/xdg/MangoHud/MangoHud.conf"
 # §branding: void-tactical LXQt desktop (opt-in, --with-branding). The applier
 # runs per-user (cachy-branding); deploy.sh only installs packages + assets.
-readonly PKG_BRANDING="kvantum papirus-icon-theme papirus-folders plank rofi conky picom"
+readonly PKG_BRANDING="kvantum papirus-icon-theme papirus-folders plank rofi conky picom python3-PyQt5"
+readonly CACHY_UPDATER_GUI="/usr/local/bin/cachy-updater-gui"
 readonly BRANDING_ASSETS="/usr/share/cachy-void/branding"
 readonly CACHY_BRANDING_BIN="/usr/local/bin/cachy-branding"
 
@@ -348,6 +349,14 @@ install_engine() {
         base="$(basename -- "$f")"
         install_file "$f" "$CACHY_ENGINE/engine/$base" 0644 root root
     done
+    # CLI wrapper so `cachy-void-update` is on PATH — users and the GUI invoke this
+    # (the scheduled service calls the engine directly and does not need it).
+    if ! $DRY_RUN; then
+        local wtmp; wtmp="$(mktemp)"
+        printf '#!/bin/sh\nexec python3 %s/cachy_void_update.py "$@"\n' "$CACHY_ENGINE" > "$wtmp"
+        install_file "$wtmp" /usr/local/bin/cachy-void-update 0755 root root
+        rm -f -- "$wtmp"
+    fi
 }
 
 # install_health_service — provision + enable the §8.7 cachy-health runit service.
@@ -438,6 +447,10 @@ install_branding() {
         fi
     fi
     install_file "$SYS_DIR/bin/cachy-branding" "$CACHY_BRANDING_BIN" 0755 root root
+    # graphical updater front-end (PyQt5, inherits the Kvantum theme) + its launcher
+    install_file "$SYS_DIR/bin/cachy-updater-gui" "$CACHY_UPDATER_GUI" 0755 root root
+    install_file "$SYS_DIR/applications/cachy-updater.desktop" \
+                 /usr/share/applications/cachy-updater.desktop 0644 root root
     log "branding toolkit installed — apply the look by running (as your user): cachy-branding"
 }
 

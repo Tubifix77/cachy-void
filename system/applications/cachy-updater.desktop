@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Cachy-Void Updater
+GenericName=System Updater
+Comment=Update the system, performance overlay, and BORE kernel
+Exec=env QT_QPA_PLATFORMTHEME=lxqt QT_STYLE_OVERRIDE=kvantum cachy-updater-gui
+Icon=/usr/share/cachy-void/branding/void-cachy-updater.svg
+Terminal=false
+Categories=System;Settings;PackageManager;
+Keywords=update;upgrade;packages;kernel;driver;cachy;void;
+StartupNotify=true
