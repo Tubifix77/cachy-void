@@ -517,6 +517,99 @@ def cmd_check(xbps, config: Config, out=print) -> int:
     return EXIT_OK
 
 
+def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
+    """Read-only overview of every update tier — the 'what's pending' view.
+
+    Groups into the four sections the front-end presents: [1] upstream Void,
+    [2] the performance overlay (allowlist), [3] the BORE kernel, [4] maintenance
+    and [5] GPU/drivers. Every probe is best-effort: a tool that is missing or
+    needs root simply reports "unknown" — status never mutates and never fails
+    the run (EXIT_OK unless the overlay query itself throws)."""
+    def _lines(cp):
+        return [l for l in (cp.stdout or "").splitlines() if l.strip()]
+
+    out("Cachy-Void — status")
+    out("=" * 46)
+
+    out("\n[1] System (upstream Void)")
+    try:
+        cp = run(["xbps-install", "-un"])          # dry-run, cached repodata
+        if cp.returncode == 0:
+            n = len(_lines(cp))
+            out(f"    {n} upstream package(s) updatable"
+                + ("" if n else " — up to date")
+                + ("   (list may be stale; --sync refreshes it)" if n else ""))
+        else:
+            out("    unknown — run --sync to refresh the repository list")
+    except OSError:
+        out("    unknown — xbps-install unavailable")
+
+    out("\n[2] Performance overlay (rebuilt at -O3 / x86-64-v3)")
+    try:
+        plan = build_queue(xbps, config.targets, config.blacklist,
+                           config.repo_strs, always_build=_always_build(config))
+        nb = [p for p in plan.q_build if p != KERNEL_TARGET]
+        nd = [p for p in plan.q_deploy if p != KERNEL_TARGET]
+        if nb or nd:
+            out(f"    {len(nb)} to rebuild, {len(nd)} to deploy")
+            if nb:
+                out("      rebuild: " + ", ".join(nb))
+            if nd:
+                out("      deploy:  " + ", ".join(nd))
+        else:
+            out("    in sync with upstream")
+    except (XbpsError, MappingError, CycleError) as exc:
+        out(f"    query failed: {exc}")
+        return EXIT_QUERY
+    except OSError as exc:
+        out(f"    query failed: {exc}")
+        return EXIT_QUERY
+
+    out("\n[3] Kernel (linux-cachy / BORE)")
+    _kernel_report(config, xbps, out=lambda m: out("    " + m))
+
+    out("\n[4] Maintenance / cleanup")
+    try:
+        cp = run(["xbps-remove", "-o", "-n"])
+        out(f"    orphaned packages: {len(_lines(cp)) if cp.returncode == 0 else 'unknown (needs root)'}")
+    except OSError:
+        pass
+    try:
+        cp = run(["vkpurge", "list"])
+        old = _lines(cp) if cp.returncode == 0 else []
+        out("    removable old kernels: " + (", ".join(old) if old else "none"))
+    except OSError:
+        pass
+    try:
+        cp = run(["du", "-sh", "/var/cache/xbps"])
+        if cp.returncode == 0 and cp.stdout.strip():
+            out(f"    package cache on disk: {cp.stdout.split()[0]}")
+    except OSError:
+        pass
+
+    out("\n[5] GPU & drivers")
+    try:
+        cp = run(["sh", "-c", "lspci | grep -Ei 'vga|3d|display'"])
+        for g in _lines(cp):
+            out("    " + (g.split(': ', 1)[-1] if ': ' in g else g))
+    except OSError:
+        pass
+    try:
+        cp = run(["dkms", "status"])
+        ds = _lines(cp) if cp.returncode == 0 else []
+        if ds:
+            out(f"    DKMS modules ({len(ds)}):")
+            for l in ds:
+                out("      " + l)
+        else:
+            out("    DKMS: none (or driver is not DKMS)")
+    except OSError:
+        pass
+
+    out("")
+    return EXIT_OK
+
+
 def cmd_sync(config: Config, out=print, run=_run) -> int:
     """Stage 1 — rebase onto upstream master, rolling back on conflict (§4.2)."""
     vp = str(config.void_packages)
@@ -937,6 +1030,7 @@ def build_parser() -> argparse.ArgumentParser:
     action = p.add_mutually_exclusive_group(required=True)
     action.add_argument("--sync", action="store_true", help="Stage 1: rebase onto upstream")
     action.add_argument("--check", action="store_true", help="Stage 2: print the queue (read-only)")
+    action.add_argument("--status", action="store_true", help="read-only overview of all update tiers")
     action.add_argument("--commit", action="store_true", help="Stages 3-4: build, deploy, stage kernel")
     action.add_argument("--rollback", action="store_true", help="re-pin the known-good kernel")
     action.add_argument("--health-daemon", dest="health_daemon", action="store_true",
@@ -975,6 +1069,8 @@ def main(argv: Optional[Sequence[str]] = None, *,
             xbps = build_xbps(config)
         if args.check:
             return cmd_check(xbps, config, out=out)
+        if args.status:
+            return cmd_status(xbps, config, out=out)
         if args.sync:
             return cmd_sync(config, out=out)
         if args.commit:

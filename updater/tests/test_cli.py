@@ -688,5 +688,51 @@ class ArgparseTests(unittest.TestCase):
         self.assertEqual(rc, cli.EXIT_USAGE)
 
 
+class StatusTests(unittest.TestCase):
+    """--status: read-only, aggregates all tiers, degrades gracefully."""
+
+    @staticmethod
+    def _run(args):
+        a = list(args)
+        if a[:2] == ["xbps-install", "-un"]:
+            return cp(0, "foo-1.2_3 update x86_64\nbar-2.0_1 update x86_64\n")
+        if a[0] == "xbps-remove":
+            return cp(0, "orphan-1_1 x86_64\n")
+        if a[:2] == ["vkpurge", "list"]:
+            return cp(0, "6.12.30_1\n")
+        if a[0] == "du":
+            return cp(0, "512M\t/var/cache/xbps\n")
+        if a[0] == "sh":
+            return cp(0, "01:00.0 VGA compatible controller: NVIDIA GT 730M\n")
+        if a[0] == "dkms":
+            return cp(0, "nvidia/470.256.02, 6.12.95_1-cachy, x86_64: installed\n")
+        return cp(0, "")
+
+    def test_reports_all_sections(self):
+        xbps = FakeXbps()
+        out = Sink()
+        rc = cli.cmd_status(xbps, _config([]), out=out, run=self._run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        t = out.text()
+        for marker in ("[1] System", "2 upstream", "[2] Performance overlay",
+                       "[3] Kernel", "[4] Maintenance", "orphaned packages: 1",
+                       "6.12.30_1", "[5] GPU", "GT 730M", "nvidia/470"):
+            self.assertIn(marker, t)
+
+    def test_degrades_when_tools_missing(self):
+        def boom(args):
+            raise OSError("not found")
+        out = Sink()
+        rc = cli.cmd_status(FakeXbps(), _config([]), out=out, run=boom)
+        self.assertEqual(rc, cli.EXIT_OK)          # never fails on a probe
+        self.assertIn("[1] System", out.text())
+
+    def test_status_is_wired_into_main(self):
+        # --status must be a valid, read-only action (dispatches without mutation)
+        out = Sink()
+        rc = cli.main(["--status"], xbps=FakeXbps(), config=_config([]), out=out)
+        self.assertEqual(rc, cli.EXIT_OK)
+
+
 if __name__ == "__main__":
     unittest.main()
