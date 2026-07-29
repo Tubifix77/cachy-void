@@ -25,7 +25,7 @@
 # Usage:
 #   sudo ./deploy.sh [--user NAME] [--void-packages DIR] [--march ARCH]
 #                    [--jobs N] [--with-grub] [--with-schedule] [--with-branding]
-#                    [--hud-profile auto|full|minimal]
+#                    [--with-networkmanager] [--hud-profile auto|full|minimal]
 #                    [--tag core|test|opt] [--simulate] [--dry-run] [--root DIR]
 #   sudo ./deploy.sh --log                 [--root DIR]
 #   sudo ./deploy.sh --uninstall           [--dry-run] [--root DIR]
@@ -67,6 +67,10 @@ readonly MANGOHUD_CONF="/etc/xdg/MangoHud/MangoHud.conf"
 # §branding: void-tactical LXQt desktop (opt-in, --with-branding). The applier
 # runs per-user (cachy-branding); deploy.sh only installs packages + assets.
 readonly PKG_BRANDING="kvantum papirus-icon-theme papirus-folders plank rofi conky picom python3-PyQt5"
+# §network: opt-in laptop WiFi picker (--with-networkmanager). nm-tray is the
+# Qt/LXQt-native applet whose icon themes properly (nm-applet is GNOME's and renders
+# its own dark, un-themeable icon — never install that one).
+readonly PKG_NETWORK="NetworkManager nm-tray"
 readonly CACHY_UPDATER_GUI="/usr/local/bin/cachy-updater-gui"
 readonly BRANDING_ASSETS="/usr/share/cachy-void/branding"
 readonly CACHY_BRANDING_BIN="/usr/local/bin/cachy-branding"
@@ -86,6 +90,7 @@ DRY_RUN=false
 WITH_GRUB=false
 WITH_SCHEDULE=false       # §4.9: also ENABLE the unattended cachy-void-update timer
 WITH_BRANDING=false       # branding: install the void-tactical desktop toolkit + applier
+WITH_NM=false             # network: install NetworkManager + nm-tray (laptop WiFi picker)
 HUD_PROFILE="auto"        # §3.4 MangoHud config: auto|full|minimal (minimal = legacy Optimus)
 SIMULATE=false            # WSL2/sandbox: lay down files, skip init-dependent ops
 ROOT=""                   # offline mode: mounted Void tree prefix ("" = live)
@@ -141,6 +146,7 @@ parse_args() {
             --with-grub)      WITH_GRUB=true ;;
             --with-schedule)  WITH_SCHEDULE=true ;;
             --with-branding)  WITH_BRANDING=true ;;
+            --with-networkmanager) WITH_NM=true ;;
             --hud-profile)    HUD_PROFILE="${2:?--hud-profile needs auto|full|minimal}"; shift ;;
             --user)           UPDATER_USER="${2:?--user needs a value}"; shift ;;
             --void-packages)  VOID_PACKAGES="${2:?--void-packages needs a value}"; shift ;;
@@ -464,6 +470,34 @@ install_branding() {
                  /usr/share/applications/cachy-updater.desktop 0644 root root
     install_greeter        # SDDM login screen (system-level; needs root, done here)
     log "branding toolkit installed — apply the look by running (as your user): cachy-branding"
+}
+
+# install_networkmanager — opt-in laptop WiFi picker (--with-networkmanager). Installs
+# NetworkManager + nm-tray. nm-tray is the Qt/LXQt-native applet whose tray icon themes
+# correctly; we deliberately do NOT install network-manager-applet (GNOME's), which
+# renders its own dark, un-themeable icon (near-invisible on the obsidian panel).
+# Enables the NM service and disables dhcpcd (they conflict) — this briefly cycles the
+# network. cachy-branding already lightens the themed network-*-symbolic icon nm-tray uses.
+install_networkmanager() {
+    local p
+    for p in $PKG_NETWORK; do ensure_pkg "$p"; done
+    # nm-tray ships no XDG autostart of its own — provide one (all users)
+    if [ ! -e "$(rp /etc/xdg/autostart/nm-tray.desktop)" ]; then
+        local tmp; tmp="$(mktemp)"
+        printf '[Desktop Entry]\nType=Application\nName=nm-tray\nComment=NetworkManager tray (Qt)\nExec=nm-tray\nTerminal=false\nX-GNOME-Autostart-enabled=true\n' > "$tmp"
+        install_file "$tmp" /etc/xdg/autostart/nm-tray.desktop 0644 root root
+        rm -f -- "$tmp"
+    fi
+    enable_service NetworkManager
+    # dhcpcd and NetworkManager both managing links = conflict; disable dhcpcd.
+    if [ -L "$(rp /var/service/dhcpcd)" ]; then
+        if $DRY_RUN; then log "[dry-run] disable dhcpcd (conflicts with NetworkManager)"
+        else rm -f "$(rp /var/service/dhcpcd)"
+             warn "disabled dhcpcd — NetworkManager now owns networking (connection may blip)."
+             warn "  to revert the stack later: sudo ln -s /etc/sv/dhcpcd /var/service/ (and remove NetworkManager)"
+        fi
+    fi
+    log "network: NetworkManager + nm-tray ready (WiFi picker; icon themed via nm-tray)."
 }
 
 # install_greeter — brand the SDDM login screen (branding.md §5.8). System-level
@@ -864,6 +898,11 @@ do_install() {
         install_branding
     fi
 
+    if $WITH_NM; then
+        log "[+] NetworkManager + nm-tray WiFi picker (opt-in, --with-networkmanager)"
+        install_networkmanager
+    fi
+
     log "[9/10] pre-deploy snapshot subvol (§9.5, btrfs hosts only)"
     install_snapshot_subvol
 
@@ -894,6 +933,9 @@ Next steps / notes:
   * Desktop branding (void-tactical LXQt) is opt-in: re-run with --with-branding to
     install the toolkit, then apply the look as your user:  cachy-branding
     (revert with: cachy-branding --remove).
+  * Laptop WiFi picker (§network) is opt-in: re-run with --with-networkmanager to
+    install NetworkManager + nm-tray (Qt tray applet whose icon themes correctly),
+    enable NM and disable dhcpcd. Reboot/re-login for the tray applet.
   * Inspect the change ledger any time:  sudo $0 --log
   * Roll back everything:                sudo $0 --uninstall
   * Roll back one route's changes:       sudo $0 --uninstall-tag $DEPLOY_TAG

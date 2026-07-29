@@ -108,6 +108,7 @@ Key flags:
 | `--with-schedule` | Also **enable** the §4.9 `cachy-void-update` runit timer for unattended daily `--sync`+`--commit`. Without it the service is provisioned but left disabled (opt-in). |
 | `--hud-profile auto\|full\|minimal` | Which MangoHud config to install (§3.4). **`auto`** (default) picks `minimal` on a legacy NVIDIA Optimus laptop (driver ≤ 470 — GPU sensors read a misleading 0%) and `full` everywhere else. Force with `full`/`minimal`. |
 | `--with-branding` | Install the opt-in **void-tactical** LXQt desktop toolkit (Kvantum, Papirus, Plank, Rofi, Conky, Picom) + the `cachy-branding` applier + theme assets. Apply the look afterwards as your user: `cachy-branding` (see §14). |
+| `--with-networkmanager` | Install a laptop **WiFi picker**: NetworkManager + **nm-tray** (the Qt/LXQt tray applet whose icon themes correctly — *not* nm-applet), enable the NM runit service, and disable the conflicting `dhcpcd`. Void ships no network GUI by default; this is the roaming-WiFi setup for laptops. Briefly cycles the network when it swaps the stack. |
 | `--march ARCH` | Compiler ABI level. Default: **auto-detected** from `/proc/cpuinfo` via the §1.2 ladder (v4 → v3 → v2 → baseline), so pre-Haswell CPUs get `x86-64-v2` automatically instead of SIGILL-ing on v3 binaries. Pass explicitly to override (e.g. when provisioning a disk for a different machine via `--root`). |
 | `--jobs N` | Build parallelism (default: `nproc`). |
 | `--tag NAME` | Ledger tag for this run (`core` default; use `test`/`opt` per route — see §9). |
