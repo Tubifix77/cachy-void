@@ -481,13 +481,9 @@ install_branding() {
 install_networkmanager() {
     local p
     for p in $PKG_NETWORK; do ensure_pkg "$p"; done
-    # nm-tray ships no XDG autostart of its own — provide one (all users)
-    if [ ! -e "$(rp /etc/xdg/autostart/nm-tray.desktop)" ]; then
-        local tmp; tmp="$(mktemp)"
-        printf '[Desktop Entry]\nType=Application\nName=nm-tray\nComment=NetworkManager tray (Qt)\nExec=nm-tray\nTerminal=false\nX-GNOME-Autostart-enabled=true\n' > "$tmp"
-        install_file "$tmp" /etc/xdg/autostart/nm-tray.desktop 0644 root root
-        rm -f -- "$tmp"
-    fi
+    # NOTE: the nm-tray package ships its OWN XDG autostart
+    # (/etc/xdg/autostart/nm-tray-autostart.desktop), so we must NOT add another —
+    # a second entry launches a second instance = two tray icons.
     enable_service NetworkManager
     # dhcpcd and NetworkManager both managing links = conflict; disable dhcpcd.
     if [ -L "$(rp /var/service/dhcpcd)" ]; then
