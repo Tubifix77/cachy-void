@@ -272,6 +272,15 @@ so both must be pointed at it. `deploy.sh` fetches Luv (network, optional); if a
 branding falls back to Papirus-Dark + grey folders. App names Luv lacks (`pcmanfm-qt`,
 `qterminal`) are aliased to Luv's own equivalents so nothing leaks colour.
 
+**Network tray icons (nm-applet).** Luv has no `network-*-symbolic` set, so a network
+applet falls back to Adwaita's — which are filled `#2e3436` (near-black), i.e. *invisible*
+on the obsidian panel (you'd only find the WiFi/wired icon by screenshotting the tray).
+`cachy-branding` therefore copies Adwaita's `network-*-symbolic` icons into Luv-Void's
+already-declared `status/` + `devices/` dirs, recoloured to the light foreground grey, so
+the icon is visible the moment a laptop user adds `network-manager-applet` for a WiFi
+picker. (Void ships no network GUI by default; on a laptop, install NetworkManager +
+`network-manager-applet` and switch off `dhcpcd` — that's the roaming-WiFi picker.)
+
 ### 5.6 The mark & wallpaper
 
 **Canonical logo set** (SVGs in [`assets/`](assets/) — dark-surface: grey/green on a

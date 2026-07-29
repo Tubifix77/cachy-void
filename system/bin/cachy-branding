@@ -228,6 +228,22 @@ PY
             [ -f "${d}system-file-manager.svg" ] && ln -sf system-file-manager.svg "${d}pcmanfm-qt.svg"
             [ -f "${d}utilities-terminal.svg" ] && ln -sf utilities-terminal.svg "${d}qterminal.svg"
         done
+        # network tray icons: Luv lacks the network *-symbolic set, so nm-applet falls
+        # back to Adwaita's DARK (#2e3436) ones — invisible on the obsidian panel. Drop
+        # light-grey (FG) copies into Luv-Void's already-declared status/ + devices/ dirs
+        # so a WiFi/wired tray icon is actually visible (needed the moment a laptop user
+        # adds NetworkManager + nm-applet for a WiFi picker).
+        _adw=/usr/share/icons/Adwaita/symbolic
+        if [ -d "$_adw" ]; then
+            for _ctx in status devices; do
+                for _sz in 16 22 24; do
+                    mkdir -p "$LVDST/$_ctx/$_sz"
+                    for _f in "$_adw/$_ctx"/network-*-symbolic.svg; do
+                        [ -e "$_f" ] && sed "s/#2e3436/#$FG/Ig" "$_f" > "$LVDST/$_ctx/$_sz/$(basename "$_f")"
+                    done
+                done
+            done
+        fi
         command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -f "$LVDST" 2>/dev/null
     fi
     [ -f "$LVDST/index.theme" ] && ICON_THEME="Luv-Void"
