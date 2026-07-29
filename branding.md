@@ -272,17 +272,18 @@ so both must be pointed at it. `deploy.sh` fetches Luv (network, optional); if a
 branding falls back to Papirus-Dark + grey folders. App names Luv lacks (`pcmanfm-qt`,
 `qterminal`) are aliased to Luv's own equivalents so nothing leaks colour.
 
-**Network tray icons (nm-applet).** The subtle one: **nm-applet ships its *own* icons**
-(`nm-*-symbolic` in hicolor) and draws those, *not* the themed `network-*-symbolic` — and
-they're dark-toned greyscale (`#474747`/`#666666`), so on the obsidian panel the WiFi/wired
-icon is near-invisible (you'd only spot it by screenshotting the tray). So recolouring the
-*themed* icons isn't enough. `cachy-branding` lifts every dark hex to the light foreground
-grey and drops light copies of **both** sets into Luv-Void: Adwaita's `network-*-symbolic`
-→ `status/`+`devices/` (for apps that use those names), and hicolor's `nm-*-symbolic`
-→ `apps/` (what nm-applet actually uses — wired + all WiFi signal levels + VPN). Result: a
-visible tray icon the moment a laptop user adds `network-manager-applet` for a WiFi picker.
-(Void ships no network GUI by default; on a laptop, install NetworkManager +
-`network-manager-applet` and switch off `dhcpcd` — that's the roaming-WiFi picker.)
+**WiFi picker + its tray icon.** Void ships **no network GUI** by default; on a laptop you
+want NetworkManager + a tray applet (and to switch off `dhcpcd`). **Use `nm-tray`, not
+`network-manager-applet`.** nm-applet is GNOME's — it renders its *own embedded* icon and
+sends it to the tray as a pixmap, **ignoring the icon theme entirely** (confirmed by strace:
+it never even stats the theme dirs, and its D-Bus `IconName` is empty). Its icon is dark
+greyscale, so on the obsidian panel it's near-invisible and *nothing* in the theme can fix
+it. **`nm-tray`** is the Qt/LXQt-native NetworkManager applet: it inherits Kvantum and draws
+its icon from the icon theme, so it's light and visible. To support it, `cachy-branding`
+lifts the themed `network-*-symbolic` icons (Adwaita, fill `#2e3436`) to the light foreground
+grey in Luv-Void's `status/`+`devices/` dirs — that's the icon nm-tray shows. So: install
+`NetworkManager nm-tray`, autostart `nm-tray` (and `Hidden=true`-override any stray
+`nm-applet` autostart), disable `dhcpcd`.
 
 ### 5.6 The mark & wallpaper
 
