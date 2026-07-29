@@ -272,13 +272,16 @@ so both must be pointed at it. `deploy.sh` fetches Luv (network, optional); if a
 branding falls back to Papirus-Dark + grey folders. App names Luv lacks (`pcmanfm-qt`,
 `qterminal`) are aliased to Luv's own equivalents so nothing leaks colour.
 
-**Network tray icons (nm-applet).** Luv has no `network-*-symbolic` set, so a network
-applet falls back to Adwaita's — which are filled `#2e3436` (near-black), i.e. *invisible*
-on the obsidian panel (you'd only find the WiFi/wired icon by screenshotting the tray).
-`cachy-branding` therefore copies Adwaita's `network-*-symbolic` icons into Luv-Void's
-already-declared `status/` + `devices/` dirs, recoloured to the light foreground grey, so
-the icon is visible the moment a laptop user adds `network-manager-applet` for a WiFi
-picker. (Void ships no network GUI by default; on a laptop, install NetworkManager +
+**Network tray icons (nm-applet).** The subtle one: **nm-applet ships its *own* icons**
+(`nm-*-symbolic` in hicolor) and draws those, *not* the themed `network-*-symbolic` — and
+they're dark-toned greyscale (`#474747`/`#666666`), so on the obsidian panel the WiFi/wired
+icon is near-invisible (you'd only spot it by screenshotting the tray). So recolouring the
+*themed* icons isn't enough. `cachy-branding` lifts every dark hex to the light foreground
+grey and drops light copies of **both** sets into Luv-Void: Adwaita's `network-*-symbolic`
+→ `status/`+`devices/` (for apps that use those names), and hicolor's `nm-*-symbolic`
+→ `apps/` (what nm-applet actually uses — wired + all WiFi signal levels + VPN). Result: a
+visible tray icon the moment a laptop user adds `network-manager-applet` for a WiFi picker.
+(Void ships no network GUI by default; on a laptop, install NetworkManager +
 `network-manager-applet` and switch off `dhcpcd` — that's the roaming-WiFi picker.)
 
 ### 5.6 The mark & wallpaper
