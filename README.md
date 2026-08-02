@@ -63,6 +63,33 @@ The complete, authoritative design is in **[architecture.md](architecture.md)**.
 
 ---
 
+## What lands on your system
+
+Everything the installer touches is recorded in a per-change **ledger** — inspect your machine's actual inventory any time with `sudo ./deploy.sh --log`, and reverse all of it with `--uninstall`. Packages are installed **only if absent** (anything you already had is left alone and never uninstalled later), and no upstream-owned config file is edited — Cachy-Void drops its own new files.
+
+**Core install** (what `bootstrap.sh` / a plain `deploy.sh` adds):
+
+| What | Exactly |
+|---|---|
+| Stock Void packages | `zramen` (zram), `xtools`, `snooze` (job scheduler), `gamemode`, `MangoHud` (+ `MangoHud-32bit` if multilib is on), `xz` |
+| runit services enabled | `zramen`, `cachy-health` (post-boot kernel health check). `cachy-void-update` (daily timer) is provisioned but only **enabled** with `--with-schedule` |
+| Tuning config (new files) | `/etc/sysctl.d/99-cachy-gaming.conf`, `/etc/udev/rules.d/60-ioschedulers.rules`, `/etc/modprobe.d/99-gaming-input.conf`, `/etc/modules-load.d/cachy.conf` |
+| Updater plumbing | engine at `/usr/libexec/cachy-void-updater/`, `/etc/cachy-void/updater.toml`, `/etc/xbps.d/00-cachy-overlay.conf` (local-repo priority), a narrow `visudo`-validated `/etc/sudoers.d/cachy-void`, compiler profile in *your* `void-packages/etc/conf` (untracked) |
+| Tools | `/usr/local/bin/`: `cachy-void-update`, `cachy-game`, `cachy-proton` (+ `/etc/xdg/MangoHud/MangoHud.conf`) |
+
+**Opt-in flags add:**
+
+| Flag | Adds |
+|---|---|
+| `--with-branding` | Packages `kvantum papirus-icon-theme papirus-folders plank rofi conky picom python3-PyQt5` (+ optional `arc-theme font-hack ImageMagick feh tint2 setxkbmap`), theme assets under `/usr/share/cachy-void/branding`, the `cachy-branding` + `cachy-updater-gui` tools, and the **void-tactical** SDDM login theme. The desktop look itself is applied per-user by `cachy-branding` (backed up, `--remove` restores) |
+| `--with-networkmanager` | `NetworkManager` + `nm-tray` (Qt WiFi picker), enables the NM service, **disables `dhcpcd`** (they conflict) |
+| `--with-grub` | Edits `/etc/default/grub` (ledger-backed): `GRUB_DEFAULT=saved` (required for one-shot kernel boot-tests) + `usbcore.autosuspend=-1` |
+| `--with-schedule` | Enables the daily unattended-update runit service |
+
+The kernel (`linux-cachy`) and the compiled overlay live in **your** `void-packages` checkout and local repo — they're ordinary XBPS packages, visible via `xbps-query` like everything else.
+
+---
+
 ## Repository layout
 
 ```
