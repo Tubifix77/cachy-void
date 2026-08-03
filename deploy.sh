@@ -216,7 +216,8 @@ detect_legacy_optimus() {
 # they parse with tag defaulting to "core"). All paths are LOGICAL in-Void
 # paths, so the same ledger drives live and --root rollbacks identically.
 #   FILE     dest-path          backup-path or "-"
-#   SERVICE  service-name       "-"
+#   SERVICE  service-name       "-"        (we ENABLED it  → uninstall disables it)
+#   SVCOFF   service-name       "-"        (we DISABLED it → uninstall RE-ENABLES it)
 #   PKG      package-name       "-"        (only recorded if WE installed it)
 #   DIR      dir-path           "-"
 #   SUBVOL   subvol-path        "-"        (btrfs; kept on uninstall if non-empty)
@@ -331,6 +332,24 @@ enable_service() {
         ok "enabled runit service $name${ROOT:+ (offline: takes effect on next Void boot)}"
     fi
     manifest_add SERVICE "$name" "-"
+}
+
+# disable_service NAME — turn a service OFF and record it so `--uninstall` turns it
+# back ON. Needed when we replace a stock Void service with an alternative (e.g.
+# dhcpcd -> NetworkManager): without the ledger entry, a teardown would remove OUR
+# service and leave the stock one still disabled — i.e. neither before nor after.
+# Removes both the live and the offline enablement links, like uninstall_service.
+disable_service() {
+    local name="$1"
+    if $DRY_RUN; then log "[dry-run] disable runit service $name (restored on uninstall)"; return; fi
+    if [ ! -L "$(rp "/var/service/$name")" ] && [ ! -L "$(rp "/etc/runit/runsvdir/default/$name")" ]; then
+        log "service $name already disabled"
+        return 0            # nothing of ours to undo -> deliberately not recorded
+    fi
+    live && sv down "$name" >/dev/null 2>&1 || true
+    rm -f -- "$(rp "/var/service/$name")" "$(rp "/etc/runit/runsvdir/default/$name")"
+    manifest_add SVCOFF "$name" "-"
+    ok "disabled runit service $name (re-enabled by --uninstall)"
 }
 
 # install_dir DIR OWNER — create a tracked directory (removed on uninstall).
@@ -477,22 +496,23 @@ install_branding() {
 # correctly; we deliberately do NOT install network-manager-applet (GNOME's), which
 # renders its own dark, un-themeable icon (near-invisible on the obsidian panel).
 # Enables the NM service and disables dhcpcd (they conflict) — this briefly cycles the
-# network. cachy-branding already lightens the themed network-*-symbolic icon nm-tray uses.
+# network. The dhcpcd disable is ledger-recorded (SVCOFF), so --uninstall re-enables it
+# instead of leaving the host with no DHCP client at all.
+# cachy-branding already lightens the themed network-*-symbolic icon nm-tray uses.
 install_networkmanager() {
     local p
     for p in $PKG_NETWORK; do ensure_pkg "$p"; done
     # NOTE: the nm-tray package ships its OWN XDG autostart
     # (/etc/xdg/autostart/nm-tray-autostart.desktop), so we must NOT add another —
     # a second entry launches a second instance = two tray icons.
-    enable_service NetworkManager
     # dhcpcd and NetworkManager both managing links = conflict; disable dhcpcd.
-    if [ -L "$(rp /var/service/dhcpcd)" ]; then
-        if $DRY_RUN; then log "[dry-run] disable dhcpcd (conflicts with NetworkManager)"
-        else rm -f "$(rp /var/service/dhcpcd)"
-             warn "disabled dhcpcd — NetworkManager now owns networking (connection may blip)."
-             warn "  to revert the stack later: sudo ln -s /etc/sv/dhcpcd /var/service/ (and remove NetworkManager)"
-        fi
-    fi
+    # Recorded as SVCOFF *before* enabling NM: the ledger replays in reverse, so an
+    # --uninstall disables NetworkManager FIRST and only then re-enables dhcpcd
+    # (never both live at once, and never neither).
+    disable_service dhcpcd
+    enable_service NetworkManager
+    warn "NetworkManager now owns networking (connection may blip)."
+    warn "  revert the stack: sudo rm -f /var/service/NetworkManager && sudo ln -s /etc/sv/dhcpcd /var/service/"
     log "network: NetworkManager + nm-tray ready (WiFi picker; icon themed via nm-tray)."
 }
 
@@ -965,6 +985,27 @@ uninstall_service() {  # name
     rm -f -- "$(rp "/var/service/$name")" "$(rp "/etc/runit/runsvdir/default/$name")"
     ok "disabled runit service $name"
 }
+uninstall_svcoff() {  # name — WE disabled it, so put it back
+    local name="$1" link
+    if $DRY_RUN; then log "[dry-run] re-enable service $name"; return; fi
+    if [ ! -d "$(rp "/etc/sv/$name")" ]; then
+        warn "cannot re-enable $name — /etc/sv/$name is gone (package removed?)"
+        warn "  reinstall it and run: ln -s /etc/sv/$name /var/service/"
+        return 0
+    fi
+    if [ -n "$ROOT" ]; then
+        mkdir -p -- "$(rp /etc/runit/runsvdir/default)"
+        link="$(rp "/etc/runit/runsvdir/default/$name")"
+    else
+        link="/var/service/$name"
+    fi
+    if [ -L "$link" ]; then
+        ok "service $name already re-enabled"
+    else
+        ln -s -- "/etc/sv/$name" "$link"
+        ok "re-enabled runit service $name${ROOT:+ (offline: takes effect on next Void boot)}"
+    fi
+}
 uninstall_pkg() {  # pkg
     local pkg="$1"
     if [ -n "$ROOT" ]; then
@@ -1042,6 +1083,7 @@ do_uninstall() {
         IFS="$TAB" read -r type target extra tag ts <<< "${matching[$i]}"
         case "$type" in
             SERVICE) uninstall_service "$target" ;;
+            SVCOFF)  uninstall_svcoff  "$target" ;;
             FILE)    uninstall_file    "$target" "$extra" ;;
             DIR)     uninstall_dir     "$target" ;;
             SUBVOL)  uninstall_subvol  "$target" ;;

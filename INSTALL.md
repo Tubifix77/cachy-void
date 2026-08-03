@@ -678,11 +678,11 @@ sudo rm -f /var/service/NetworkManager     # stop NM owning the network
 sudo ln -s /etc/sv/dhcpcd /var/service/    # hand it back to dhcpcd
 ```
 
-> ⚠️ **`--uninstall` does not restore `dhcpcd` for you.** The ledger records the
-> *NetworkManager* service (so uninstall disables it) and the packages it installed, but
-> the `dhcpcd` **disable is not a recorded change**. After a full teardown you can be
-> left with **no DHCP client enabled** — re-link `dhcpcd` as above (do it *before*
-> rebooting, or from a console/rescue shell).
+**`--uninstall` restores the stack for you.** The `dhcpcd` disable is a recorded ledger
+change (type `SVCOFF`), so a teardown reverses it: because the ledger replays in reverse,
+`--uninstall` disables **NetworkManager first** and *then* re-enables `dhcpcd` — never
+both at once, and never neither. If `/etc/sv/dhcpcd` has since been removed (you
+uninstalled the package yourself), it says so instead of leaving a dangling link.
 
 ### Two tray-icon gotchas
 
