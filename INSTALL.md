@@ -659,12 +659,12 @@ flag; pick one of these by hand instead:
 
 | Option | Keeps `dhcpcd`? | Notes |
 |---|---|---|
-| A `wpa_supplicant` GUI front-end | **Yes** — changes nothing else | Talks to the `wpa_supplicant` you already run. Works, but crude and dated. |
-| **`iwd`** (+ a GUI front-end) | **Yes** | `iwd` replaces `wpa_supplicant`, *not* `dhcpcd`; set `EnableNetworkConfiguration=false` in `/etc/iwd/main.conf` so `dhcpcd` keeps doing IP. Light — but thinner on captive portals / enterprise WiFi. |
-| ConnMan (+ a Qt tray such as `cmst`) | No (own DHCP) | Same kind of swap as NM, lighter, good Qt tray. |
+| `wpa_gui` | **Yes** — changes nothing else | Qt front-end to the `wpa_supplicant` you already run. Functional, but crude and dated. |
+| **`iwd` + `iwgtk`** | **Yes** | `iwd` replaces `wpa_supplicant`, *not* `dhcpcd` — set `EnableNetworkConfiguration=false` in `/etc/iwd/main.conf` so `dhcpcd` keeps doing IP. Light, with a small GTK tray picker; thinner on captive portals / enterprise WiFi. |
+| `connman` + `cmst` | No (own DHCP) | The same kind of stack swap as NM but lighter. `cmst` is Qt, so it themes with Kvantum (`connman-gtk` / `connman-ui` also exist). |
 
-Check what your repo actually carries before committing to one, e.g.
-`xbps-query -Rs iwd` / `-Rs connman`; package names and GUI availability vary.
+All of these are stock Void packages — `iwd`, `iwgtk`, `connman`, `cmst`, `wpa_gui` — so
+picking one is a plain `xbps-install`, no different in kind from the flag's own choice.
 
 You can also make the two **coexist** by restricting each to its own interfaces —
 `denyinterfaces wlan0` in `/etc/dhcpcd.conf` plus `unmanaged-devices=...` in
