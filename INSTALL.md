@@ -108,7 +108,7 @@ Key flags:
 | `--with-schedule` | Also **enable** the §4.9 `cachy-void-update` runit timer for unattended daily `--sync`+`--commit`. Without it the service is provisioned but left disabled (opt-in). |
 | `--hud-profile auto\|full\|minimal` | Which MangoHud config to install (§3.4). **`auto`** (default) picks `minimal` on a legacy NVIDIA Optimus laptop (driver ≤ 470 — GPU sensors read a misleading 0%) and `full` everywhere else. Force with `full`/`minimal`. |
 | `--with-branding` | Install the opt-in **void-tactical** LXQt desktop toolkit (Kvantum, Papirus, Plank, Rofi, Conky, Picom) + the `cachy-branding` applier + theme assets. Apply the look afterwards as your user: `cachy-branding` (see §14). |
-| `--with-networkmanager` | Install a laptop **WiFi picker**: NetworkManager + **nm-tray** (the Qt/LXQt tray applet whose icon themes correctly — *not* nm-applet), enable the NM runit service, and disable the conflicting `dhcpcd`. Void ships no network GUI by default; this is the roaming-WiFi setup for laptops. Briefly cycles the network when it swaps the stack. |
+| `--with-networkmanager` | Install a laptop **WiFi picker**: NetworkManager + **nm-tray** (the Qt/LXQt tray applet whose icon themes correctly — *not* nm-applet), enable the NM runit service, and disable the conflicting `dhcpcd`. Void ships no network GUI by default; this is the roaming-WiFi setup for laptops. Briefly cycles the network when it swaps the stack. See **§15** for why, the lighter alternatives that keep `dhcpcd`, and how to revert. |
 | `--march ARCH` | Compiler ABI level. Default: **auto-detected** from `/proc/cpuinfo` via the §1.2 ladder (v4 → v3 → v2 → baseline), so pre-Haswell CPUs get `x86-64-v2` automatically instead of SIGILL-ing on v3 binaries. Pass explicitly to override (e.g. when provisioning a disk for a different machine via `--root`). |
 | `--jobs N` | Build parallelism (default: `nproc`). |
 | `--tag NAME` | Ledger tag for this run (`core` default; use `test`/`opt` per route — see §9). |
@@ -613,3 +613,84 @@ Notes:
 - Grey folders use `papirus-folders`, which edits the system icon theme (needs
   `sudo`); if unavailable the folders stay blue and everything else still applies.
 - Conky auto-detects the network interface and CPU-temp sensor for this host.
+
+---
+
+## 15. Network: the WiFi picker & the `dhcpcd` swap (opt-in)
+
+Void ships **no network GUI**. On a laptop that roams between networks that's the piece
+you miss most, so `--with-networkmanager` installs one:
+
+```bash
+sudo ./deploy.sh --with-networkmanager --user "$USER" --void-packages ~/void-packages
+```
+
+It installs **NetworkManager + `nm-tray`**, enables the `NetworkManager` runit service,
+and **disables `dhcpcd`**. Expect the connection to blip while the stack swaps.
+
+### Why it replaces `dhcpcd`
+
+Not policy — plumbing. NetworkManager has its **own built-in DHCP client**, so if
+`dhcpcd` keeps running too, both daemons manage the same interfaces: two DHCP leases,
+both rewriting `/etc/resolv.conf`, routes overwriting each other, links flapping. One
+of them has to own IP configuration.
+
+Worth stating plainly: swapping the network stack is **ordinary system configuration,
+not a philosophy violation**. Cachy-Void's invariants are *build*-scoped (they govern
+how packages are compiled and that runit stays PID 1); NetworkManager is a stock Void
+binary running under runit, so installing it is the blessed path like any other package.
+
+The useful reframe: on stock Void, WiFi is `dhcpcd` **+ `wpa_supplicant`**, and the part
+with no GUI is **`wpa_supplicant`**. NetworkManager is a *full* stack — it does both
+association and IP config — which is why it wants `dhcpcd` out of the way.
+
+### Why NetworkManager is the shipped default
+
+Because it's what every mainstream distro ships, and that's precisely *why* the awkward
+real-world cases work: **captive portals** (hotel "sign in here" pages), enterprise
+**802.1X/eduroam**, VPN integration, roaming between saved networks, and mobile
+broadband. It's also why the tray-applet ecosystem exists at all. For a laptop that
+travels, that compatibility is the whole point.
+
+### Alternatives (your choice — none of these are shipped)
+
+If you're on an **ethernet desktop** and would rather not swap your stack, don't use the
+flag; pick one of these by hand instead:
+
+| Option | Keeps `dhcpcd`? | Notes |
+|---|---|---|
+| A `wpa_supplicant` GUI front-end | **Yes** — changes nothing else | Talks to the `wpa_supplicant` you already run. Works, but crude and dated. |
+| **`iwd`** (+ a GUI front-end) | **Yes** | `iwd` replaces `wpa_supplicant`, *not* `dhcpcd`; set `EnableNetworkConfiguration=false` in `/etc/iwd/main.conf` so `dhcpcd` keeps doing IP. Light — but thinner on captive portals / enterprise WiFi. |
+| ConnMan (+ a Qt tray such as `cmst`) | No (own DHCP) | Same kind of swap as NM, lighter, good Qt tray. |
+
+Check what your repo actually carries before committing to one, e.g.
+`xbps-query -Rs iwd` / `-Rs connman`; package names and GUI availability vary.
+
+You can also make the two **coexist** by restricting each to its own interfaces —
+`denyinterfaces wlan0` in `/etc/dhcpcd.conf` plus `unmanaged-devices=...` in
+`/etc/NetworkManager/NetworkManager.conf`, so `dhcpcd` owns ethernet and NM owns WiFi.
+It works, but it's two daemons and more ways to break subtly; deliberately not a default.
+
+### Reverting the stack
+
+```bash
+sudo rm -f /var/service/NetworkManager     # stop NM owning the network
+sudo ln -s /etc/sv/dhcpcd /var/service/    # hand it back to dhcpcd
+```
+
+> ⚠️ **`--uninstall` does not restore `dhcpcd` for you.** The ledger records the
+> *NetworkManager* service (so uninstall disables it) and the packages it installed, but
+> the `dhcpcd` **disable is not a recorded change**. After a full teardown you can be
+> left with **no DHCP client enabled** — re-link `dhcpcd` as above (do it *before*
+> rebooting, or from a console/rescue shell).
+
+### Two tray-icon gotchas
+
+- **Use `nm-tray`, not `nm-applet`.** nm-applet (GNOME's) renders its **own** icon and
+  hands the tray a finished pixmap — its D-Bus `IconName` is empty and it never reads the
+  icon theme — so on a dark panel it's near-invisible and **no** theme fix can change it.
+  `nm-tray` is Qt and draws from the icon theme, so it inherits the branding
+  ([`branding.md`](branding.md) §5.5b).
+- **Don't add an autostart for `nm-tray`.** The package already ships
+  `/etc/xdg/autostart/nm-tray-autostart.desktop`; a second entry starts a second instance
+  and you get **two tray icons**.
