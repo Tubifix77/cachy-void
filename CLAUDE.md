@@ -4,7 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
-Greenfield. `architecture.md` is the **authoritative spec** — read it before implementing anything; if anything disagrees with it, the spec wins. No code exists yet; there are no build, lint, or test commands for this repo itself. The deliverables and target file layout are defined in `architecture.md` §6.
+**Done — installed, live, and in continuous daily use** (this was the vacation
+machine). The distro overlay, branding, runit services, and the Python updater engine
+(`updater/engine/`: xbps, grub, snapshot, trust, journal, health, health_daemon) are all
+built and covered by a real test suite (`updater/tests/`, 10 files). `architecture.md`
+remains the authoritative spec for anything new; if anything disagrees with it, the spec
+wins.
+
+Real-world usage surfaces real gaps, and they get fixed as they're found — that's
+normal operation, not unfinished work. Case in point already in the commit history: bare
+dhcpcd wasn't enough on the laptop, so `--with-networkmanager` was added as an opt-in
+WiFi picker (NetworkManager + nm-tray), including icon-visibility fixes and a clean
+`--uninstall` path back to dhcpcd.
+
+**One specific thing genuinely hasn't happened yet and is worth naming precisely:** the
+updater itself has not been run for a real update cycle on the live system — it's built,
+tested (mocked `subprocess` calls, no live runs possible from this Windows dev machine),
+and ready to invoke, just not yet exercised for real. That's a "not yet run" item, not
+a "not yet built" one.
 
 ## What This Project Is
 
