@@ -29,7 +29,13 @@ a "not yet built" one.
 
 ## Target Platform Caveat
 
-All code targets **Void Linux** (XBPS, `xbps-src`, runit). This development machine is Windows — nothing here can be executed or integration-tested locally. Validate updater logic with unit tests that mock `subprocess` calls rather than attempting live runs.
+All code targets **Void Linux** (XBPS, `xbps-src`, runit). This development machine is
+Windows, but that has not been a real barrier: a Void Linux WSL instance on this same
+Windows 11 box was used for extensive real testing — actual `xbps`/`runit` execution, not
+just mocked `subprocess` calls — before the overlay was ever installed onto the laptop's
+live Void partition. Unit tests still mock `subprocess` for the fast/offline gate, but
+"can't be executed locally" is not an accurate description of how this was actually
+built and validated.
 
 ## Invariants To Never Violate (spec §0, I1–I7)
 
