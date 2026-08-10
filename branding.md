@@ -279,11 +279,22 @@ sends it to the tray as a pixmap, **ignoring the icon theme entirely** (confirme
 it never even stats the theme dirs, and its D-Bus `IconName` is empty). Its icon is dark
 greyscale, so on the obsidian panel it's near-invisible and *nothing* in the theme can fix
 it. **`nm-tray`** is the Qt/LXQt-native NetworkManager applet: it inherits Kvantum and draws
-its icon from the icon theme, so it's light and visible. To support it, `cachy-branding`
-lifts the themed `network-*-symbolic` icons (Adwaita, fill `#2e3436`) to the light foreground
-grey in Luv-Void's `status/`+`devices/` dirs — that's the icon nm-tray shows. So: install
-`NetworkManager nm-tray`, autostart `nm-tray` (and `Hidden=true`-override any stray
-`nm-applet` autostart), disable `dhcpcd`.
+its icon from the icon theme — source-verified: its `icons.cpp` does
+`QIcon::fromTheme("network-wired" / "network-wireless-signal-*")` (the **plain** names, not
+`-symbolic`), with an embedded `default.svg` only as last-resort fallback. Two consequences
+`cachy-branding` handles: (1) the themed `network-*-symbolic` set (Adwaita, fill `#2e3436`)
+is lifted to the light foreground grey in Luv-Void's `status/`+`devices/` dirs; (2) the
+plain names nm-tray asks for would otherwise resolve to **Luv's own `network-wired`** — a
+*filled badge* that desaturates to a bright neutral grey and reads whiter + bulkier than the
+thin tray glyphs beside it — so those names are overridden with **breeze's 22px line-art**
+(Adwaita fallback) recoloured to the foreground grey, matching the other tray icons' stroke
+weight exactly. So: install `NetworkManager nm-tray`, autostart `nm-tray` (and
+`Hidden=true`-override any stray `nm-applet` autostart), disable `dhcpcd`.
+
+> Debugging gotcha that cost a session: when relaunching a Qt tray app over SSH to test
+> icon changes, export the session's `QT_QPA_PLATFORMTHEME` (LXQt sets `lxqt`) — without it
+> Qt doesn't know the icon theme, the app falls back to its embedded icon, and every theme
+> edit looks like it "does nothing".
 
 ### 5.6 The mark & wallpaper
 
