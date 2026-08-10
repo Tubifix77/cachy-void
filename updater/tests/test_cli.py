@@ -480,6 +480,105 @@ class CommitCommandTests(unittest.TestCase):
                          "must abort before any deploy")
 
 
+class SystemPassTests(unittest.TestCase):
+    """§4.5a — empty overlay queue must still apply pending UPSTREAM updates.
+
+    Regression for the first real-hardware run: 35 upstream packages pending,
+    overlay in sync -> Update printed "queue empty" and changed nothing, while
+    --status tier [1] kept reporting them. Same failure class as the Flatpak
+    gap: an updater that silently skips a tier gives false "fully updated"
+    security.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _cfg(self):
+        return cli.Config(void_packages=Path("/vp"),
+                          targets=["mesa"], blacklist=[],
+                          state_dir=self.tmp / "state",
+                          log_root=self.tmp / "log",
+                          fragment_path=self.tmp / "fragment.config")
+
+    def _insync_xbps(self):
+        # overlay fully in sync -> build/deploy queues are both empty
+        return FakeXbps(installed=["mesa"], src_map={"mesa": "mesa"},
+                        inst_ver={"mesa": "1.0_1"}, repo_ver={"mesa": "1.0_1"},
+                        local_updates=[])
+
+    def _run_with_pending(self, pending_lines):
+        calls: list[list[str]] = []
+
+        def run(args, cwd=None):
+            calls.append(list(args))
+            if args[:3] == ["sudo", "xbps-install", "-Sun"]:
+                return cp(0, stdout="\n".join(pending_lines))
+            return cp(0, stdout="")
+        return run, calls
+
+    def test_empty_queue_applies_pending_system_updates(self):
+        out = Sink()
+        run, calls = self._run_with_pending([
+            "foo-1.1_1 update x86_64 https://repo 10 10",
+            "bar-2.0_1 update x86_64 https://repo 10 10",
+            "linux6.12-6.12.98_1 hold x86_64 https://repo 10 10",  # pinned: not counted
+        ])
+        rc = cli.cmd_commit(self._insync_xbps(), self._cfg(),
+                            assume_yes=True, dry_run=False, out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("2 upstream update(s) pending", out.text())
+        self.assertTrue(any(c[:2] == ["sudo", "xbps-install"] and "-Suy" in c
+                            for c in calls))
+        self.assertIn("system update complete", out.text())
+
+    def test_empty_queue_no_pending_is_noop(self):
+        out = Sink()
+        run, calls = self._run_with_pending(
+            ["linux6.12-6.12.98_1 hold x86_64 https://repo 10 10"])
+        rc = cli.cmd_commit(self._insync_xbps(), self._cfg(),
+                            assume_yes=True, dry_run=False, out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("base already up to date", out.text())
+        self.assertFalse(any("-Suy" in c for c in calls))
+
+    def test_empty_queue_system_pass_asks_before_mutating(self):
+        out = Sink()
+        run, calls = self._run_with_pending(
+            ["foo-1.1_1 update x86_64 https://repo 10 10"])
+        rc = cli.cmd_commit(self._insync_xbps(), self._cfg(),
+                            assume_yes=False, dry_run=False, out=out, run=run,
+                            confirm=lambda p: "n")
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("aborted", out.text())
+        self.assertFalse(any("-Suy" in c for c in calls))
+
+    def test_empty_queue_dry_run_never_mutates(self):
+        out = Sink()
+        run, calls = self._run_with_pending(
+            ["foo-1.1_1 update x86_64 https://repo 10 10"])
+        rc = cli.cmd_commit(self._insync_xbps(), self._cfg(),
+                            assume_yes=True, dry_run=True, out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertFalse(any(c and c[0] == "sudo" for c in calls))
+
+    def test_empty_queue_sun_failure_is_exit_query(self):
+        out = Sink()
+        calls: list[list[str]] = []
+
+        def run(args, cwd=None):
+            calls.append(list(args))
+            if args[:3] == ["sudo", "xbps-install", "-Sun"]:
+                return cp(1, stderr="repo unreachable")
+            return cp(0, stdout="")
+        rc = cli.cmd_commit(self._insync_xbps(), self._cfg(),
+                            assume_yes=True, dry_run=False, out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_QUERY)
+        self.assertFalse(any("-Suy" in c for c in calls))
+
+
 class ServiceCycleTests(unittest.TestCase):
     """§4.7 Stage 4c — service lifecycle."""
 

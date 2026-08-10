@@ -678,11 +678,14 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
                            config.repo_strs, always_build=_always_build(config))
         if not plan.q_build and not plan.q_deploy:
             out("queue empty — nothing to build or deploy.")
-            # Flatpak is independent of the XBPS queue: an Update must still refresh
-            # apps even when the overlay/system is already in sync (dry-run excepted).
+            # The overlay needs nothing, but on a rolling base upstream updates may
+            # still be pending — and tier [1] of --status reports them. An Update
+            # that then does nothing breaks the "update everything" promise (same
+            # class as the Flatpak gap), so the system pass still runs (§4.5a).
             if dry_run:
                 return EXIT_OK
-            return _update_flatpak(config, out, run)
+            return _system_update(config, xbps, out, run, confirm, assume_yes,
+                                  service_root=service_root)
         order = topo_order(xbps, plan.q_build)
     except MappingError as exc:
         out(f"error: srcpkg mapping anomaly: {exc}")
@@ -1035,6 +1038,67 @@ def cmd_gpu(xbps, config: Config, out=print, run=_run) -> int:
         pass
 
     out("")
+    return EXIT_OK
+
+
+# ==========================================================================
+# Empty-queue system pass (§4.5a)
+# ==========================================================================
+def _system_update(config: Config, xbps, out, run, confirm, assume_yes,
+                   service_root: Path) -> int:
+    """Apply pending *upstream* updates when the overlay queue is empty.
+
+    "If you give people an updater, it has to update everything": the overlay
+    being in sync must not leave the rolling base stale while --status tier [1]
+    reports updates as pending. Runs the same Stage-4 choreography as a queue
+    deploy — §9.5 pre-deploy snapshot, one ``-Suy`` (via ``_deploy`` with an
+    empty deploy list, keeping a single call site), §4.7 service cycling, then
+    Flatpak. Held packages (e.g. pinned kernels) are honored by xbps itself.
+    """
+    cp = run(["sudo", "xbps-install", "-Sun"])
+    if cp.returncode != 0:
+        out("error: could not query upstream updates (xbps-install -Sun)")
+        return EXIT_QUERY
+    pending = [l for l in (cp.stdout or "").splitlines()
+               if len(l.split()) > 1 and l.split()[1] in ("update", "install")]
+    if not pending:
+        out("system: base already up to date.")
+        return _update_flatpak(config, out, run)
+
+    out(f"system: {len(pending)} upstream update(s) pending — applying (§4.5a).")
+    if not assume_yes:
+        ans = confirm("apply upstream system updates now? [y/N] ").strip().lower()
+        if ans not in ("y", "yes"):
+            out("aborted — nothing changed.")
+            return EXIT_OK
+
+    # §9.5 rollback net: this mutates the system, so it gets the same snapshot
+    # protection as a queue deploy.
+    run_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    try:
+        snapshot.pre_deploy_snapshot(
+            enable=config.snapshot_enable, subvol=config.snapshot_subvol,
+            snap_dir=config.snapshot_dir, keep=config.snapshot_keep,
+            run_id=run_id, run=run, out=out)
+    except snapshot.SnapshotUnavailable as exc:
+        out(f"error: {exc}")
+        return EXIT_SNAPSHOT_UNAVAIL
+    except snapshot.SnapshotFailed as exc:
+        out(f"error: {exc}")
+        return EXIT_SNAPSHOT_FAILED
+
+    rc = _deploy(config, [], xbps, out, run)
+    if rc != EXIT_OK:
+        return rc
+    rc_services = _cycle_services(config, out, run, service_root=service_root)
+    rc_flatpak = _update_flatpak(config, out, run)
+    if rc_services != EXIT_OK:
+        out("system update complete — some services need a manual restart "
+            "or relogin (§4.7).")
+        return rc_services
+    if rc_flatpak != EXIT_OK:
+        return rc_flatpak
+    out("system update complete.")
     return EXIT_OK
 
 

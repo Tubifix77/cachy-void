@@ -359,6 +359,20 @@ sudo xbps-install -Suy --repository=$void_packages/hostdir/binpkgs
 
 Reached only when every build in Stage 3 succeeded — partial overlays are never installed.
 
+#### 4.5a Empty-queue system pass
+
+An empty overlay queue (`Q = ∅`) must not leave the rolling base stale: `--status`
+tier [1] reports pending upstream updates, and an Update that then does nothing
+breaks the "update everything" promise (same failure class as skipping Flatpak).
+When `--commit` finds nothing to build or deploy it still queries
+`xbps-install -Sun`; if upstream updates are pending it runs the same Stage-4
+choreography with an empty deploy set — §9.5 pre-deploy snapshot, one `-Suy`
+(same single call site as §4.5; the §4.6 takeover loop is vacuous), §4.7 service
+cycling, then Flatpak. "Reached only when every build succeeded" holds vacuously:
+zero builds were needed. Packages on `hold` (e.g. pinned kernels) are honored by
+xbps itself. `--dry-run` still reports and exits before any mutation, and without
+`--yes` the pass asks for confirmation first.
+
 ### 4.6 Stage 4b — Same-version takeover
 
 Because local rebuilds share `pkgver` with upstream binaries (§1.3), `-Su` alone will not replace an installed upstream build with the freshly compiled one. For each `pkg ∈ Q` still originating from a non-overlay repo (check `xbps-query -p repository <pkg>`):
