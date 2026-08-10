@@ -823,6 +823,22 @@ class StatusTests(unittest.TestCase):
                        "[6] Flatpak", "1 app(s) updatable"):
             self.assertIn(marker, t)
 
+    def test_hold_lines_not_counted_as_updatable(self):
+        # pinned kernels (`hold`) must not read as "updatable" — Update rightly
+        # skips them, and counting them is false-alarm security (found on the
+        # Medion: "4 updatable" that were all the pinned kernels)
+        def run(args):
+            if list(args)[:2] == ["xbps-install", "-un"]:
+                return cp(0, "foo-1.2_3 update x86_64\n"
+                             "linux6.12-6.12.98_1 hold x86_64\n"
+                             "linux6.18-6.18.40_1 hold x86_64\n")
+            return cp(0, "")
+        out = Sink()
+        rc = cli.cmd_status(FakeXbps(), _config([]), out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("1 upstream package(s) updatable", out.text())
+        self.assertIn("(+2 on hold)", out.text())
+
     def test_degrades_when_tools_missing(self):
         def boom(args):
             raise OSError("not found")

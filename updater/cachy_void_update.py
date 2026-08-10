@@ -537,9 +537,15 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
     try:
         cp = run(["xbps-install", "-un"])          # dry-run, cached repodata
         if cp.returncode == 0:
-            n = len(_lines(cp))
+            # count only actionable entries — `hold` lines (pinned kernels etc.)
+            # would otherwise show as "updatable" things Update rightly skips
+            lines = _lines(cp)
+            n = len([l for l in lines
+                     if l.split()[1:2] and l.split()[1] in ("update", "install")])
+            held = len(lines) - n
             out(f"    {n} upstream package(s) updatable"
                 + ("" if n else " — up to date")
+                + (f"   (+{held} on hold)" if held else "")
                 + ("   (list may be stale; --sync refreshes it)" if n else ""))
         else:
             out("    unknown — run --sync to refresh the repository list")
