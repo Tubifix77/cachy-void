@@ -1105,13 +1105,36 @@ def _system_update(config: Config, xbps, out, run, confirm, assume_yes,
 # ==========================================================================
 # Deploy helper
 # ==========================================================================
+def _stream_run(args, out, run) -> subprocess.CompletedProcess:
+    """Run a LONG command, echoing its output line-by-line through out().
+
+    The -Suy is minutes of downloads + unpacking; with captured output the GUI
+    (and a terminal) shows nothing at all for the whole stretch, which reads as
+    "crashed". Only used where the caller checks returncode alone (the echoed
+    stdout is not re-parsed). Falls back to the injected runner when a test (or
+    any non-default runner) is in play, so mocks keep working unchanged.
+    """
+    if run is not _run:
+        return run(args)
+    proc = subprocess.Popen(list(args), stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True)
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        out("  " + line.rstrip())
+    proc.wait()
+    return subprocess.CompletedProcess(list(args), proc.returncode,
+                                       stdout="", stderr="")
+
+
 def _deploy(config: Config, deploy_bins, xbps, out, run) -> int:
     repo_args = [f"--repository={r}" for r in config.repos]
     globs = [str(r / "*.xbps") for r in config.repos]
     if run(["xbps-rindex", "-a", *globs]).returncode != 0:
         out("error: xbps-rindex failed")
         return EXIT_INDEX
-    if run(["sudo", "xbps-install", "-Suy", *repo_args]).returncode != 0:
+    out("downloading & installing (xbps output follows) …")
+    if _stream_run(["sudo", "xbps-install", "-Suy", *repo_args],
+                   out, run).returncode != 0:
         out("error: xbps-install -Su failed (see §5; possible shlib rejection)")
         return EXIT_INSTALL
     # §4.6 same-version takeover for binpkgs still on a non-overlay origin
@@ -1378,6 +1401,14 @@ def _park(out, reason: str) -> int:
 
 def main(argv: Optional[Sequence[str]] = None, *,
          xbps=None, config: Optional[Config] = None, out=print) -> int:
+    # When stdout is a pipe (the GUI's QProcess), Python block-buffers it — a
+    # long -Suy would leave even the already-printed milestone lines invisible
+    # until exit, which reads as "crashed". Line-buffer so every out() shows
+    # the moment it happens.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, OSError):
+        pass
     args = build_parser().parse_args(argv)
 
     if config is None:
