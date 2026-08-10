@@ -684,6 +684,16 @@ change (type `SVCOFF`), so a teardown reverses it: because the ledger replays in
 both at once, and never neither. If `/etc/sv/dhcpcd` has since been removed (you
 uninstalled the package yourself), it says so instead of leaving a dangling link.
 
+**DNS handover (`resolv.conf`).** NetworkManager's default `rc-manager` is `symlink`
+mode, which **refuses to touch a pre-existing regular `/etc/resolv.conf`** — and dhcpcd
+leaves exactly such a file behind. Untreated, the machine silently stays on dhcpcd's
+*last* nameserver forever: fine on the network where you switched, dead on the next one
+(discovered on the reference laptop, which came home from vacation still pointing at the
+hotel's DNS while NM knew the right server all along). The flag therefore installs
+`/etc/NetworkManager/conf.d/10-cachy-dns.conf` (`rc-manager=file`, so NM rewrites
+`resolv.conf` on every connection change — what a roaming laptop needs) and retires a
+dhcpcd-generated `resolv.conf` (backed up) so NM takes over immediately.
+
 ### Two tray-icon gotchas
 
 - **Use `nm-tray`, not `nm-applet`.** nm-applet (GNOME's) renders its **own** icon and
