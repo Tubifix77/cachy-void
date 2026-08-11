@@ -8,10 +8,12 @@ live output, so nothing blocks the window and privilege stays inside the CLI's
 existing sudo-NOPASSWD boundary. Being a Qt5 app, it inherits the LXQt Kvantum
 "void-tactical" theme automatically.
 
-Sections mirror the update model (architecture.md §4/§7/§8):
-  * Update      — system (upstream Void) + the performance overlay  (--commit --no-kernel)
-  * Kernel      — full commit incl. the BORE kernel; reboot-gated   (--commit)
-  * Clean up    — remove orphans + clean the package cache          (--clean)
+Sections mirror the update model (architecture.md §4/§7/§8). Both update buttons
+run Stage 1 first (--sync, rebasing void-packages) so builds see current upstream
+templates — the same --sync + --commit pairing the §4.9 scheduled runs use:
+  * Update      — sync, then system + performance overlay   (--sync; --commit --no-kernel)
+  * Kernel      — sync, then full commit incl. BORE kernel  (--sync; --commit)
+  * Clean up    — remove orphans + clean the package cache  (--clean)
   * GPU         — detected card, driver, DKMS health (read-only)    (--gpu)
 The "Check" button runs `--status` and shows the read-only overview.
 """
@@ -127,14 +129,15 @@ class Updater(QWidget):
             self.act_label.hide(); self.act_bar.hide()
 
     def _run(self, args, target, *, done=None, confirm=None, busy_msg=None,
-             activity=None):
+             activity=None, clear=True):
         if self.proc and self.proc.state() != QProcess.NotRunning:
             return
         if confirm and QMessageBox.question(
                 self, "Confirm", confirm,
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
-        target.clear()
+        if clear:
+            target.clear()
         # show a "working…" line while the CLI runs (a --status probe can take
         # ~15s); it's replaced the moment real output arrives (_drain).
         if busy_msg:
@@ -171,7 +174,25 @@ class Updater(QWidget):
         self._activity(None)
         target.appendPlainText(f"\n— done (exit {code}) —")
         if done:
-            done()
+            done(code)
+
+    def _sync_then(self, commit_args, *, confirm, activity):
+        """Stage 1 (--sync: rebase void-packages) before a commit, as one click.
+
+        Builds must see CURRENT upstream templates — without the sync, a kernel
+        run would port whatever stale template the checkout happens to hold. The
+        §4.9 scheduled runs already pair --sync + --commit; the buttons do the
+        same instead of expecting users to know a CLI-only stage. A failed sync
+        aborts the chain (nothing has been changed at that point)."""
+        def after_sync(code):
+            if code == 0:
+                self._run(commit_args, self.out, clear=False,
+                          done=lambda _c: self.check(), activity=activity)
+            else:
+                self.out.appendPlainText(
+                    "[sync failed — update aborted; nothing was changed]")
+        self._run(["--sync"], self.out, confirm=confirm, done=after_sync,
+                  activity="Syncing build templates (git rebase)…")
 
     # -- actions ----------------------------------------------------------
     def check(self):
@@ -180,7 +201,7 @@ class Updater(QWidget):
 
     def update_userspace(self):
         # userspace only — the kernel is the explicit "Update kernel" button
-        self._run(["--commit", "--yes", "--no-kernel"], self.out, done=self.check,
+        self._sync_then(["--commit", "--yes", "--no-kernel"],
                   confirm="Update the system and rebuild the performance overlay now?"
                           "\n\n(The BORE kernel is left alone — use 'Update kernel' "
                           "for that.)",
@@ -188,14 +209,14 @@ class Updater(QWidget):
 
     def update_kernel(self):
         # full commit: userspace + the BORE kernel (compiles, reboot-gated)
-        self._run(["--commit", "--yes"], self.out, done=self.check,
+        self._sync_then(["--commit", "--yes"],
                   confirm="Update everything, including the BORE kernel, now?\n\nThis "
                           "compiles the kernel (can take a while) and a reboot is "
                           "needed to switch to it.",
                   activity="Updating incl. kernel compile — do not power off")
 
     def clean(self):
-        self._run(["--clean", "--yes"], self.out, done=self.check,
+        self._run(["--clean", "--yes"], self.out, done=lambda _c: self.check(),
                   confirm="Remove orphaned packages and clean the package cache now?"
                           "\n\n(Old kernels are never auto-removed.)",
                   activity="Cleaning up…")
