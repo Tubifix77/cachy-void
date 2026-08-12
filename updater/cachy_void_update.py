@@ -642,11 +642,18 @@ def cmd_sync(config: Config, out=print, run=_run) -> int:
             return EXIT_SYNC
         head = pre.stdout.strip()
 
-        if run(["git", "fetch", "upstream"], vp).returncode != 0:
-            out("error: git fetch upstream failed")
+        # The Void remote may be named 'upstream' (manual setups) or 'origin'
+        # (bootstrap.sh does a plain `git clone` — git's default). Hardcoding
+        # 'upstream' made every bootstrap-created checkout fail sync (exit 20).
+        remotes = run(["git", "remote"], vp)
+        names = remotes.stdout.split() if remotes.returncode == 0 else []
+        remote = "upstream" if "upstream" in names else "origin"
+
+        if run(["git", "fetch", remote], vp).returncode != 0:
+            out(f"error: git fetch {remote} failed")
             return EXIT_SYNC
 
-        rebase = run(["git", "pull", "--rebase", "upstream", "master"], vp)
+        rebase = run(["git", "pull", "--rebase", remote, "master"], vp)
         if rebase.returncode != 0:
             run(["git", "rebase", "--abort"], vp)
             now = run(["git", "rev-parse", "HEAD"], vp).stdout.strip()

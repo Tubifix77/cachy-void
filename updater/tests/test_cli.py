@@ -787,6 +787,38 @@ class ArgparseTests(unittest.TestCase):
         self.assertEqual(rc, cli.EXIT_USAGE)
 
 
+class SyncRemoteTests(unittest.TestCase):
+    """--sync must work with EITHER remote name: 'upstream' (manual setups) or
+    'origin' (bootstrap.sh's plain clone — the hardcoded 'upstream' made every
+    bootstrap-created checkout fail with exit 20 on the Medion)."""
+
+    def _sync(self, remote_listing):
+        calls = []
+
+        def run(args, cwd=None):
+            a = list(args)
+            calls.append(a)
+            if a == ["git", "remote"]:
+                return cp(0, remote_listing)
+            if a[:2] == ["git", "rev-parse"]:
+                return cp(0, "abc123def456\n")
+            return cp(0, "")
+        rc = cli.cmd_sync(_config([]), out=Sink(), run=run)
+        return rc, calls
+
+    def test_plain_clone_uses_origin(self):
+        rc, calls = self._sync("origin\n")
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn(["git", "fetch", "origin"], calls)
+        self.assertIn(["git", "pull", "--rebase", "origin", "master"], calls)
+
+    def test_upstream_preferred_when_present(self):
+        rc, calls = self._sync("origin\nupstream\n")
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn(["git", "fetch", "upstream"], calls)
+        self.assertIn(["git", "pull", "--rebase", "upstream", "master"], calls)
+
+
 class StatusTests(unittest.TestCase):
     """--status: read-only, aggregates all tiers, degrades gracefully."""
 
