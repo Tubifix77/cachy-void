@@ -178,7 +178,12 @@ def build_health_daemon(config: Config, out=print, run=None) -> HealthDaemon:
 # Process helpers
 # ==========================================================================
 def _run(args: Sequence[str], cwd: Optional[str] = None) -> subprocess.CompletedProcess:
-    return subprocess.run(list(args), cwd=cwd, capture_output=True, text=True)
+    # stdin=DEVNULL: no child may ever WAIT on a prompt. An unanswered kconfig
+    # symbol once parked `make oldconfig` on a question for 18 hours (§8.4,
+    # real-hardware finding); with EOF on stdin the same mistake fails fast and
+    # loud instead — the kernel is withheld, userspace proceeds (fail-safe).
+    return subprocess.run(list(args), cwd=cwd, capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL)
 
 
 def _sudo(run) -> Callable[[Sequence[str]], subprocess.CompletedProcess]:
@@ -1130,7 +1135,8 @@ def _stream_run(args, out, run) -> subprocess.CompletedProcess:
     if run is not _run:
         return run(args)
     proc = subprocess.Popen(list(args), stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True)
+                            stderr=subprocess.STDOUT, text=True,
+                            stdin=subprocess.DEVNULL)
     assert proc.stdout is not None
     for line in proc.stdout:
         out("  " + line.rstrip())

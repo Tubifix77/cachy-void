@@ -787,6 +787,16 @@ class ArgparseTests(unittest.TestCase):
         self.assertEqual(rc, cli.EXIT_USAGE)
 
 
+class RunnerStdinTests(unittest.TestCase):
+    """_run must never let a child WAIT on a prompt (18h `make oldconfig` hang,
+    §8.4 real-hardware finding): stdin is /dev/null, so stdin-readers see EOF."""
+
+    def test_stdin_is_devnull(self):
+        cp_ = cli._run(["cat"])          # would block forever on an inherited tty
+        self.assertEqual(cp_.returncode, 0)
+        self.assertEqual(cp_.stdout, "")
+
+
 class SyncRemoteTests(unittest.TestCase):
     """--sync must work with EITHER remote name: 'upstream' (manual setups) or
     'origin' (bootstrap.sh's plain clone — the hardcoded 'upstream' made every
