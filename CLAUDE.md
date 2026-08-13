@@ -17,11 +17,22 @@ dhcpcd wasn't enough on the laptop, so `--with-networkmanager` was added as an o
 WiFi picker (NetworkManager + nm-tray), including icon-visibility fixes and a clean
 `--uninstall` path back to dhcpcd.
 
-**One specific thing genuinely hasn't happened yet and is worth naming precisely:** the
-updater itself has not been run for a real update cycle on the live system — it's built,
-tested (mocked `subprocess` calls, no live runs possible from this Windows dev machine),
-and ready to invoke, just not yet exercised for real. That's a "not yet run" item, not
-a "not yet built" one.
+**The updater has now been exercised for real, end to end (2026-08).** On the live
+laptop it has: applied a full upstream system update through the GUI (~36 packages,
+auto pre-deploy btrfs snapshot, services cycled without dropping the session), and
+closed the complete kernel circuit unattended — sync → BORE patch trust → template
+regeneration (6.12.103) → G2 gate → overnight compile → package → install → nvidia
+DKMS rebuild → reboot onto the new kernel, verified healthy (BORE live, 1000 Hz, full
+preempt, BBR built-in). Those runs surfaced and fixed real gaps (empty-queue system
+pass §4.5a, GUI silence, `--sync` remote naming, two non-interactive `oldconfig`
+prompt hangs — the fragment must answer *every* symbol, including choice options that
+become NEW). **Still genuinely untested:** the Void-owned-GRUB one-shot boot-test +
+auto-rollback (§8.6/§8.7 full choreography — this box's GRUB is Debian's, so staging
+runs in manual mode), and known §8.7 *bookkeeping* bugs found by the run: manual-mode
+staging registers no candidate (healthy boots are never PROMOTED; `ported_version`
+stays `0.0.0_0`), and the health daemon misclassifies the real laptop as
+"virtualized/bootloader-less" and parks (H4 network probe races NM at boot; H2 dmesg
+probe undiagnosed).
 
 ## What This Project Is
 
