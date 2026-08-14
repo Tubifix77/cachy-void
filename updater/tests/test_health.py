@@ -38,6 +38,24 @@ class IndividualCheckTests(unittest.TestCase):
         dirty = HealthChecker(run=Dispatch({"dmesg": cp(stdout="CPU stuck")}))
         self.assertFalse(dirty.h2_dmesg_clean())
 
+    def test_h1_supervise_denied_falls_back_to_sudo(self):
+        # Unprivileged sv status is denied supervise/ok on root-owned services
+        # (real-hardware finding: H1 only ever passed vacuously). Denied ->
+        # retry via the granted sudo sv; that result decides.
+        def run(args):
+            if args[0] == "sv":
+                return cp(returncode=1, stderr="unable to open supervise/ok")
+            if args[0] == "sudo":
+                return cp(stdout="run: /var/service/dbus: (pid 1) 5s")
+            return cp()
+        self.assertTrue(HealthChecker(run=run).h1_services_up(["dbus"]))
+
+        def run_down(args):
+            if args[0] == "sv":
+                return cp(returncode=1)
+            return cp(stdout="down: /var/service/dbus: 3s")   # sudo sees it down
+        self.assertFalse(HealthChecker(run=run_down).h1_services_up(["dbus"]))
+
     def test_h2_dmesg_restricted_falls_back_to_sudo(self):
         # kernel.dmesg_restrict=1 denies the unprivileged daemon (real-hardware
         # finding: H2 was structurally always-False). Denied -> retry via the

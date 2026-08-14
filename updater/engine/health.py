@@ -59,11 +59,21 @@ class HealthChecker:
 
     # -- individual checks ----------------------------------------------
     def h1_services_up(self, services: Sequence[str]) -> bool:
-        """Every service that was up at staging is up now."""
+        """Every service that was up at staging is up now.
+
+        Unprivileged `sv status` cannot read root-owned supervise/ dirs
+        ("unable to open supervise/ok: access denied"), so H1 was structurally
+        False for any non-empty service list (real-hardware finding — it had
+        only ever passed vacuously). Mirror H2: retry through the §4 sudo grant
+        (sv is already granted) before judging a service down.
+        """
         for svc in services:
             cp = self.run(["sv", "status", str(self.service_root / svc)])
             if cp.returncode != 0 or not cp.stdout.strip().startswith("run:"):
-                return False
+                cp = self.run(["sudo", "-n", "sv", "status",
+                               str(self.service_root / svc)])
+                if cp.returncode != 0 or not cp.stdout.strip().startswith("run:"):
+                    return False
         return True
 
     def h2_dmesg_clean(self) -> bool:
