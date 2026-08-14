@@ -282,3 +282,29 @@ LXQt/X11 for NVIDIA gaming (further undercutting the §1 Plasma lock-in). Keeper
   `mesa-32bit-dri`, but Void's `<name>-32bit` convention actually favours
   `mesa-dri-32bit`, so trust NEITHER until checked; plus `nvidia-libs-32bit`,
   `vulkan-loader-32bit`.
+
+## 7. The maintenance test — selection rule for any future addition (agreed 2026-08-15)
+
+Ratified while choosing the gaming-completion set (earlyoom, gamescope, vkBasalt,
+fastfetch — all stock Void packages):
+
+**An addition must be upstream-maintained. If keeping it working falls on US — our
+own srcpkg, our own fork, our own rules file to curate — it is DISQUALIFIED, no
+matter how well it fits the philosophy, UNLESS it *is* core CachyOS substance.**
+
+`linux-cachy`/BORE is the one sanctioned exception: maintaining that fork is the
+project's reason to exist, not a side burden. Everything else must be one
+`xbps-install` away, with Void (or the package's upstream) carrying the updates.
+
+Worked example — **ananicy-cpp**: the largest genuinely missing piece of CachyOS
+substance (automatic nice/ioprio rules so games get priority; CachyOS ships it by
+default with community rules). It is NOT in Void's repos, so adopting it means
+maintaining a srcpkg *and* a rules file forever → **disqualified by this rule**,
+not by philosophy fit. Revisit only if Void packages it upstream (check with
+`xbps-query -Rs ananicy` before ever proposing it again). Same disposition:
+sched-ext/scx userspace (no Void packages + BORE is the identity).
+
+Rationale: this is a solo hobby overlay that deliberately rides upstream Void so
+it "doesn't rot" (the same reasoning that rejected the standalone-distro/binary-
+repo path). Every self-maintained component is a standing bill against that
+design; the kernel is the only bill worth paying.
