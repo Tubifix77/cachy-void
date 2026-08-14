@@ -491,6 +491,20 @@ version of the Conky's "honest numbers, not a dashboard." `cachy-branding --remo
 reverts the skin, strips the bash block / removes our `~/.zshrc`, and switches the
 login shell back to bash.
 
+### 5.11 fastfetch — the shell's greeting
+
+The conky panels are the *desktop's* telemetry; **fastfetch** is the *shell's*
+greeting, and it gets the same discipline: honest facts, grey text, one green
+accent, no rainbow logo circus. The preset keeps Void's small glyph (it **is** the
+base distro) recolored to the palette, a `cachy · void` accent line, and a short
+fact list (os / kernel — where the `-cachy` suffix speaks for itself — packages,
+cpu/gpu/mem/zram/disk). Installed by `cachy-branding` only when fastfetch is
+present (deploy.sh adds it as an optional branding package), **never clobbering an
+existing user config** (only our own marked preset is ever overwritten or removed
+by `--remove`). Run it manually or drop `fastfetch` into your shell rc — the
+preset deliberately doesn't auto-hook the shell; a forced greeting would be the
+opposite of downplayed.
+
 ---
 
 ## 6. Scope & rules

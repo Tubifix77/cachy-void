@@ -10,12 +10,17 @@
 #   * a desktop dGPU (no prime-run)                       -> gamemoderun game
 #   * a box without gamemode                              -> game (or prime-run game)
 #
-# MangoHud is opt-in (it is a Vulkan/GL layer keyed on MANGOHUD=1): set CACHY_HUD=1
-# to overlay FPS/frametime/temps. Left off by default so the wrapper is invisible
-# unless asked for.
+# Everything beyond the base composition is OPT-IN via env toggles, so the
+# wrapper stays invisible unless asked for (§3.4):
+#   CACHY_HUD=1   MangoHud overlay (Vulkan/GL layer keyed on MANGOHUD=1)
+#   CACHY_GS=1    gamescope micro-compositor (frame limiting / FSR; needs Vulkan);
+#                 extra flags via CACHY_GS_OPTS, e.g. "-W 1920 -H 1080 -r 60 -f"
+#   CACHY_VKB=1   vkBasalt post-processing (keyed on ENABLE_VKBASALT=1; its CAS
+#                 sharpening pairs well with gamescope's FSR upscaling)
 #
 # Steam per-title launch option:      cachy-game %command%
 # With the HUD:                       CACHY_HUD=1 cachy-game %command%
+# Gamescope'd at 1080p60:             CACHY_GS=1 CACHY_GS_OPTS="-W 1920 -H 1080 -r 60" cachy-game %command%
 # From a shell:                       cachy-game ./mygame
 if [ "${CACHY_HUD:-0}" = 1 ]; then
     export MANGOHUD=1
@@ -32,6 +37,14 @@ if [ "${CACHY_HUD:-0}" = 1 ]; then
     fi
 fi
 
+[ "${CACHY_VKB:-0}" = 1 ] && export ENABLE_VKBASALT=1
+
+# gamescope is the INNERMOST prefix (closest to the game): prime-run's offload
+# env then covers gamescope AND the game, and gamemode governs the whole tree.
+if [ "${CACHY_GS:-0}" = 1 ] && command -v gamescope >/dev/null 2>&1; then
+    # shellcheck disable=SC2086 — CACHY_GS_OPTS is deliberately word-split
+    set -- gamescope ${CACHY_GS_OPTS:-} -- "$@"
+fi
 command -v prime-run   >/dev/null 2>&1 && set -- prime-run "$@"
 command -v gamemoderun >/dev/null 2>&1 && set -- gamemoderun "$@"
 

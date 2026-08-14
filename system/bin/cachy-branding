@@ -77,6 +77,9 @@ PY
     rm -f "$CFG"/autostart/{picom,plank,conky,conky-system,xcape}.desktop
     rm -f "$CFG"/conky/conky-system.conf
     # openbox session autostart + root menu: restore a pre-existing one, else drop ours
+    # fastfetch preset: ours is marked; only remove what we wrote
+    grep -q 'void-tactical fastfetch preset' "$CFG/fastfetch/config.jsonc" 2>/dev/null \
+        && rm -f "$CFG/fastfetch/config.jsonc"
     for _obf in openbox/autostart openbox/menu.xml openbox/environment tint2/tint2rc; do
         if [ -e "$CFG/$_obf.pre-cachy.bak" ]; then
             mv -f "$CFG/$_obf.pre-cachy.bak" "$CFG/$_obf"
@@ -471,6 +474,21 @@ setqt(){ grep -q "^$1=" "$QT" && sed -i "s|^$1=.*|$1=$2|" "$QT" || sed -i "/^\[G
 setqt colorScheme void-tactical
 setqt fontFamily Hack
 ok "qterminal -> void-tactical + Hack"
+
+# fastfetch preset — the shell's greeting in the same discipline as the conky
+# panels (honest facts, grey + one green accent). Installed only if fastfetch is
+# present (deploy.sh installs it as an optional branding package) and never
+# clobbers a config the user already wrote.
+if command -v fastfetch >/dev/null 2>&1 && [ -f "$ASSETS/fastfetch/config.jsonc" ]; then
+    FFC="$CFG/fastfetch/config.jsonc"
+    if [ ! -e "$FFC" ] || grep -q 'void-tactical fastfetch preset' "$FFC" 2>/dev/null; then
+        mkdir -p "$CFG/fastfetch"
+        cp -f "$ASSETS/fastfetch/config.jsonc" "$FFC"
+        ok "fastfetch -> void-tactical preset"
+    else
+        warn "fastfetch: existing user config left untouched"
+    fi
+fi
 
 # ============================================================ Papirus grey folders (only on the Papirus fallback)
 if [ "$ICON_THEME" = "Papirus-Dark" ] && command -v papirus-folders >/dev/null 2>&1; then

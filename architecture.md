@@ -188,6 +188,13 @@ sudo ln -s /etc/sv/zramen /var/service/
 
 Configure in the service's `conf` file using the variable names the `zramen` package actually ships (verified against `zramen-1.0.1_1`): `ZRAM_COMP_ALGORITHM=zstd` (best ratio; package default `lz4`), `ZRAM_SIZE=100` — a **percent** of RAM, not a fraction (package default 25) — and, critically, `ZRAM_MAX_SIZE` raised above its 4096 MiB default so 100% is not silently capped at 4 GiB. `ZRAM_PRIORITY` sits above any disk swap (package default 32767). Disk swap partitions may coexist at lower priority but are not required. (An earlier draft used `ZRAM_ALG`/`ZRAM_PRIO`/a `1.0` fraction — all unrecognized by zramen; that is retired.)
 
+**Memory-pressure guard: `earlyoom`.** `vm.swappiness=100` + full-RAM zram is a deliberately aggressive posture (§3.1), and its failure mode is the classic one: a leaking game fills RAM *and* compressed swap, and the box livelocks for minutes before the kernel OOM killer acts. `earlyoom` (stock Void package, runit service) is that posture's safety valve: a tiny unprivileged daemon that kills the largest offender *before* the freeze. Ship it enabled with package defaults — no tuning, no config file; the value is that it exists. This is a companion of the zram choice, not an independent feature: whoever gets §3.1's swappiness also gets its guard.
+
+```sh
+sudo xbps-install earlyoom
+sudo ln -s /etc/sv/earlyoom /var/service/
+```
+
 ### 3.3 Udev rules
 
 **`/etc/udev/rules.d/60-ioschedulers.rules`** — right scheduler per medium:
@@ -234,16 +241,33 @@ Two upstream tools plus a composition wrapper:
   struggles), so the GPU panel would read a misleading 0% while a game renders;
   the minimal profile keeps the accurate swapchain-based fps/frametime + CPU and
   drops the GPU sensors. `deploy.sh --hud-profile auto|full|minimal` overrides.
+- **`gamescope`** — Valve's micro-compositor (stock Void package): the *display*
+  leg of the runtime triad (gamemode = CPU, MangoHud = telemetry, gamescope =
+  presentation). It isolates the game from desktop-compositor jank and provides
+  frame limiting and FSR upscaling. Opt-in via `CACHY_GS=1` (add extra gamescope
+  flags through `CACHY_GS_OPTS`, e.g. `-W 1920 -H 1080 -r 60`); it requires a
+  working Vulkan driver, and — like every layer here — is skipped when absent.
+- **`vkBasalt`** — a Vulkan post-processing layer (stock Void package, 32-bit
+  sibling multilib-gated like MangoHud's); its contrast-adaptive sharpening
+  pairs naturally with FSR upscaling. Opt-in via `CACHY_VKB=1` (which exports
+  the layer's own `ENABLE_VKBASALT=1`); absent = inert, the env var is ignored.
 - **`cachy-game`** — a launch wrapper that composes the offloader and gamemode:
-  `gamemoderun` → `prime-run` (the NVIDIA PRIME offload, §6b) → the game. It
-  **skips any piece that is absent**, so it is correct on a desktop GPU (no
-  `prime-run`) or a box without gamemode. MangoHud is opt-in via `CACHY_HUD=1`.
-  The Steam per-title launch option becomes simply `cachy-game %command%`.
+  `gamemoderun` → `prime-run` (the NVIDIA PRIME offload, §6b) → optionally
+  `gamescope --` → the game. It **skips any piece that is absent**, so it is
+  correct on a desktop GPU (no `prime-run`) or a box without gamemode. MangoHud
+  is opt-in via `CACHY_HUD=1`, gamescope via `CACHY_GS=1`, vkBasalt via
+  `CACHY_VKB=1` — the wrapper stays invisible unless asked. The Steam per-title
+  launch option becomes simply `cachy-game %command%`.
 
 ```sh
-# /usr/local/bin/cachy-game
+# /usr/local/bin/cachy-game  (composition core; the shipped file adds the
+# Proton-container MangoHud-config seeding documented above)
 #!/bin/sh
 [ "${CACHY_HUD:-0}" = 1 ] && export MANGOHUD=1
+[ "${CACHY_VKB:-0}" = 1 ] && export ENABLE_VKBASALT=1
+if [ "${CACHY_GS:-0}" = 1 ] && command -v gamescope >/dev/null 2>&1; then
+    set -- gamescope ${CACHY_GS_OPTS:-} -- "$@"
+fi
 command -v prime-run   >/dev/null 2>&1 && set -- prime-run "$@"
 command -v gamemoderun >/dev/null 2>&1 && set -- gamemoderun "$@"
 exec "$@"

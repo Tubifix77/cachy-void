@@ -141,6 +141,7 @@ sudoers fragment is validated with `visudo -c` before it is ever activated.
 | `/etc/modprobe.d/99-gaming-input.conf`, `/etc/modules-load.d/cachy.conf` | Input polling + BBR module. |
 | `/etc/sudoers.d/cachy-void` | Narrow NOPASSWD grants for the updater user. |
 | `/etc/sv/zramen/`, `/etc/sv/cachy-health/` | runit services (zram swap; post-boot health daemon). |
+| `earlyoom` (runit service, enabled) | §3.2 memory-pressure guard — kills a leaking process *before* the swappiness=100+zram posture can livelock the box. Package defaults, no config. |
 | `/etc/sv/cachy-void-update/` | Unattended-update timer service (§4.9; provisioned always, enabled only with `--with-schedule`). |
 | `/var/log/cachy-health/`, `/var/log/cachy-void-update/` | Health daemon + scheduled-run logs (svlogd). |
 | `/.cachy-snapshots/` | Pre-deploy btrfs snapshot subvol (§9.5; created only when the root is btrfs). |
@@ -441,11 +442,12 @@ Notes:
 
 ### 12.1 Launching games — the `cachy-game` wrapper (§3.4)
 
-`deploy.sh` installs `gamemode`, `MangoHud`, and a launch wrapper
+`deploy.sh` installs `gamemode`, `MangoHud`, `gamescope` + `vkBasalt` (optional —
+they need a working Vulkan driver), and a launch wrapper
 `/usr/local/bin/cachy-game` that composes the per-game runtime optimisations:
 
 ```
-cachy-game = gamemoderun  ->  prime-run  ->  <your game>
+cachy-game = gamemoderun  ->  prime-run  ->  [gamescope --]  ->  <your game>
 ```
 
 i.e. it runs the game under **Feral GameMode** (performance CPU governor, GPU
@@ -480,12 +482,23 @@ is also correct on a desktop dGPU.
   accurate **fps/frametime** (swapchain-based, unaffected) and CPU stats, and
   omits the GPU sensors. Override with `--hud-profile full` if your setup does
   report GPU load correctly. (Every other machine gets the full HUD.)
+- **With gamescope** (Valve's micro-compositor: frame limiting, FSR upscaling,
+  isolation from desktop-compositor jank):
+  ```
+  CACHY_GS=1 CACHY_GS_OPTS="-W 1920 -H 1080 -r 60 -f" cachy-game %command%
+  ```
+  Extra flags go in `CACHY_GS_OPTS` (see `gamescope --help`). Skipped silently
+  when gamescope isn't installed.
+- **With vkBasalt** (Vulkan post-processing; its CAS sharpening pairs well with
+  FSR upscaling): `CACHY_VKB=1 cachy-game %command%`. Inert when not installed.
 - **From a shell** — `cachy-game ./mygame` (or `CACHY_HUD=1 cachy-game …`).
 
 GameMode needs no runit service (it is D-Bus activated) and no special group on a
-seat-managed (elogind) desktop. `gamescope` is intentionally **not** part of this
-layer — it is unreliable on the nvidia470/390 legacy drivers; install it by hand
-where it helps.
+seat-managed (elogind) desktop. All three overlays (HUD, gamescope, vkBasalt) are
+**off by default** — the wrapper is invisible unless asked. One honest caveat:
+gamescope is unreliable on the legacy nvidia470/390 drivers, which is exactly why
+it is an opt-in toggle rather than part of the base composition — on a legacy
+Optimus box, simply don't set `CACHY_GS`.
 
 ### 12.2 Proton-CachyOS — the `cachy-proton` helper (§3.4)
 

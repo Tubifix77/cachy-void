@@ -54,12 +54,16 @@ readonly TAB=$'\t'
 # handle standard pads, and Steam ships its own rules (§3.3); there is no
 # game-devices-udev package.
 readonly PKG_ZRAM="zramen"
+readonly PKG_EARLYOOM="earlyoom"   # §3.2: OOM guard for the swappiness=100+zram posture
 readonly PKG_XTOOLS="xtools"
 readonly PKG_SNOOZE="snooze"   # §4.9: the scheduled-update runit service execs it
 # §3.4 gaming userspace layer.
 readonly PKG_GAMEMODE="gamemode"
 readonly PKG_MANGOHUD="MangoHud"           # case-sensitive; lowercase does not exist
 readonly PKG_MANGOHUD32="MangoHud-32bit"   # 32-bit titles; multilib-gated (optional)
+readonly PKG_GAMESCOPE="gamescope"          # §3.4 display leg; opt-in via CACHY_GS=1
+readonly PKG_VKBASALT="vkBasalt"            # §3.4 post-processing; opt-in via CACHY_VKB=1
+readonly PKG_VKBASALT32="vkBasalt-32bit"    # 32-bit titles; multilib-gated (optional)
 readonly PKG_XZ="xz"                        # cachy-proton extracts .tar.xz releases
 readonly CACHY_GAME_WRAPPER="/usr/local/bin/cachy-game"
 readonly CACHY_PROTON_HELPER="/usr/local/bin/cachy-proton"
@@ -424,6 +428,11 @@ install_gaming_userspace() {
     ensure_pkg "$PKG_GAMEMODE"
     ensure_pkg "$PKG_MANGOHUD"
     ensure_pkg "$PKG_MANGOHUD32" optional
+    # §3.4 display leg + post-processing: both OPT-IN at runtime (CACHY_GS/CACHY_VKB),
+    # both optional at install (need Vulkan; absence just disables the toggle).
+    ensure_pkg "$PKG_GAMESCOPE" optional
+    ensure_pkg "$PKG_VKBASALT" optional
+    ensure_pkg "$PKG_VKBASALT32" optional     # multilib-gated like MangoHud-32bit
     ensure_pkg "$PKG_XZ"          # cachy-proton needs xz to extract Proton-CachyOS
     install_file "$SYS_DIR/bin/cachy-game"   "$CACHY_GAME_WRAPPER"   0755 root root
     install_file "$SYS_DIR/bin/cachy-proton" "$CACHY_PROTON_HELPER"  0755 root root
@@ -457,6 +466,7 @@ install_branding() {
     ensure_pkg ImageMagick optional      # renders the login wallpaper + flat panel
     ensure_pkg feh optional              # wallpaper setter for the bare-openbox session
     ensure_pkg tint2 optional            # panel/taskbar for the bare-openbox session
+    ensure_pkg fastfetch optional        # branded shell greeting (branding.md §5.11)
     # mirror read-only theme assets (dir is ledger-tracked; uninstall rm -rf's it)
     install_dir "$BRANDING_ASSETS" root
     if ! $DRY_RUN && [ -z "$ROOT" ]; then
@@ -919,15 +929,17 @@ do_install() {
 
     log "[6/10] packages: zram (§3.2) + xtools (§4.7 cycling) + snooze (§4.9 timer)"
     ensure_pkg "$PKG_ZRAM"
+    ensure_pkg "$PKG_EARLYOOM"   # §3.2: the swappiness=100+zram posture's safety valve
     ensure_pkg "$PKG_XTOOLS"
     # snooze backs the §4.9 service; install it unconditionally so the service
     # works the moment it is enabled — whether via --with-schedule or a later
     # manual `ln -s` (the run script documents that path). It is tiny.
     ensure_pkg "$PKG_SNOOZE"
 
-    log "[7/10] runit services: zram (§3.2), cachy-health (§8.7), cachy-void-update (§4.9)"
+    log "[7/10] runit services: zram + earlyoom (§3.2), cachy-health (§8.7), cachy-void-update (§4.9)"
     install_file "$SYS_DIR/sv/zramen/conf" /etc/sv/zramen/conf 0644 root root
     enable_service "$PKG_ZRAM"
+    enable_service "$PKG_EARLYOOM"   # package defaults; the value is that it exists
     install_health_service
     install_schedule_service
 

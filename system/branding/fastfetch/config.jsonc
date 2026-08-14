@@ -1,0 +1,39 @@
+// Cachy-Void — void-tactical fastfetch preset (branding.md §5.11).
+// The shell's greeting, same discipline as the conky panels: honest facts,
+// grey text, ONE green accent, no rainbow logo circus. The Void glyph is kept
+// (it IS the base distro) but recolored to the brand palette.
+{
+    "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+    "logo": {
+        "source": "void_small",
+        "color": {
+            "1": "green",
+            "2": "default"
+        },
+        "padding": { "top": 1 }
+    },
+    "display": {
+        "separator": "  ",
+        "color": {
+            "keys": "green",
+            "title": "default"
+        },
+        "key": { "width": 10 }
+    },
+    "modules": [
+        { "type": "custom", "format": "{#1}cachy · void{#}" },
+        "break",
+        { "type": "os",      "key": "os" },
+        { "type": "kernel",  "key": "kernel" },
+        { "type": "uptime",  "key": "up" },
+        { "type": "packages","key": "pkgs" },
+        { "type": "shell",   "key": "shell" },
+        { "type": "wm",      "key": "wm" },
+        "break",
+        { "type": "cpu",     "key": "cpu", "showPeCoreCount": true },
+        { "type": "gpu",     "key": "gpu" },
+        { "type": "memory",  "key": "mem" },
+        { "type": "swap",    "key": "zram" },
+        { "type": "disk",    "key": "root", "folders": "/" }
+    ]
+}

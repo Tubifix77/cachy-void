@@ -18,7 +18,7 @@ The base system stays 100% upstream Void binaries. Only a short, curated overlay
 | **Safe kernel updates** | SHA-256-pinned BORE patch trust, deterministic template regeneration, a config gate that catches silent `oldconfig` drops, and GRUB **one-shot** boot-testing — a bad kernel rolls back on the next power cycle with zero interaction. |
 | **Automated updater** | A fail-fast update engine that syncs `void-packages`, computes a topologically-ordered build queue, compiles, deploys with overlay priority, cycles runit services, and — because an updater should update *everything* — refreshes **Flatpak** apps too. Recovery is by recomputation from live state. |
 | **Graphical front-end** | `cachy-updater-gui` — a themed PyQt5 updater so updates actually happen (Update / Update kernel / Clean up / GPU advisory), over the same tested CLI. |
-| **Gaming layer** | `cachy-game` launch wrapper (GameMode → PRIME → game), a restrained MangoHud profile (auto-tuned for legacy Optimus), and `cachy-proton` to install Proton-CachyOS. |
+| **Gaming layer** | `cachy-game` launch wrapper (GameMode → PRIME → optional gamescope → game) with opt-in MangoHud, **gamescope** (frame limiting/FSR) and **vkBasalt** toggles, `earlyoom` guarding the aggressive zram posture, and `cachy-proton` to install Proton-CachyOS. |
 | **Maintenance & GPU** | `--clean` (orphans + package cache; never touches kernels), `--gpu` (detected card, driver, DKMS health, legacy-series advice). |
 | **btrfs rollback net** | Optional pre-deploy read-only snapshots taken right before each deploy (`[snapshot]`), on top of the always-converges recovery path. |
 | **Optional desktop look** | `void-tactical` — a low-key obsidian/green LXQt identity (Kvantum + panel + Conky telemetry + wallpaper + a branded SDDM login screen), fully reversible. |
@@ -71,8 +71,8 @@ Everything the installer touches is recorded in a per-change **ledger** — insp
 
 | What | Exactly |
 |---|---|
-| Stock Void packages | `zramen` (zram), `xtools`, `snooze` (job scheduler), `gamemode`, `MangoHud` (+ `MangoHud-32bit` if multilib is on), `xz` |
-| runit services enabled | `zramen`, `cachy-health` (post-boot kernel health check). `cachy-void-update` (daily timer) is provisioned but only **enabled** with `--with-schedule` |
+| Stock Void packages | `zramen` (zram), `earlyoom` (OOM guard), `xtools`, `snooze` (job scheduler), `gamemode`, `MangoHud`, `gamescope`, `vkBasalt` (+ 32-bit siblings if multilib is on), `xz` |
+| runit services enabled | `zramen`, `earlyoom`, `cachy-health` (post-boot kernel health check). `cachy-void-update` (daily timer) is provisioned but only **enabled** with `--with-schedule` |
 | Tuning config (new files) | `/etc/sysctl.d/99-cachy-gaming.conf`, `/etc/udev/rules.d/60-ioschedulers.rules`, `/etc/modprobe.d/99-gaming-input.conf`, `/etc/modules-load.d/cachy.conf` |
 | Updater plumbing | engine at `/usr/libexec/cachy-void-updater/`, `/etc/cachy-void/updater.toml`, `/etc/xbps.d/00-cachy-overlay.conf` (local-repo priority), a narrow `visudo`-validated `/etc/sudoers.d/cachy-void`, compiler profile in *your* `void-packages/etc/conf` (untracked) |
 | Tools | `/usr/local/bin/`: `cachy-void-update`, `cachy-game`, `cachy-proton` (+ `/etc/xdg/MangoHud/MangoHud.conf`) |
@@ -81,7 +81,7 @@ Everything the installer touches is recorded in a per-change **ledger** — insp
 
 | Flag | Adds |
 |---|---|
-| `--with-branding` | Packages `kvantum papirus-icon-theme papirus-folders plank rofi conky picom python3-PyQt5` (+ optional `arc-theme font-hack ImageMagick feh tint2 setxkbmap`), theme assets under `/usr/share/cachy-void/branding`, the `cachy-branding` + `cachy-updater-gui` tools, and the **void-tactical** SDDM login theme. The desktop look itself is applied per-user by `cachy-branding` (backed up, `--remove` restores) |
+| `--with-branding` | Packages `kvantum papirus-icon-theme papirus-folders plank rofi conky picom python3-PyQt5` (+ optional `arc-theme font-hack ImageMagick feh tint2 setxkbmap fastfetch`), theme assets under `/usr/share/cachy-void/branding`, the `cachy-branding` + `cachy-updater-gui` tools, and the **void-tactical** SDDM login theme. The desktop look itself is applied per-user by `cachy-branding` (backed up, `--remove` restores) |
 | `--with-networkmanager` | `NetworkManager` + `nm-tray` (Qt WiFi picker), enables the NM service, **disables `dhcpcd`** (they conflict) |
 | `--with-grub` | Edits `/etc/default/grub` (ledger-backed): `GRUB_DEFAULT=saved` (required for one-shot kernel boot-tests) + `usbcore.autosuspend=-1` |
 | `--with-schedule` | Enables the daily unattended-update runit service |
