@@ -1,0 +1,8 @@
+# Cachy-Void — realtime-audio device permissions (architecture.md §3.3).
+# Provenance: CachyOS-Settings 40-hpet-permissions.rules + 99-cpu-dma-latency.rules
+# (verified 2026-08-15). Lets a realtime-audio userspace (JACK / pro-audio under
+# PipeWire) use precise timers and hold C-states without root: rtc0/hpet readable
+# by group audio; /dev/cpu_dma_latency writable by group audio.
+KERNEL=="rtc0", GROUP="audio"
+KERNEL=="hpet", GROUP="audio"
+DEVPATH=="/devices/virtual/misc/cpu_dma_latency", OWNER="root", GROUP="audio", MODE="0660"

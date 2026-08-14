@@ -179,6 +179,31 @@ net.ipv4.tcp_congestion_control = bbr
 
 Apply/verify: `sudo sysctl --system`. On the stock Void kernel (fallback boots), BBR is a module — add `tcp_bbr` to `/etc/modules-load.d/cachy.conf` so the sysctl line never silently fails. On `linux-cachy` it is built in (§2.4).
 
+### 3.1b THP runtime tuning (sysfs, `/etc/rc.local`)
+
+§2.4 builds `THP=always` into the kernel; CachyOS pairs that policy with two runtime
+knobs its `cachyos-settings` ships as tmpfiles (verified against the repo,
+2026-08-15): `transparent_hugepage/defrag = defer+madvise` (tcmalloc-style tuning)
+and `khugepaged/max_ptes_none = 409` — the 6.12+ THP *shrinker*: "THP=always vastly
+overprovisions THPs in sparsely accessed memory areas"; 409/512 means any THP that is
+>80 % zero-filled is split, bringing `always`'s memory usage down to ~`madvise`
+levels while keeping its performance. These are **sysfs** paths — reachable by
+neither `sysctl.d` (procfs only) nor udev (not a device) — so on runit the sanctioned
+mechanism is **`/etc/rc.local`** (run by Void's core-services at boot end). deploy.sh
+manages a marked block in it (backed up + ledger-tracked like any other file; the
+block is rebuilt idempotently on re-runs, and `--uninstall` restores the pre-Cachy
+file). Writes are `[ -w ]`-guarded so a stock-kernel fallback boot without a knob
+never errors.
+
+```sh
+# >>> cachy-void THP runtime tuning (§3.1b) >>>
+[ -w /sys/kernel/mm/transparent_hugepage/defrag ] && \
+    echo defer+madvise > /sys/kernel/mm/transparent_hugepage/defrag
+[ -w /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none ] && \
+    echo 409 > /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none
+# <<< cachy-void THP runtime tuning <<<
+```
+
 ### 3.2 zram (runit-native, no zram-generator)
 
 ```sh
@@ -213,6 +238,22 @@ ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue
 - Legacy HID polling: `/etc/modprobe.d/99-gaming-input.conf` with `options usbhid mousepoll=1` (1000 Hz). Modern gaming mice negotiate their native rate anyway; this only lifts legacy devices.
 
 Apply: `sudo udevadm control --reload && sudo udevadm trigger`.
+
+**CachyOS-settings parity rules (adopted 2026-08-15, each verified against the
+`CachyOS/CachyOS-Settings` repo before adoption — provenance in the rule headers):**
+
+- **`20-audio-pm.rules`** — pins `snd_hda_intel power_save=0` while on AC (their
+  comment: "prevents audio cracks on some hardware"), restoring the saved value when
+  the box goes to battery. Ported near-verbatim (bash stays; Void ships it).
+- **`40-rtaudio-perms.rules`** — `rtc0` + `hpet` to group `audio`, and
+  `/dev/cpu_dma_latency` 0660 root:audio, so a realtime-audio userspace (JACK,
+  pro-audio under PipeWire) can use precise timers and hold C-states without root.
+- **`50-sata-alpm.rules`** — SATA `link_power_management_policy=max_performance`
+  (ALPM off): latency over power on link transitions, the desktop-gaming default.
+- **`/etc/modprobe.d/99-cachy-watchdog.conf`** — blacklists `iTCO_wdt` (Intel) and
+  `sp5100_tco` (AMD Ryzen): a hardware watchdog nobody arms is pure periodic-timer
+  overhead on a gaming box (found *loaded* on the reference laptop). `kernel.
+  nmi_watchdog=0` in §3.1 is the software half of the same decision.
 
 ---
 
@@ -251,6 +292,14 @@ Two upstream tools plus a composition wrapper:
   sibling multilib-gated like MangoHud's); its contrast-adaptive sharpening
   pairs naturally with FSR upscaling. Opt-in via `CACHY_VKB=1` (which exports
   the layer's own `ENABLE_VKBASALT=1`); absent = inert, the env var is ignored.
+- **Proton toolbox (optional, no wrappers needed):** `protontricks` +
+  `winetricks` (prefix repair/injection — the workhorses behind "the game needs
+  vcrun/dotnet/a font"), `Vulkan-Tools` (`vulkaninfo`/`vkcube` — the diagnostic
+  companion to `--gpu`; note Void's **capital-V** package name), and
+  `liberation-fonts-ttf` (metric-compatible Arial/Times substitutes — the classic
+  missing-text fix in Windows games). All four are members of CachyOS's own
+  `cachyos-gaming-meta` dependency set (verified 2026-08-15) and stock Void
+  packages — the §future-ideas maintenance test passes by construction.
 - **`cachy-game`** — a launch wrapper that composes the offloader and gamemode:
   `gamemoderun` → `prime-run` (the NVIDIA PRIME offload, §6b) → optionally
   `gamescope --` → the game. It **skips any piece that is absent**, so it is

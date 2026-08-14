@@ -433,6 +433,13 @@ install_gaming_userspace() {
     ensure_pkg "$PKG_GAMESCOPE" optional
     ensure_pkg "$PKG_VKBASALT" optional
     ensure_pkg "$PKG_VKBASALT32" optional     # multilib-gated like MangoHud-32bit
+    # §3.4 Proton toolbox (all members of CachyOS's own gaming-meta dep set,
+    # verified 2026-08-15; all stock Void packages): prefix repair, GPU diagnostics,
+    # and the classic missing-font fix. Note Vulkan-Tools' capital-V Void name.
+    ensure_pkg protontricks optional
+    ensure_pkg winetricks optional
+    ensure_pkg Vulkan-Tools optional
+    ensure_pkg liberation-fonts-ttf optional
     ensure_pkg "$PKG_XZ"          # cachy-proton needs xz to extract Proton-CachyOS
     install_file "$SYS_DIR/bin/cachy-game"   "$CACHY_GAME_WRAPPER"   0755 root root
     install_file "$SYS_DIR/bin/cachy-proton" "$CACHY_PROTON_HELPER"  0755 root root
@@ -499,6 +506,34 @@ install_branding() {
                  /usr/share/applications/cachy-updater.desktop 0644 root root
     install_greeter        # SDDM login screen (system-level; needs root, done here)
     log "branding toolkit installed — apply the look by running (as your user): cachy-branding"
+}
+
+# install_rclocal_thp — §3.1b: THP defrag/shrinker are SYSFS knobs, reachable by
+# neither sysctl.d (procfs only) nor udev (not a device). Void's sanctioned local
+# boot hook is /etc/rc.local (core-services runs it at boot end), so manage a
+# MARKED block in it idempotently: strip any previous block, append the current
+# one, and hand the result to install_file — which contributes the one-time
+# backup + ledger row, so --uninstall restores the pre-Cachy rc.local exactly.
+install_rclocal_thp() {
+    local dest=/etc/rc.local pdest tmp
+    pdest="$(rp "$dest")"
+    tmp="$(mktemp)"
+    if [ -f "$pdest" ]; then
+        sed '/^# >>> cachy-void THP runtime tuning/,/^# <<< cachy-void THP runtime tuning/d' \
+            "$pdest" > "$tmp"
+    else
+        printf '#!/bin/sh\n# Local boot script (created by cachy-void deploy.sh).\n' > "$tmp"
+    fi
+    cat >> "$tmp" <<'RCL'
+# >>> cachy-void THP runtime tuning (architecture.md §3.1b; provenance: CachyOS-Settings tmpfiles) >>>
+[ -w /sys/kernel/mm/transparent_hugepage/defrag ] && \
+    echo defer+madvise > /sys/kernel/mm/transparent_hugepage/defrag
+[ -w /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none ] && \
+    echo 409 > /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none
+# <<< cachy-void THP runtime tuning <<<
+RCL
+    install_file "$tmp" "$dest" 0755 root root
+    rm -f -- "$tmp"
 }
 
 # install_networkmanager — opt-in laptop WiFi picker (--with-networkmanager). Installs
@@ -913,6 +948,12 @@ do_install() {
     install_file "$SYS_DIR/udev/60-ioschedulers.rules"      /etc/udev/rules.d/60-ioschedulers.rules 0644 root root
     install_file "$SYS_DIR/modprobe.d/99-gaming-input.conf" /etc/modprobe.d/99-gaming-input.conf 0644 root root
     install_file "$SYS_DIR/modules-load.d/cachy.conf"       /etc/modules-load.d/cachy.conf       0644 root root
+    # §3.3 cachyos-settings parity (each rule header carries its provenance)
+    install_file "$SYS_DIR/udev/20-audio-pm.rules"      /etc/udev/rules.d/20-audio-pm.rules      0644 root root
+    install_file "$SYS_DIR/udev/40-rtaudio-perms.rules" /etc/udev/rules.d/40-rtaudio-perms.rules 0644 root root
+    install_file "$SYS_DIR/udev/50-sata-alpm.rules"     /etc/udev/rules.d/50-sata-alpm.rules     0644 root root
+    install_file "$SYS_DIR/modprobe.d/99-cachy-watchdog.conf" /etc/modprobe.d/99-cachy-watchdog.conf 0644 root root
+    install_rclocal_thp   # §3.1b THP runtime knobs (sysfs — beyond sysctl.d/udev)
 
     log "[2/10] updater privilege boundary (§4.1)"
     install_sudoers
@@ -966,6 +1007,15 @@ do_install() {
         modprobe tcp_bbr 2>/dev/null || warn "could not load tcp_bbr now (built into linux-cachy; harmless on stock kernel until reboot)"
         sysctl --system >/dev/null 2>&1 || warn "sysctl --system reported errors (some keys may be unsupported on the running kernel)"
         udevadm control --reload && udevadm trigger || warn "udev reload failed"
+        # §3.1b THP knobs take effect NOW, not just next boot (same guarded writes
+        # as the rc.local block); §3.3 watchdog blacklist likewise (best-effort —
+        # rmmod fails harmlessly if something holds the watchdog open)
+        [ -w /sys/kernel/mm/transparent_hugepage/defrag ] && \
+            echo defer+madvise > /sys/kernel/mm/transparent_hugepage/defrag
+        [ -w /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none ] && \
+            echo 409 > /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none
+        modprobe -r iTCO_wdt 2>/dev/null || true
+        modprobe -r sp5100_tco 2>/dev/null || true
     fi
 
     ok "install complete (ledger tag: $DEPLOY_TAG)."

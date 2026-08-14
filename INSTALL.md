@@ -138,7 +138,10 @@ sudoers fragment is validated with `visudo -c` before it is ever activated.
 | `<void-packages>/etc/conf` | Compiler profile (`-march=… -O3 -pipe`, ccache). |
 | `/etc/sysctl.d/99-cachy-gaming.conf` | Gaming sysctl profile. |
 | `/etc/udev/rules.d/60-ioschedulers.rules` | Per-medium I/O schedulers. |
+| `/etc/udev/rules.d/{20-audio-pm,40-rtaudio-perms,50-sata-alpm}.rules` | CachyOS-settings parity (§3.3): HDA power-save off on AC (anti-crackle), RT-audio timer/latency device perms, SATA ALPM off. |
 | `/etc/modprobe.d/99-gaming-input.conf`, `/etc/modules-load.d/cachy.conf` | Input polling + BBR module. |
+| `/etc/modprobe.d/99-cachy-watchdog.conf` | Blacklists the unused hardware watchdogs (`iTCO_wdt`/`sp5100_tco`) — §3.3. |
+| `/etc/rc.local` (marked block) | §3.1b THP runtime knobs (`defrag=defer+madvise`, shrinker `max_ptes_none=409`) — sysfs, beyond sysctl.d/udev; block is idempotent, file backed up + ledger-tracked. |
 | `/etc/sudoers.d/cachy-void` | Narrow NOPASSWD grants for the updater user. |
 | `/etc/sv/zramen/`, `/etc/sv/cachy-health/` | runit services (zram swap; post-boot health daemon). |
 | `earlyoom` (runit service, enabled) | §3.2 memory-pressure guard — kills a leaking process *before* the swappiness=100+zram posture can livelock the box. Package defaults, no config. |

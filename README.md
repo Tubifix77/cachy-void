@@ -71,9 +71,9 @@ Everything the installer touches is recorded in a per-change **ledger** — insp
 
 | What | Exactly |
 |---|---|
-| Stock Void packages | `zramen` (zram), `earlyoom` (OOM guard), `xtools`, `snooze` (job scheduler), `gamemode`, `MangoHud`, `gamescope`, `vkBasalt` (+ 32-bit siblings if multilib is on), `xz` |
+| Stock Void packages | `zramen` (zram), `earlyoom` (OOM guard), `xtools`, `snooze` (job scheduler), `gamemode`, `MangoHud`, `gamescope`, `vkBasalt` (+ 32-bit siblings if multilib is on), `protontricks`, `winetricks`, `Vulkan-Tools`, `liberation-fonts-ttf`, `xz` |
 | runit services enabled | `zramen`, `earlyoom`, `cachy-health` (post-boot kernel health check). `cachy-void-update` (daily timer) is provisioned but only **enabled** with `--with-schedule` |
-| Tuning config (new files) | `/etc/sysctl.d/99-cachy-gaming.conf`, `/etc/udev/rules.d/60-ioschedulers.rules`, `/etc/modprobe.d/99-gaming-input.conf`, `/etc/modules-load.d/cachy.conf` |
+| Tuning config (new files) | `/etc/sysctl.d/99-cachy-gaming.conf`, udev rules (I/O schedulers, audio anti-crackle on AC, RT-audio perms, SATA ALPM off), `/etc/modprobe.d/` (input polling, watchdog blacklist), `/etc/modules-load.d/cachy.conf`, a marked THP-tuning block in `/etc/rc.local` |
 | Updater plumbing | engine at `/usr/libexec/cachy-void-updater/`, `/etc/cachy-void/updater.toml`, `/etc/xbps.d/00-cachy-overlay.conf` (local-repo priority), a narrow `visudo`-validated `/etc/sudoers.d/cachy-void`, compiler profile in *your* `void-packages/etc/conf` (untracked) |
 | Tools | `/usr/local/bin/`: `cachy-void-update`, `cachy-game`, `cachy-proton` (+ `/etc/xdg/MangoHud/MangoHud.conf`) |
 

@@ -1,0 +1,19 @@
+# Cachy-Void — snd_hda_intel power management (architecture.md §3.3).
+# Provenance: CachyOS-Settings usr/lib/udev/rules.d/20-audio-pm.rules (verified
+# 2026-08-15), ported near-verbatim. Disables HDA power saving while NOT on
+# battery ("prevents audio cracks on some hardware" — their words, our lived
+# experience class of bug), and restores the saved value on battery.
+ACTION=="add", SUBSYSTEM=="sound", KERNEL=="card*", DRIVERS=="snd_hda_intel", TEST!="/run/udev/snd-hda-intel-powersave", \
+    RUN+="/usr/bin/bash -c 'touch /run/udev/snd-hda-intel-powersave; \
+        [[ $$(cat /sys/class/power_supply/BAT0/status 2>/dev/null) != \"Discharging\" ]] && \
+        echo $$(cat /sys/module/snd_hda_intel/parameters/power_save) > /run/udev/snd-hda-intel-powersave && \
+        echo 0 > /sys/module/snd_hda_intel/parameters/power_save'"
+
+SUBSYSTEM=="power_supply", ENV{POWER_SUPPLY_ONLINE}=="0", TEST=="/sys/module/snd_hda_intel", \
+    RUN+="/usr/bin/bash -c 'echo $$(cat /run/udev/snd-hda-intel-powersave 2>/dev/null || \
+        echo 10) > /sys/module/snd_hda_intel/parameters/power_save'"
+
+SUBSYSTEM=="power_supply", ENV{POWER_SUPPLY_ONLINE}=="1", TEST=="/sys/module/snd_hda_intel", \
+    RUN+="/usr/bin/bash -c '[[ $$(cat /sys/module/snd_hda_intel/parameters/power_save) != 0 ]] && \
+        echo $$(cat /sys/module/snd_hda_intel/parameters/power_save) > /run/udev/snd-hda-intel-powersave; \
+        echo 0 > /sys/module/snd_hda_intel/parameters/power_save'"
