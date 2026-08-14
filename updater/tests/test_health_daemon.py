@@ -52,7 +52,8 @@ def _store(tmp, **overrides):
 
 
 def _daemon(tmp, checker, *, rollback=None, degraded=False,
-            cfg=None, uname="6.12.35_1", boot_id="B", **store_overrides):
+            cfg=None, uname="6.12.35_1", boot_id="B",
+            active_rollback=True, promote_grub=None, **store_overrides):
     clock = FakeClock()
     return HealthDaemon(
         checker=checker,
@@ -67,6 +68,8 @@ def _daemon(tmp, checker, *, rollback=None, degraded=False,
         uname=lambda: uname,
         boot_id=lambda: boot_id,
         degraded=lambda: degraded,
+        active_rollback=active_rollback,
+        promote_grub=promote_grub,
     )
 
 
@@ -186,6 +189,58 @@ class ConfirmLayerTests(unittest.TestCase):
         self.assertEqual(d.state_store.load()["state"], _health.ROLLED_BACK)
 
 
+class ExternalModeTests(unittest.TestCase):
+    """§8.6 `external` (foreign bootloader): bookkeeping promotion works, the
+    watchdog never fires active rollback (first real-hardware finding)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def test_promotes_bookkeeping_when_promote_grub_returns_none(self):
+        # grub.promote() returns None under external — that is SUCCESS
+        # (nothing of ours to write), and the state must still advance.
+        d = _daemon(self.tmp, FakeChecker([report(True)]),
+                    uname="6.12.103_1-cachy",
+                    promote_grub=lambda kver: None,
+                    state="STAGED",
+                    candidate={"pkgver": "6.12.103_1",
+                               "kver": "6.12.103_1-cachy"},
+                    staged_boot_id="B",
+                    grub={"mode": "external", "candidate_ref": None})
+        self.assertEqual(d.confirm_boot(), _health.PROMOTE)
+        state = d.state_store.load()
+        self.assertEqual(state["state"], "TRACKING")
+        self.assertEqual(state["ported_version"], "6.12.103_1")
+        self.assertEqual(state["known_good"]["kver"], "6.12.103_1-cachy")
+        self.assertIsNone(state["candidate"])
+
+    def test_failed_physical_promotion_leaves_confirming_for_retry(self):
+        # A grub write failure must NOT advance the bookkeeping: the default
+        # still points at known-good (safe) and the next boot retries.
+        def boom(kver):
+            raise RuntimeError("grub-set-default failed")
+        d = _daemon(self.tmp, FakeChecker([report(True)]),
+                    uname="6.12.103_1-cachy",
+                    promote_grub=boom,
+                    state="STAGED",
+                    candidate={"pkgver": "6.12.103_1",
+                               "kver": "6.12.103_1-cachy"},
+                    staged_boot_id="B")
+        self.assertEqual(d.confirm_boot(), _health.PROMOTE)   # decision stands
+        state = d.state_store.load()
+        self.assertEqual(state["state"], "CONFIRMING")        # not advanced
+        self.assertEqual(state["ported_version"], "6.12.34_1")
+
+    def test_trip_without_active_rollback_records_and_tells(self):
+        rollback = mock.Mock(return_value=0)
+        d = _daemon(self.tmp, FakeChecker([report(False)]),
+                    rollback=rollback, active_rollback=False)
+        outcome = d.run_loop(max_ticks=10)
+        self.assertEqual(outcome, TRIPPED)
+        rollback.assert_not_called()                          # never drives grub
+        self.assertEqual(d.state_store.load()["state"], _health.UNHEALTHY)
+
+
 class WiringTests(unittest.TestCase):
     """The CLI factory must fire the real cmd_rollback on a trip (§8.7)."""
 
@@ -199,6 +254,22 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         m.assert_called_once()
         self.assertIs(m.call_args.args[0], cfg)             # correct config passed
+
+    def test_daemon_entrypoint_runs_confirm_before_loop(self):
+        # The confirm layer must be reachable from the PRODUCTION entrypoint,
+        # not only a --once flag nothing invokes (real-hardware finding: a
+        # healthy candidate boot was never promoted).
+        import cachy_void_update as cli
+        calls = []
+        fake = mock.Mock()
+        fake.confirm_boot = lambda **kw: calls.append("confirm") or _health.NOOP
+        fake.run_loop = lambda: calls.append("loop") or "HEALTHY"
+        cfg = cli.Config(void_packages=Path("/vp"),
+                         state_dir=Path(tempfile.mkdtemp()))
+        with mock.patch.object(cli, "build_health_daemon", return_value=fake):
+            rc = cli.main(["--health-daemon"], config=cfg, out=lambda *a: None)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertEqual(calls, ["confirm", "loop"])
 
 
 if __name__ == "__main__":

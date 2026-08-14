@@ -38,6 +38,28 @@ class IndividualCheckTests(unittest.TestCase):
         dirty = HealthChecker(run=Dispatch({"dmesg": cp(stdout="CPU stuck")}))
         self.assertFalse(dirty.h2_dmesg_clean())
 
+    def test_h2_dmesg_restricted_falls_back_to_sudo(self):
+        # kernel.dmesg_restrict=1 denies the unprivileged daemon (real-hardware
+        # finding: H2 was structurally always-False). Denied -> retry via the
+        # narrow sudo grant; the sudo result decides.
+        def run(args):
+            if args[0] == "dmesg":
+                return cp(returncode=1, stderr="dmesg: read kernel buffer failed")
+            if args[0] == "sudo":
+                return cp(stdout="")            # privileged read: clean
+            return cp()
+        self.assertTrue(HealthChecker(run=run).h2_dmesg_clean())
+
+        def run_dirty(args):
+            if args[0] == "dmesg":
+                return cp(returncode=1)
+            return cp(stdout="ACPI CRITICAL something")   # sudo sees crit lines
+        self.assertFalse(HealthChecker(run=run_dirty).h2_dmesg_clean())
+
+        def run_no_grant(args):
+            return cp(returncode=1)             # both attempts denied
+        self.assertFalse(HealthChecker(run=run_no_grant).h2_dmesg_clean())
+
     def test_h3_gpu_node(self):
         yes = HealthChecker(globber=lambda pat: ["/dev/dri/renderD128"])
         self.assertTrue(yes.h3_gpu_node())

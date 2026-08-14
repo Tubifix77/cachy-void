@@ -37,6 +37,7 @@ from engine.journal import Journal, crash_report  # noqa: E402
 from engine.xbps import Xbps, XbpsError, ParseError, split_pkgver  # noqa: E402
 from engine.atomicio import sweep_tmp  # noqa: E402
 from engine.health import HealthChecker  # noqa: E402
+from engine import health as _health_mod  # noqa: E402
 from engine.health_daemon import HealthDaemon, DaemonConfig, DEGRADED, HEALTHY  # noqa: E402
 from engine import grub  # noqa: E402
 from engine import trust  # noqa: E402
@@ -156,13 +157,22 @@ def build_xbps(config: Config, run=None) -> Xbps:
     return Xbps(**kwargs)
 
 
-def build_health_daemon(config: Config, out=print, run=None) -> HealthDaemon:
+def build_health_daemon(config: Config, out=print, run=None,
+                        layout=None) -> HealthDaemon:
     """Wire the §8.7 health daemon with a cmd_rollback-backed active rollback.
 
     The rollback callable closes over ``config`` so the watchdog's trip fires
     the real §8.6/§8.7 rollback path; the engine module stays CLI-agnostic.
+    Under MODE_EXTERNAL the watchdog cannot drive the (foreign) bootloader, so
+    active rollback is disabled — a trip records CANDIDATE_UNHEALTHY and tells
+    the operator, instead of issuing grub commands that would be no-ops.
     """
     run = run or _run
+    if layout is None:
+        try:
+            layout = grub.detect_boot_layout(run=run)
+        except Exception:                       # noqa: BLE001 - inert-safe
+            layout = grub.BootLayout(grub.MODE_SKIP, "layout undeterminable")
     checker = HealthChecker(run=lambda args: run(args))
     store = grub.KernelStateStore(config.kernel_state_path)
     return HealthDaemon(
@@ -171,6 +181,11 @@ def build_health_daemon(config: Config, out=print, run=None) -> HealthDaemon:
         rollback=lambda: cmd_rollback(config, out=out, run=run),
         config=DaemonConfig(),
         out=out,
+        active_rollback=(layout.mode not in
+                         (grub.MODE_EXTERNAL, grub.MODE_SKIP,
+                          grub.MODE_MANUAL_UNSAFE)),
+        promote_grub=lambda kver: grub.promote(
+            layout=layout, candidate_kver=kver, run=_sudo(run)),
     )
 
 
@@ -421,8 +436,15 @@ def _stage_kernel(config: Config, xbps, out, run, layout=None) -> int:
             "staged_boot_id": _boot_id(),
             "services_up_at_staging": _snapshot_services(run),
         }, out)
-        out(f"kernel {cand_kver} staged ({res.mode}): GRUB default pinned to "
-            f"known-good {known}; reboot when convenient. NEVER auto-rebooting.")
+        if res.mode == grub.MODE_EXTERNAL:
+            out(f"kernel {cand_kver} staged (external bookkeeping): a foreign "
+                "bootloader owns the menu — no GRUB commands were issued. "
+                f"Reboot when convenient; if {cand_kver} misbehaves, select the "
+                f"known-good {known} entry in the boot menu yourself. "
+                "NEVER auto-rebooting.")
+        else:
+            out(f"kernel {cand_kver} staged ({res.mode}): GRUB default pinned to "
+                f"known-good {known}; reboot when convenient. NEVER auto-rebooting.")
         return EXIT_OK
     except grub.GrubError as exc:
         out(f"error: kernel staging failed: {exc} — the deploy itself is "
@@ -1455,7 +1477,16 @@ def main(argv: Optional[Sequence[str]] = None, *,
         if args.clean:
             return cmd_clean(config, assume_yes=args.yes, out=out)
         if args.health_daemon:
-            outcome = build_health_daemon(config, out=out).run_loop()
+            daemon = build_health_daemon(config, out=out)
+            # §8.7 confirm layer FIRST (once per boot): decide the fate of any
+            # staged candidate — promote / unhealthy / rolled-back — before the
+            # continuous watchdog starts. This was previously only reachable via
+            # a --once flag nothing invoked (real-hardware finding: a healthy
+            # candidate boot was never promoted).
+            decision = daemon.confirm_boot()
+            if decision != _health_mod.NOOP:
+                out(f"health-daemon: confirm decision = {decision}")
+            outcome = daemon.run_loop()
             if outcome == DEGRADED:
                 # Under runit an immediate clean exit means respawn-spin (§8.7
                 # inert-safe): park quietly instead; sv down still terminates us.

@@ -797,6 +797,41 @@ class RunnerStdinTests(unittest.TestCase):
         self.assertEqual(cp_.stdout, "")
 
 
+class StageKernelExternalTests(unittest.TestCase):
+    """§8.6 external mode: _stage_kernel must record FULL bookkeeping (STAGED +
+    candidate) while issuing zero bootloader commands — lumping foreign-GRUB
+    hosts into skip meant healthy boots were never promoted (Medion finding)."""
+
+    def test_external_records_staged_candidate_no_grub_commands(self):
+        import tempfile as _tf
+        from engine import grub as _grub
+        tmp = _tf.mkdtemp()
+        cfg = cli.Config(void_packages=Path("/vp"), state_dir=Path(tmp))
+        xbps = FakeXbps(
+            installed=["linux-cachy"],
+            inst_ver={"linux-cachy": "6.12.103_1"},
+            files_map={"linux-cachy": ["/boot/vmlinuz-6.12.103_1-cachy"]})
+        calls = []
+
+        def run(args, cwd=None):
+            calls.append(list(args))
+            if list(args)[:2] == ["uname", "-r"]:
+                return cp(0, "6.12.95_1-cachy\n")
+            return cp(0, "")
+        layout = _grub.BootLayout(_grub.MODE_EXTERNAL, "foreign boot manager")
+        out = Sink()
+        rc = cli._stage_kernel(cfg, xbps, out, run, layout=layout)
+        self.assertEqual(rc, cli.EXIT_OK)
+        state = _grub.KernelStateStore(cfg.kernel_state_path).load()
+        self.assertEqual(state["state"], "STAGED")
+        self.assertEqual(state["candidate"]["kver"], "6.12.103_1-cachy")
+        self.assertEqual(state["grub"]["mode"], "external")
+        self.assertIsNone(state["grub"]["candidate_ref"])
+        grubby = [c for c in calls if any("grub" in tok for tok in c)]
+        self.assertEqual(grubby, [])            # foreign menu never touched
+        self.assertIn("external bookkeeping", out.text())
+
+
 class SyncRemoteTests(unittest.TestCase):
     """--sync must work with EITHER remote name: 'upstream' (manual setups) or
     'origin' (bootstrap.sh's plain clone — the hardcoded 'upstream' made every

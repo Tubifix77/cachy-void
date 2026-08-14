@@ -20,10 +20,14 @@
 # Flatpak apps are refreshed via exactly `flatpak update --system -y` (per-user
 # installs need no privilege and are not granted here). That one form only
 # updates already-installed refs — it cannot install or remove apps.
+# §8.7 H2 (kernel health battery) reads dmesg at emerg/alert/crit; with
+# kernel.dmesg_restrict=1 an unprivileged read is denied, so exactly that one
+# read-only invocation is granted (level list fixed; commas escaped for sudo).
 Cmnd_Alias CACHY_VOID_UPDATE = /usr/bin/xbps-install, /usr/bin/sv, /usr/bin/xcheckrestart, \
     /usr/bin/xbps-pkgdb, /usr/bin/grub-set-default, /usr/bin/grub-reboot, /usr/bin/grub-editenv, \
     /usr/sbin/btrfs subvolume snapshot -r *, /usr/sbin/btrfs subvolume delete *, /usr/sbin/btrfs subvolume list *, \
     /usr/bin/xbps-remove -o -n, /usr/bin/xbps-remove -o -y, /usr/bin/xbps-remove -O -n, /usr/bin/xbps-remove -O -y, \
-    /usr/bin/flatpak update --system -y
+    /usr/bin/flatpak update --system -y, \
+    /usr/bin/dmesg --level=emerg\,alert\,crit
 
 @USER@ ALL=(root) NOPASSWD: CACHY_VOID_UPDATE

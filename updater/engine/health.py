@@ -67,8 +67,16 @@ class HealthChecker:
         return True
 
     def h2_dmesg_clean(self) -> bool:
-        """No emerg/alert/crit kernel messages this boot."""
+        """No emerg/alert/crit kernel messages this boot.
+
+        The daemon runs unprivileged (chpst -u), and kernel.dmesg_restrict=1
+        denies it dmesg outright — which made H2 structurally always-False on
+        hardened kernels (real-hardware finding). On a permission-style failure,
+        retry once through the narrow §4 sudo grant before judging.
+        """
         cp = self.run(["dmesg", "--level=emerg,alert,crit"])
+        if cp.returncode != 0:
+            cp = self.run(["sudo", "-n", "dmesg", "--level=emerg,alert,crit"])
         return cp.returncode == 0 and cp.stdout.strip() == ""
 
     def h3_gpu_node(self) -> bool:

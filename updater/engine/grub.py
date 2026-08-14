@@ -36,7 +36,12 @@ MODE_MANUAL = "manual"                  # safe: saved-default works, no one-shot
                                         #   (grubenv-hostile fs, user picks entry)
 MODE_MANUAL_UNSAFE = "manual-unsafe"    # GRUB_DEFAULT != saved: pinning is a
                                         #   silent no-op -> staging must REFUSE
-MODE_SKIP = "skip"                      # no usable bootloader (WSL2/virtualized)
+MODE_EXTERNAL = "external"              # real machine, FOREIGN bootloader (e.g.
+                                        #   another distro's GRUB chain-boots us):
+                                        #   kernels boot fine but we cannot drive
+                                        #   the menu -> BOOKKEEPING-only staging;
+                                        #   promotion advances state, never GRUB
+MODE_SKIP = "skip"                      # no bootable kernel path at all (WSL2)
 
 
 class GrubError(RuntimeError):
@@ -205,10 +210,18 @@ def detect_boot_layout(*,
                           "WSL2 detected: no real bootloader; skipping all boot "
                           "operations (kernel staging is a no-op here)")
     if not exists(grub_cfg):
-        return BootLayout(MODE_SKIP,
-                          f"{grub_cfg} not found: virtualized, non-GRUB, or a "
-                          "foreign boot manager (e.g. another distro's GRUB owns "
-                          "boot in a multi-boot setup); skipping boot operations")
+        # A real machine whose bootloader we do not own (another distro's GRUB
+        # chain-boots Void via the evergreen /boot symlinks, or a non-GRUB boot
+        # manager). Kernels DO boot here — only menu control is impossible — so
+        # staging degrades to bookkeeping-only (candidate + confirm + promote in
+        # the state store; zero bootloader commands). First real-hardware kernel
+        # run (Medion, Debian-owned GRUB) exposed that lumping this with SKIP
+        # meant healthy boots were never promoted (§8.6/§8.7 finding).
+        return BootLayout(MODE_EXTERNAL,
+                          f"{grub_cfg} not found: a foreign boot manager owns "
+                          "boot (multi-boot chain-load); bookkeeping-only "
+                          "staging — kernel selection/fallback is manual in "
+                          "the foreign menu")
 
     # The saved-default check comes FIRST: without it, grub-set-default writes
     # are silently ignored and no manual fallback pinning is possible either.
@@ -335,12 +348,15 @@ def stage_candidate(*, layout: BootLayout, candidate_kver: str,
     * MODE_SKIP          -> no physical action (WSL2/virtualized).
     * MODE_MANUAL_UNSAFE -> REFUSED: pinning would be a silent no-op; the caller
       must surface the refusal (exit 70) and the remedy. No commands are issued.
+    * MODE_EXTERNAL      -> bookkeeping-only: no commands (a foreign bootloader
+      owns the menu), but the caller records the candidate so §8.7 confirm and
+      promotion still run; fallback is manual selection in the foreign menu.
     * MODE_MANUAL        -> pin the default to the known-good kernel (works:
       saved default is readable at boot); the user selects the candidate.
     * MODE_ONESHOT       -> pin default to known-good AND arm a one-shot for the
       candidate, so a panic/hang returns to known-good with zero interaction.
     """
-    if layout.mode in (MODE_SKIP, MODE_MANUAL_UNSAFE):
+    if layout.mode in (MODE_SKIP, MODE_MANUAL_UNSAFE, MODE_EXTERNAL):
         return StageResult(layout.mode, actions=[])
 
     if read_text is None:
@@ -374,10 +390,12 @@ def promote(*, layout: BootLayout, candidate_kver: str,
             read_text: Callable[[str], str] = None) -> Optional[str]:
     """Make the candidate the persistent default after a healthy boot (§8.7).
 
-    Returns the promoted ref, or None under MODE_SKIP / MODE_MANUAL_UNSAFE
-    (where a grub-set-default write would be a silent no-op).
+    Returns the promoted ref, or None under MODE_SKIP / MODE_MANUAL_UNSAFE /
+    MODE_EXTERNAL (no grub-set-default: a write would be a silent no-op, or the
+    menu belongs to a foreign bootloader — state promotion still proceeds in
+    the caller).
     """
-    if layout.mode in (MODE_SKIP, MODE_MANUAL_UNSAFE):
+    if layout.mode in (MODE_SKIP, MODE_MANUAL_UNSAFE, MODE_EXTERNAL):
         return None
     if read_text is None:
         def read_text(p):  # noqa: E306

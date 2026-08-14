@@ -142,8 +142,18 @@ class BootLayoutTests(unittest.TestCase):
         self.assertEqual(lo.mode, MODE_SKIP)
         self.assertIn("WSL2", lo.reason)
 
-    def test_missing_grub_cfg_skips(self):
+    def test_missing_grub_cfg_is_external_not_skip(self):
+        # A real machine whose bootloader we don't own (another distro's GRUB
+        # chain-boots Void) must get BOOKKEEPING staging, not a silent skip —
+        # lumping it into skip meant healthy boots were never promoted (first
+        # real-hardware kernel run, Debian-owned GRUB).
         lo = detect_boot_layout(wsl=False, exists=lambda p: False)
+        self.assertEqual(lo.mode, grub.MODE_EXTERNAL)
+        self.assertIn("foreign boot manager", lo.reason)
+
+    def test_wsl_beats_external(self):
+        # WSL has no bootable kernel path at all: skip, never external.
+        lo = detect_boot_layout(wsl=True, exists=lambda p: False)
         self.assertEqual(lo.mode, MODE_SKIP)
 
     def test_unsafe_fs_with_saved_default_is_safe_manual(self):
@@ -209,6 +219,26 @@ class StagingTests(unittest.TestCase):
                               candidate_kver="6.12.35_1", known_good_kver="6.12.34_1")
         self.assertEqual(res.mode, MODE_MANUAL_UNSAFE)
         self.assertEqual(res.actions, [])
+
+    def test_external_mode_bookkeeping_only(self):
+        # Foreign bootloader: zero commands, but the mode is preserved so the
+        # caller records the candidate for §8.7 confirm/promotion.
+        res = stage_candidate(layout=self._layout(grub.MODE_EXTERNAL),
+                              candidate_kver="6.12.103_1-cachy",
+                              known_good_kver="6.12.95_1-cachy")
+        self.assertEqual(res.mode, grub.MODE_EXTERNAL)
+        self.assertEqual(res.actions, [])
+        self.assertIsNone(res.candidate_ref)
+
+    def test_external_promote_returns_none_no_commands(self):
+        calls = []
+        def run(a, c=None):
+            calls.append(list(a))
+            return cp()
+        ref = grub.promote(layout=self._layout(grub.MODE_EXTERNAL),
+                           candidate_kver="6.12.103_1-cachy", run=run)
+        self.assertIsNone(ref)
+        self.assertEqual(calls, [])   # never touches the foreign bootloader
 
     def test_manual_mode_sets_default_only(self):
         calls = []

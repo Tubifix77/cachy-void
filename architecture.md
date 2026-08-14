@@ -461,6 +461,11 @@ minimal, non-package-naming set:
   add **exactly** `flatpak update --system -y` (updates installed refs only; no
   install/remove). No-op when Flatpak is absent; failures are surfaced, never
   swallowed. Exit 56 on a Flatpak-only failure (never undoes the XBPS deploy).
+- **Health battery H2** — with `kernel.dmesg_restrict=1` (hardened kernels,
+  observed on real hardware) the unprivileged daemon cannot read dmesg at all,
+  making H2 structurally always-False. The boundary adds **exactly**
+  `dmesg --level=emerg,alert,crit` (fixed argument, read-only); the checker
+  tries unprivileged first and falls back to the grant.
 
 ---
 
@@ -836,12 +841,14 @@ The failure geometry: if the candidate panics or hangs, the user power-cycles; t
 
 - `manual` (safe): grubenv-hostile filesystem (btrfs/zfs/LVM) **with** `GRUB_DEFAULT=saved`. GRUB *reads* grubenv fine at boot — it only cannot consume a one-shot — so pinning the known-good default works. Staging proceeds minus `grub-reboot`; the user selects the candidate in the GRUB menu, and fallback is selecting the old entry — exactly §2.5's behavior. An undeterminable filesystem (e.g. `findmnt` unavailable) degrades here, never to oneshot.
 - `manual-unsafe`: `GRUB_DEFAULT≠saved`. Pinning is a silent no-op; staging refuses (exit 70) per the preflight bullet above.
+- `external`: **a foreign bootloader owns boot** — `/boot/grub/grub.cfg` is absent on a real (non-WSL) machine, e.g. another distro's GRUB chain-boots Void through the evergreen `/boot` symlinks in a multi-boot setup. Kernels boot fine here; only menu control is impossible. Staging is **bookkeeping-only**: record the candidate, `staged_boot_id`, and the services snapshot (state → STAGED) and issue **zero** bootloader commands. The §8.7 confirm battery and promotion run identically — promotion advances `ported_version`/`known_good` without any `grub-set-default` — and both fallback (unhealthy candidate) and watchdog response are **manual**: the operator selects the known-good entry in the foreign menu. The watchdog therefore never fires an *active* rollback in this mode; a trip records CANDIDATE_UNHEALTHY and instructs the operator. *(Added after the first real-hardware kernel run: a Debian-owned-GRUB host was lumped into `skip`, so a healthy candidate boot was never promoted.)*
+- `skip`: no bootable kernel path at all (WSL2/containers). No staging, no confirm — telemetry only.
 
 The confirm service works identically in oneshot and manual modes. Staging's privileged commands (`grub-set-default`, `grub-reboot`, `grub-editenv`) are issued through the §4 sudoers grants.
 
 ### 8.7 The confirm service (runit-native)
 
-The service is named **`cachy-health`** (`system/sv/cachy-health/run`); it is the post-boot validation daemon (`engine/health_daemon.py`), driven under runit. It subsumes the earlier `cachy-kernel-confirm` name. It has two layers:
+The service is named **`cachy-health`** (`system/sv/cachy-health/run`); it is the post-boot validation daemon (`engine/health_daemon.py`), driven under runit. It subsumes the earlier `cachy-kernel-confirm` name. **Entrypoint order (normative):** the runit-driven process runs the confirm layer **once, first** (deciding any staged candidate's fate for this boot), *then* enters the continuous watchdog loop — the confirm layer must never be reachable only through an optional flag. It has two layers:
 
 - **Confirm layer (one-shot, normative §8.7):** exactly the `kernel-confirm` logic below — run once per boot (guarded by a `boot_id` sentinel), decide PROMOTE / CANDIDATE_UNHEALTHY / ROLLED_BACK. Rollback here is **passive**: during the trial boot the GRUB default is *already* the known-good kernel (§8.6), so leaving it untouched is the rollback.
 - **Watchdog layer (continuous, operational extension):** after a candidate has been PROMOTED — when the default has *become* the candidate — the daemon keeps sampling the H1–H5 battery on short telemetry intervals, writing each result to the state store's `health` field. If the battery fails **`kernel.trip_after` (default 3) consecutive** intervals it fires an **active** rollback (`cmd_rollback` → re-pin default to known-good), since here there is no armed one-shot to fall back on. This is the only place active rollback is warranted.

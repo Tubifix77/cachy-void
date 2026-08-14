@@ -66,7 +66,9 @@ class HealthDaemon:
                  clock: Callable[[], float] = time.monotonic,
                  uname: Optional[Callable[[], Optional[str]]] = None,
                  boot_id: Optional[Callable[[], Optional[str]]] = None,
-                 degraded: Optional[Callable[[], bool]] = None):
+                 degraded: Optional[Callable[[], bool]] = None,
+                 active_rollback: bool = True,
+                 promote_grub: Optional[Callable[[str], Optional[str]]] = None):
         self.checker = checker
         self.state_store = state_store
         self.rollback = rollback
@@ -78,6 +80,12 @@ class HealthDaemon:
         self._uname = uname or _default_uname
         self._boot_id = boot_id or _default_boot_id
         self._degraded = degraded or _default_degraded
+        # False on layouts where we cannot drive the bootloader (external /
+        # skip / manual-unsafe): a watchdog trip then RECORDS and TELLS instead
+        # of issuing grub commands that would be silent no-ops.
+        self.active_rollback = active_rollback
+        # Physical promotion hook (grub.promote); None -> bookkeeping only.
+        self._promote_grub = promote_grub
 
     # -- helpers ---------------------------------------------------------
     def _services(self) -> list[str]:
@@ -146,9 +154,15 @@ class HealthDaemon:
         return HEALTHY
 
     def _trip(self, consecutive: int) -> int:
+        self._set_state(_health.UNHEALTHY)
+        if not self.active_rollback:
+            self.out(f"watchdog: {consecutive} consecutive health failures — "
+                     "this bootloader is not ours to drive (external/skip): "
+                     "recorded CANDIDATE_UNHEALTHY; reboot and select the "
+                     "known-good kernel in the boot menu yourself (§8.7).")
+            return 0
         self.out(f"watchdog: {consecutive} consecutive health failures — "
                  "firing active rollback to the known-good kernel (§8.7).")
-        self._set_state(_health.UNHEALTHY)
         rc = self.rollback()
         self.out(f"rollback returned {rc}.")
         return rc
@@ -184,6 +198,18 @@ class HealthDaemon:
             current_boot_id=self._boot_id(), battery_ok=battery_ok)
 
         if decision == _health.PROMOTE:
+            if self._promote_grub is not None and cand:
+                try:
+                    ref = self._promote_grub(cand)
+                    self.out(f"promote: grub default -> {ref}" if ref else
+                             "promote: bookkeeping only — no bootloader of ours "
+                             "to write (external/skip layout)")
+                except Exception as exc:      # noqa: BLE001 - grub write failed
+                    # Leave the state CONFIRMING: the default still points at
+                    # known-good (safe), and the next boot retries promotion.
+                    self.out(f"warning: physical promotion failed ({exc}); "
+                             "state left CONFIRMING for a retry next boot")
+                    return decision
             on_promote()
             self._promote_state(state, cand)
         elif decision == _health.UNHEALTHY:
