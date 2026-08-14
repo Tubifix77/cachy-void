@@ -108,19 +108,21 @@ assets/                  Wallpapers + icons (the mark)
 updater/
   cachy_void_update.py   Unified CLI (--sync/--check/--status/--commit/--rollback/--clean/--gpu/…)
   engine/                Solver, XBPS layer, journal, kernel state machine, trust, health, snapshot
-  tests/                 Mock-driven unit + integration suites (226 tests)
+  tests/                 Mock-driven unit + integration suites (245 tests)
 ```
 
 ---
 
 ## Status
 
-The whole spec is implemented and covered by a **226-test** mock-driven suite (run in a Void WSL2 sandbox): the update engine, dependency solver, trust pipeline, template synthesis, kernel state machine, health daemon, and installer.
+The whole spec is implemented and covered by a **245-test** mock-driven suite (run in a Void WSL2 sandbox): the update engine, dependency solver, trust pipeline, template synthesis, kernel state machine, health daemon, and installer.
 
-**Validated on real hardware** (a Void + LXQt laptop): the updater's own `--commit` built `linux-cachy` end-to-end (BORE patch trust → template regen → G2 config gate → compile → deploy), the kernel **booted** (BORE live, 1000 Hz, full preempt), the **NVIDIA DKMS driver built against the BORE kernel**, and games ran on it. The performance overlay, zram/sysctl tuning, service cycling, btrfs snapshots, and gaming layer are all exercised on bare metal.
+**Validated on real hardware** (a Void + LXQt laptop): the updater's own `--commit` built `linux-cachy` end-to-end (BORE patch trust → template regen → G2 config gate → compile → deploy), the kernel **booted** (BORE live, 1000 Hz, full preempt), the **NVIDIA DKMS driver built against the BORE kernel**, and games ran on it. The **post-boot health daemon** has also run its full §8.7 confirm cycle on metal: candidate confirmed, the H1–H5 battery passed, and the kernel was **promoted** to tracked/known-good. The performance overlay, zram/sysctl tuning, service cycling, btrfs snapshots, and gaming layer are all exercised on bare metal.
+
+That first live kernel cycle earned its keep by exposing a family of **state-bookkeeping bugs** in the updater — the built kernel booted perfectly, but the record-keeping around it didn't: hosts whose bootloader belongs to *another* distro (multi-boot) were treated as having no bootloader at all, so a healthy boot was never promoted; the daemon's confirm layer wasn't reachable from its production entrypoint; and two health probes (`sv status`, `dmesg`) were silently denied to the unprivileged daemon, making them always-false. All four are fixed (with a new `external` bootloader class for multi-boot hosts and narrow read-only sudo fallbacks), regression-tested, and verified live — the promotion above ran through exactly this repaired path.
 
 **Honest caveats — please report back if you try these:**
-- Real-hardware testing so far is on **one** profile: `x86-64-v2` CPU, legacy `nvidia470`, and a *foreign*-owned GRUB. The `x86-64-v3`/`v4` build path, **modern NVIDIA** GPUs, and a **Void-owned GRUB** (which activates the one-shot boot-test + health-daemon promote/rollback for the first time) are **code-reviewed and audited but not yet run on metal**.
+- Real-hardware testing so far is on **one** profile: `x86-64-v2` CPU, legacy `nvidia470`, and a *foreign*-owned GRUB (the `external` class above). The `x86-64-v3`/`v4` build path, **modern NVIDIA** GPUs, and a **Void-owned GRUB** (which activates the GRUB **one-shot** boot-test + automatic rollback for the first time) are **code-reviewed and audited but not yet run on metal**.
 - **Secure Boot:** Void's NVIDIA driver is an unsigned DKMS module — with Secure Boot on it won't load. Disable it for Linux or MOK-sign (see [INSTALL §13](INSTALL.md)).
 
 Everything is reversible — `sudo ./deploy.sh --uninstall` restores from a per-change backup ledger. Contributions and real-hardware reports are very welcome.
