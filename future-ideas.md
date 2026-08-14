@@ -300,9 +300,12 @@ Worked example — **ananicy-cpp**: the largest genuinely missing piece of Cachy
 substance (automatic nice/ioprio rules so games get priority; CachyOS ships it by
 default with community rules). It is NOT in Void's repos, so adopting it means
 maintaining a srcpkg *and* a rules file forever → **disqualified by this rule**,
-not by philosophy fit. Revisit only if Void packages it upstream (check with
-`xbps-query -Rs ananicy` before ever proposing it again). Same disposition:
-sched-ext/scx userspace (no Void packages + BORE is the identity).
+not by philosophy fit. **Verdict: ruled out permanently — this is a closed
+decision, not a parked idea.** The ONLY event that reopens it is Void packaging
+it upstream (the disqualifier disappearing, not our appetite changing); until
+`xbps-query -Rs ananicy` returns a hit, do not re-propose it, re-argue it, or
+"just quickly" fork it. Same permanent disposition: sched-ext/scx userspace
+(no Void packages + BORE is the identity).
 
 Rationale: this is a solo hobby overlay that deliberately rides upstream Void so
 it "doesn't rot" (the same reasoning that rejected the standalone-distro/binary-
