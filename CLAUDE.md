@@ -26,13 +26,16 @@ DKMS rebuild → reboot onto the new kernel, verified healthy (BORE live, 1000 H
 preempt, BBR built-in). Those runs surfaced and fixed real gaps (empty-queue system
 pass §4.5a, GUI silence, `--sync` remote naming, two non-interactive `oldconfig`
 prompt hangs — the fragment must answer *every* symbol, including choice options that
-become NEW). **Still genuinely untested:** the Void-owned-GRUB one-shot boot-test +
-auto-rollback (§8.6/§8.7 full choreography — this box's GRUB is Debian's, so staging
-runs in manual mode), and known §8.7 *bookkeeping* bugs found by the run: manual-mode
-staging registers no candidate (healthy boots are never PROMOTED; `ported_version`
-stays `0.0.0_0`), and the health daemon misclassifies the real laptop as
-"virtualized/bootloader-less" and parks (H4 network probe races NM at boot; H2 dmesg
-probe undiagnosed).
+become NEW). The §8.7 confirm/promote path has now ALSO run for real: the run exposed that
+foreign-bootloader hosts were lumped into "skip" (no candidate, no promotion ever), that
+the CLI daemon entrypoint never called the confirm layer at all, and that the H1/H2
+probes were structurally always-false unprivileged (`sv status`/`dmesg` denied) — all
+fixed (new §8.6 `external` class, confirm-before-watchdog made normative, narrow sudo
+fallbacks), and verified live: STAGED → CONFIRMING → battery green → **PROMOTE**,
+`ported_version` advanced to the self-built kernel, state TRACKING.
+**Still genuinely untested:** the Void-owned-GRUB one-shot boot-test + auto-rollback
+(§8.6 oneshot choreography — this box's GRUB is Debian's, so it runs the external
+class; the oneshot path remains code-reviewed + mock-tested only).
 
 ## What This Project Is
 
