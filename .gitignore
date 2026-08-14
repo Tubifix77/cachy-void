@@ -7,3 +7,6 @@ __pycache__/
 *.pre-cachy.*
 hostdir/
 masterdir*/
+
+# Claude Code session artifacts (zero-assumption ledger, local settings)
+.claude/
