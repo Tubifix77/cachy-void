@@ -213,7 +213,11 @@ levels while keeping its performance.
 `setpci` sets every PCI device's latency timer to 20 cycles, the host bridge to 0,
 and sound cards (class `04xx`) to 80 — their anti-audio-gap tweak ("prevent devices
 with high default latency timers from causing gaps in sound"). `setpci` ships in
-`pciutils` (guaranteed by deploy.sh).
+`pciutils` (guaranteed by deploy.sh). Honesty note (live-verified): `latency_timer`
+is a *conventional-PCI* register that PCI **Express** hardwires to zero — on a
+PCIe-only machine the write is a harmless no-op (reads back `0x00` even as root);
+the tweak only bites where conventional-PCI segments exist. Shipped anyway,
+exactly as CachyOS does: no-op where irrelevant, helpful where not.
 
 ```sh
 # >>> cachy-void runtime tuning (§3.1b) >>>
