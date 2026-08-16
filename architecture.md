@@ -292,6 +292,12 @@ Two upstream tools plus a composition wrapper:
   sibling multilib-gated like MangoHud's); its contrast-adaptive sharpening
   pairs naturally with FSR upscaling. Opt-in via `CACHY_VKB=1` (which exports
   the layer's own `ENABLE_VKBASALT=1`); absent = inert, the env var is ignored.
+  **Ships a restrained default config** (`effects = cas`, `casSharpness = 0.4`)
+  at `/etc/vkBasalt.conf` — real-hardware finding: with *no* config file present
+  at all, vkBasalt logs `no good config file` and silently applies nothing, so
+  the toggle alone did not work until this shipped. `cachy-game` seeds a
+  per-user copy for Proton/Steam-Runtime containers, same never-clobber
+  pattern as MangoHud's (§3.4 below) — their `/etc` is their own.
 - **Proton toolbox (optional, no wrappers needed):** `protontricks` +
   `winetricks` (prefix repair/injection — the workhorses behind "the game needs
   vcrun/dotnet/a font"), `Vulkan-Tools` (`vulkaninfo`/`vkcube` — the diagnostic

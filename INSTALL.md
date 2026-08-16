@@ -494,6 +494,10 @@ is also correct on a desktop dGPU.
   when gamescope isn't installed.
 - **With vkBasalt** (Vulkan post-processing; its CAS sharpening pairs well with
   FSR upscaling): `CACHY_VKB=1 cachy-game %command%`. Inert when not installed.
+  `deploy.sh` ships a restrained default (`/etc/vkBasalt.conf`, CAS only,
+  sharpness 0.4) — vkBasalt does nothing at all without *some* config file
+  present, so this isn't cosmetic. Tune it, or your own per-game copy at
+  `~/.config/vkBasalt/vkBasalt.conf` (auto-seeded on first `CACHY_VKB=1` use).
 - **From a shell** — `cachy-game ./mygame` (or `CACHY_HUD=1 cachy-game …`).
 
 GameMode needs no runit service (it is D-Bus activated) and no special group on a
@@ -501,7 +505,14 @@ seat-managed (elogind) desktop. All three overlays (HUD, gamescope, vkBasalt) ar
 **off by default** — the wrapper is invisible unless asked. One honest caveat:
 gamescope is unreliable on the legacy nvidia470/390 drivers, which is exactly why
 it is an opt-in toggle rather than part of the base composition — on a legacy
-Optimus box, simply don't set `CACHY_GS`.
+Optimus box, simply don't set `CACHY_GS`. **The precise failure, confirmed live**
+(nvidia470, GT 730M): gamescope selects the GPU correctly, then
+`vkCreateDevice failed (VkResult: -7)` — the driver's Vulkan implementation
+lacks DRM format-modifier support, which gamescope's buffer-sharing pipeline
+requires. It's a **clean** failure (a caught `abort()`, no hang, no X-session
+impact, no lingering processes) — safe to try, just won't render on this class
+of hardware. `vkcube`/`glxgears` plain, MangoHud, and vkBasalt all render fine
+on the same GPU — this is specifically a gamescope↔legacy-driver gap.
 
 ### 12.2 Proton-CachyOS — the `cachy-proton` helper (§3.4)
 

@@ -37,7 +37,19 @@ if [ "${CACHY_HUD:-0}" = 1 ]; then
     fi
 fi
 
-[ "${CACHY_VKB:-0}" = 1 ] && export ENABLE_VKBASALT=1
+if [ "${CACHY_VKB:-0}" = 1 ]; then
+    export ENABLE_VKBASALT=1
+    # Same container problem as MangoHud above: without ANY config file present,
+    # vkBasalt silently does nothing (logs "no good config file" and skips its
+    # effect — found live testing this wrapper). Seed the per-user copy from the
+    # system default ONCE (never clobber), so Proton/Steam-Runtime games — whose
+    # /etc is their own container — get it too. Search order per upstream:
+    # $XDG_CONFIG_HOME/vkBasalt/vkBasalt.conf beats the system /etc/vkBasalt.conf.
+    _vcfg="${XDG_CONFIG_HOME:-$HOME/.config}/vkBasalt/vkBasalt.conf"
+    if [ ! -f "$_vcfg" ] && [ -f /etc/vkBasalt.conf ]; then
+        mkdir -p "${_vcfg%/*}" 2>/dev/null && cp /etc/vkBasalt.conf "$_vcfg" 2>/dev/null || true
+    fi
+fi
 
 # gamescope is the INNERMOST prefix (closest to the game): prime-run's offload
 # env then covers gamescope AND the game, and gamemode governs the whole tree.

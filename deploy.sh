@@ -458,6 +458,15 @@ install_gaming_userspace() {
         *)       die "invalid --hud-profile '$HUD_PROFILE' (use auto|full|minimal)" ;;
     esac
     install_file "$hud_src" "$MANGOHUD_CONF" 0644 root root
+
+    # §3.4 vkBasalt default config: without ANY config file present, vkBasalt
+    # logs "no good config file" and silently does nothing (found live testing
+    # CACHY_VKB=1 on the Medion — a real gap, not a driver issue). Ship a
+    # restrained CAS-only default so the toggle actually does something the
+    # moment it's set; only meaningful if vkBasalt itself installed.
+    if xbps-query -- vkBasalt >/dev/null 2>&1; then
+        install_file "$SYS_DIR/config/vkBasalt.conf" /etc/vkBasalt.conf 0644 root root
+    fi
     log "gaming layer ready — launch: cachy-game %command% | Proton-CachyOS: run 'cachy-proton' (per-user)"
 }
 
