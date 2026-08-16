@@ -271,7 +271,16 @@ Two upstream tools plus a composition wrapper:
   governor to `performance`, requests the GPU's high-perf mode, and applies
   nice/ionice. Activated per-process by `gamemoderun`. It is already in the
   allowlist, so the updater can rebuild it `-O3`; deploy.sh only guarantees it is
-  present.
+  present. **Privilege model (source-verified + live-verified):** the daemon
+  never writes sysfs itself — it runs `pkexec cpugovctl set …`, the shipped
+  polkit policy denies *everyone* by default, and the only grant is the shipped
+  rules-file exception for the **`gamemode` group**. Void creates that group but
+  adds no one, so the governor switch is silently inert on a stock install
+  (pkexec: "Not authorized") — deploy.sh therefore adds the `--user` to the
+  group (upstream's own sanctioned mechanism; polkit picks it up without a
+  re-login). Requires polkit to be present at runtime (any polkit-using desktop
+  ships it); without polkit the governor feature is inert and everything else
+  about GameMode still works.
 - **`MangoHud`** — an opt-in performance overlay (FPS/frametime/CPU+GPU temp),
   loaded as a Vulkan/GL layer via the `MANGOHUD=1` environment variable. The
   32-bit sibling `MangoHud-32bit` is needed for 32-bit titles and is therefore

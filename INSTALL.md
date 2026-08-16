@@ -500,8 +500,14 @@ is also correct on a desktop dGPU.
   `~/.config/vkBasalt/vkBasalt.conf` (auto-seeded on first `CACHY_VKB=1` use).
 - **From a shell** — `cachy-game ./mygame` (or `CACHY_HUD=1 cachy-game …`).
 
-GameMode needs no runit service (it is D-Bus activated) and no special group on a
-seat-managed (elogind) desktop. All three overlays (HUD, gamescope, vkBasalt) are
+GameMode needs no runit service (it is D-Bus activated) — but its CPU-governor
+switch **does** need your user in the **`gamemode` group**: the daemon applies
+governors via `pkexec` + a polkit rule that only authorizes that group (Void ships
+the rule and creates the group, but adds nobody to it — without membership the
+switch silently does nothing). `deploy.sh` adds the `--user` for you; verify with
+`id -nG | grep gamemode`, and confirm end-to-end by watching
+`/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor` flip to `performance`
+while a `cachy-game`-launched game runs. All three overlays (HUD, gamescope, vkBasalt) are
 **off by default** — the wrapper is invisible unless asked. One honest caveat:
 gamescope is unreliable on the legacy nvidia470/390 drivers, which is exactly why
 it is an opt-in toggle rather than part of the base composition — on a legacy

@@ -426,6 +426,30 @@ install_schedule_service() {
 # wrapper. MangoHud-32bit is multilib-gated, hence optional (non-fatal if absent).
 install_gaming_userspace() {
     ensure_pkg "$PKG_GAMEMODE"
+    # GameMode's governor/GPU helpers run via `pkexec cpugovctl …`, and the
+    # shipped polkit policy DENIES everyone by default — the only grant is the
+    # rules-file exception for members of the `gamemode` group (both files ship
+    # in Void's package; source-verified against FeralInteractive/gamemode).
+    # Void creates the group but adds nobody to it, so the governor switch was
+    # silently inert for every user (found live: pkexec said "Not authorized";
+    # after the group add, all cores flip to `performance` during a game and
+    # revert on exit — polkit picks the membership up without a re-login).
+    # NOTE: --uninstall does not remove the membership (harmless if gamemode is
+    # gone); undo by hand with: gpasswd -d <user> gamemode
+    if ! live; then
+        warn "offline/simulated: add your user to the gamemode group after booting"
+        warn "  Void (usermod -aG gamemode <user>), or GameMode's governor stays inert"
+    elif getent group gamemode >/dev/null 2>&1 && [ -n "$UPDATER_USER" ]; then
+        if id -nG "$UPDATER_USER" 2>/dev/null | tr ' ' '\n' | grep -qx gamemode; then
+            log "gamemode group: $UPDATER_USER already a member"
+        elif $DRY_RUN; then
+            log "[dry-run] usermod -aG gamemode $UPDATER_USER"
+        else
+            usermod -aG gamemode "$UPDATER_USER" \
+                && ok "gamemode group: added $UPDATER_USER (governor/GPU helpers now authorized via polkit)" \
+                || warn "could not add $UPDATER_USER to the gamemode group — GameMode's governor switch stays inert (pkexec: Not authorized)"
+        fi
+    fi
     ensure_pkg "$PKG_MANGOHUD"
     ensure_pkg "$PKG_MANGOHUD32" optional
     # §3.4 display leg + post-processing: both OPT-IN at runtime (CACHY_GS/CACHY_VKB),
