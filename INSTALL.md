@@ -142,7 +142,7 @@ sudoers fragment is validated with `visudo -c` before it is ever activated.
 | `/etc/modprobe.d/99-gaming-input.conf`, `/etc/modules-load.d/cachy.conf` | Input polling + BBR module. |
 | `/etc/modprobe.d/99-cachy-watchdog.conf` | Blacklists the unused hardware watchdogs (`iTCO_wdt`/`sp5100_tco`) — §3.3. |
 | `/etc/modprobe.d/99-cachy-amdgpu.conf` | Modern `amdgpu` driver for GCN 1.0/2.x AMD cards (Vulkan/RADV); inert on non-AMD machines — §3.3. |
-| `/etc/modprobe.d/99-cachy-nvidia.conf` | `NVreg_DynamicPowerManagement=0x02` — Turing+ mobile dGPU powers down when idle; inert elsewhere — §3.3. |
+| `/etc/modprobe.d/99-cachy-nvidia.conf` | NVIDIA module options (§3.3): `DynamicPowerManagement=0x02` (Turing+ mobile idle power-down; inert elsewhere) + `InitializeSystemMemoryAllocations=0` (skip GPU-memory zeroing — performance over hardening, the project's codified stance; override with `=1` in a later modprobe.d file if you disagree). |
 | `/etc/rc.local` (marked block) | §3.1b runtime tuning beyond sysctl.d/udev: THP knobs (`defrag=defer+madvise`, shrinker `max_ptes_none=409`) + PCI latency timers (sound cards 80, rest 20 — anti audio-gap, via `setpci`). Block is idempotent, file backed up + ledger-tracked. |
 | `/etc/sudoers.d/cachy-void` | Narrow NOPASSWD grants for the updater user. |
 | `/etc/sv/zramen/`, `/etc/sv/cachy-health/` | runit services (zram swap; post-boot health daemon). |

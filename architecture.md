@@ -183,13 +183,15 @@ net.ipv4.tcp_congestion_control = bbr
 
 Apply/verify: `sudo sysctl --system`. On the stock Void kernel (fallback boots), BBR is a module — add `tcp_bbr` to `/etc/modules-load.d/cachy.conf` so the sysctl line never silently fails. On `linux-cachy` it is built in (§2.4).
 
-**Deliberate omissions from CachyOS's sysctl set (decided 2026-08-17, do not
-re-propose):** `kernel.kptr_restrict=2` — pure hardening, zero performance
-effect; Void's default `1` already covers the unprivileged case, and this
-project's substance is performance, not hardening fashion.
-`kernel.unprivileged_userns_clone=1` — the knob **does not exist** on Void's
-kernel (it is an Arch/Debian patch; live-verified). `NVreg_InitializeSystemMemoryAllocations=0`
-— perf-for-security tradeoff, parked pending an explicit owner decision.
+**Codified stance — performance over hardening (owner decision, 2026-08-17):**
+when a tweak trades performance against hardening, this overlay picks
+performance *for* the user — Void is not a security-first distro and this
+project's substance is performance. Applied consistently in both directions:
+`kernel.kptr_restrict=2` stays **out** (pure hardening, zero perf; Void's
+default `1` already covers the unprivileged case), and
+`NVreg_InitializeSystemMemoryAllocations=0` goes **in** (§3.3 — perf at an
+explicit security cost). Also omitted: `kernel.unprivileged_userns_clone=1` —
+the knob **does not exist** on Void's kernel (Arch/Debian patch; live-verified).
 
 ### 3.1b Runtime tuning beyond sysctl.d/udev (`/etc/rc.local`)
 
@@ -289,11 +291,14 @@ Apply: `sudo udevadm control --reload && sudo udevadm trigger`.
   Verbatim CachyOS. Inert on non-AMD machines; **honesty note: shipped untested
   on real AMD hardware** (the reference box is NVIDIA) — verbatim adoption of
   CachyOS's file is the mitigations here.
-- **`/etc/modprobe.d/99-cachy-nvidia.conf`** — `NVreg_DynamicPowerManagement=0x02`:
-  lets a Turing-or-newer *mobile* dGPU power fully down when idle (the option is
-  accepted-but-inert on older generations/desktops; drivers ≥ 435 know it).
-  CachyOS ships it. Its sibling `NVreg_InitializeSystemMemoryAllocations=0` is
-  deliberately NOT shipped (see §3.1 omissions).
+- **`/etc/modprobe.d/99-cachy-nvidia.conf`** — CachyOS's NVIDIA options, adopted
+  in full: `NVreg_DynamicPowerManagement=0x02` (a Turing-or-newer *mobile* dGPU
+  powers fully down when idle; accepted-but-inert on older generations/desktops,
+  drivers ≥ 435 know it) and `NVreg_InitializeSystemMemoryAllocations=0` (skip
+  zeroing memory handed to the GPU — performance at an explicit security cost;
+  shipped under the §3.1 performance-over-hardening stance; override with `=1`
+  in a later modprobe.d file to revert per-box). Takes effect when the module
+  loads, i.e. next boot on a running system.
 
 ---
 
