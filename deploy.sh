@@ -464,6 +464,8 @@ install_gaming_userspace() {
     ensure_pkg winetricks optional
     ensure_pkg Vulkan-Tools optional
     ensure_pkg liberation-fonts-ttf optional
+    ensure_pkg wqy-microhei optional          # CJK tofu-box fix (Void's sibling of
+                                              # CachyOS's wqy-zenhei, not packaged)
     ensure_pkg "$PKG_XZ"          # cachy-proton needs xz to extract Proton-CachyOS
     install_file "$SYS_DIR/bin/cachy-game"   "$CACHY_GAME_WRAPPER"   0755 root root
     install_file "$SYS_DIR/bin/cachy-proton" "$CACHY_PROTON_HELPER"  0755 root root
@@ -541,29 +543,38 @@ install_branding() {
     log "branding toolkit installed — apply the look by running (as your user): cachy-branding"
 }
 
-# install_rclocal_thp — §3.1b: THP defrag/shrinker are SYSFS knobs, reachable by
-# neither sysctl.d (procfs only) nor udev (not a device). Void's sanctioned local
-# boot hook is /etc/rc.local (core-services runs it at boot end), so manage a
-# MARKED block in it idempotently: strip any previous block, append the current
-# one, and hand the result to install_file — which contributes the one-time
-# backup + ledger row, so --uninstall restores the pre-Cachy rc.local exactly.
-install_rclocal_thp() {
+# install_rclocal_tuning — §3.1b: tuning targets reachable by neither sysctl.d
+# (procfs only) nor udev (not device events): THP defrag/shrinker (sysfs) and
+# PCI latency timers (setpci). Void's sanctioned local boot hook is /etc/rc.local
+# (core-services runs it at boot end), so manage ONE MARKED block idempotently:
+# strip any previous block — including the narrower THP-only markers earlier
+# versions wrote — append the current one, and hand the result to install_file,
+# which contributes the one-time backup + ledger row, so --uninstall restores
+# the pre-Cachy rc.local exactly.
+install_rclocal_tuning() {
     local dest=/etc/rc.local pdest tmp
     pdest="$(rp "$dest")"
     tmp="$(mktemp)"
     if [ -f "$pdest" ]; then
-        sed '/^# >>> cachy-void THP runtime tuning/,/^# <<< cachy-void THP runtime tuning/d' \
+        sed -e '/^# >>> cachy-void THP runtime tuning/,/^# <<< cachy-void THP runtime tuning/d' \
+            -e '/^# >>> cachy-void runtime tuning/,/^# <<< cachy-void runtime tuning/d' \
             "$pdest" > "$tmp"
     else
         printf '#!/bin/sh\n# Local boot script (created by cachy-void deploy.sh).\n' > "$tmp"
     fi
     cat >> "$tmp" <<'RCL'
-# >>> cachy-void THP runtime tuning (architecture.md §3.1b; provenance: CachyOS-Settings tmpfiles) >>>
+# >>> cachy-void runtime tuning (architecture.md §3.1b; provenance: CachyOS-Settings) >>>
 [ -w /sys/kernel/mm/transparent_hugepage/defrag ] && \
     echo defer+madvise > /sys/kernel/mm/transparent_hugepage/defrag
 [ -w /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none ] && \
     echo 409 > /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none
-# <<< cachy-void THP runtime tuning <<<
+# PCI latency timers (anti audio-gap): all=20, host bridge=0, sound cards=80
+if command -v setpci >/dev/null 2>&1; then
+    setpci -s '*:*' latency_timer=20 2>/dev/null || true
+    setpci -s '0:0' latency_timer=0  2>/dev/null || true
+    setpci -d '*:*:04xx' latency_timer=80 2>/dev/null || true
+fi
+# <<< cachy-void runtime tuning <<<
 RCL
     install_file "$tmp" "$dest" 0755 root root
     rm -f -- "$tmp"
@@ -986,7 +997,10 @@ do_install() {
     install_file "$SYS_DIR/udev/40-rtaudio-perms.rules" /etc/udev/rules.d/40-rtaudio-perms.rules 0644 root root
     install_file "$SYS_DIR/udev/50-sata-alpm.rules"     /etc/udev/rules.d/50-sata-alpm.rules     0644 root root
     install_file "$SYS_DIR/modprobe.d/99-cachy-watchdog.conf" /etc/modprobe.d/99-cachy-watchdog.conf 0644 root root
-    install_rclocal_thp   # §3.1b THP runtime knobs (sysfs — beyond sysctl.d/udev)
+    install_file "$SYS_DIR/modprobe.d/99-cachy-amdgpu.conf"  /etc/modprobe.d/99-cachy-amdgpu.conf  0644 root root
+    install_file "$SYS_DIR/modprobe.d/99-cachy-nvidia.conf"  /etc/modprobe.d/99-cachy-nvidia.conf  0644 root root
+    ensure_pkg pciutils    # setpci for the §3.1b PCI-latency step (tiny, often present)
+    install_rclocal_tuning # §3.1b THP knobs + PCI latency (beyond sysctl.d/udev)
 
     log "[2/10] updater privilege boundary (§4.1)"
     install_sudoers
@@ -1047,6 +1061,11 @@ do_install() {
             echo defer+madvise > /sys/kernel/mm/transparent_hugepage/defrag
         [ -w /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none ] && \
             echo 409 > /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none
+        if command -v setpci >/dev/null 2>&1; then
+            setpci -s '*:*' latency_timer=20 2>/dev/null || true
+            setpci -s '0:0' latency_timer=0  2>/dev/null || true
+            setpci -d '*:*:04xx' latency_timer=80 2>/dev/null || true
+        fi
         modprobe -r iTCO_wdt 2>/dev/null || true
         modprobe -r sp5100_tco 2>/dev/null || true
     fi

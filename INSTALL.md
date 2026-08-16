@@ -141,7 +141,9 @@ sudoers fragment is validated with `visudo -c` before it is ever activated.
 | `/etc/udev/rules.d/{20-audio-pm,40-rtaudio-perms,50-sata-alpm}.rules` | CachyOS-settings parity (§3.3): HDA power-save off on AC (anti-crackle), RT-audio timer/latency device perms, SATA ALPM off. |
 | `/etc/modprobe.d/99-gaming-input.conf`, `/etc/modules-load.d/cachy.conf` | Input polling + BBR module. |
 | `/etc/modprobe.d/99-cachy-watchdog.conf` | Blacklists the unused hardware watchdogs (`iTCO_wdt`/`sp5100_tco`) — §3.3. |
-| `/etc/rc.local` (marked block) | §3.1b THP runtime knobs (`defrag=defer+madvise`, shrinker `max_ptes_none=409`) — sysfs, beyond sysctl.d/udev; block is idempotent, file backed up + ledger-tracked. |
+| `/etc/modprobe.d/99-cachy-amdgpu.conf` | Modern `amdgpu` driver for GCN 1.0/2.x AMD cards (Vulkan/RADV); inert on non-AMD machines — §3.3. |
+| `/etc/modprobe.d/99-cachy-nvidia.conf` | `NVreg_DynamicPowerManagement=0x02` — Turing+ mobile dGPU powers down when idle; inert elsewhere — §3.3. |
+| `/etc/rc.local` (marked block) | §3.1b runtime tuning beyond sysctl.d/udev: THP knobs (`defrag=defer+madvise`, shrinker `max_ptes_none=409`) + PCI latency timers (sound cards 80, rest 20 — anti audio-gap, via `setpci`). Block is idempotent, file backed up + ledger-tracked. |
 | `/etc/sudoers.d/cachy-void` | Narrow NOPASSWD grants for the updater user. |
 | `/etc/sv/zramen/`, `/etc/sv/cachy-health/` | runit services (zram swap; post-boot health daemon). |
 | `earlyoom` (runit service, enabled) | §3.2 memory-pressure guard — kills a leaking process *before* the swappiness=100+zram posture can livelock the box. Package defaults, no config. |

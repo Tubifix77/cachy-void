@@ -162,6 +162,8 @@ vm.page-cluster = 0              # no readahead on zram; it's not a disk
 vm.vfs_cache_pressure = 50
 vm.dirty_bytes = 268435456       # 256 MiB absolute writeback ceiling
 vm.dirty_background_bytes = 67108864
+vm.dirty_writeback_centisecs = 1500   # writeback wakeups 5s->15s: less background
+                                 # jitter (CachyOS default; kernel default 500)
 vm.max_map_count = 2147483642    # SteamOS value; required by many Proton titles
 # --- Files ---
 fs.file-max = 2097152
@@ -169,6 +171,8 @@ fs.inotify.max_user_watches = 524288
 # --- Scheduling / kernel ---
 kernel.split_lock_mitigate = 0   # split-lock stalls cost 10%+ fps in affected games
 kernel.nmi_watchdog = 0
+kernel.printk = 3 3 3 3          # quiet console: no kernel chatter on ttys
+                                 # (CachyOS default; kernel default 4 4 1 7)
 kernel.sched_rt_runtime_us = -1  # no RT throttling. Accepted risk: a runaway
                                  # SCHED_FIFO task can monopolize a core.
 # --- Network ---
@@ -179,29 +183,50 @@ net.ipv4.tcp_congestion_control = bbr
 
 Apply/verify: `sudo sysctl --system`. On the stock Void kernel (fallback boots), BBR is a module — add `tcp_bbr` to `/etc/modules-load.d/cachy.conf` so the sysctl line never silently fails. On `linux-cachy` it is built in (§2.4).
 
-### 3.1b THP runtime tuning (sysfs, `/etc/rc.local`)
+**Deliberate omissions from CachyOS's sysctl set (decided 2026-08-17, do not
+re-propose):** `kernel.kptr_restrict=2` — pure hardening, zero performance
+effect; Void's default `1` already covers the unprivileged case, and this
+project's substance is performance, not hardening fashion.
+`kernel.unprivileged_userns_clone=1` — the knob **does not exist** on Void's
+kernel (it is an Arch/Debian patch; live-verified). `NVreg_InitializeSystemMemoryAllocations=0`
+— perf-for-security tradeoff, parked pending an explicit owner decision.
 
-§2.4 builds `THP=always` into the kernel; CachyOS pairs that policy with two runtime
-knobs its `cachyos-settings` ships as tmpfiles (verified against the repo,
+### 3.1b Runtime tuning beyond sysctl.d/udev (`/etc/rc.local`)
+
+Some tuning targets are reachable by neither `sysctl.d` (procfs only) nor udev
+(not device events) — on runit the sanctioned mechanism for those is
+**`/etc/rc.local`** (run by Void's core-services at boot end). deploy.sh manages
+ONE marked block in it (backed up + ledger-tracked like any other file; the block
+is rebuilt idempotently on re-runs — older narrower markers from previous versions
+are migrated away — and `--uninstall` restores the pre-Cachy file). Every command
+is guarded so a fallback boot missing a knob or a tool never errors. Two members:
+
+**THP runtime knobs.** §2.4 builds `THP=always` into the kernel; CachyOS pairs that
+policy with two runtime knobs its `cachyos-settings` ships as tmpfiles (verified
 2026-08-15): `transparent_hugepage/defrag = defer+madvise` (tcmalloc-style tuning)
 and `khugepaged/max_ptes_none = 409` — the 6.12+ THP *shrinker*: "THP=always vastly
 overprovisions THPs in sparsely accessed memory areas"; 409/512 means any THP that is
 >80 % zero-filled is split, bringing `always`'s memory usage down to ~`madvise`
-levels while keeping its performance. These are **sysfs** paths — reachable by
-neither `sysctl.d` (procfs only) nor udev (not a device) — so on runit the sanctioned
-mechanism is **`/etc/rc.local`** (run by Void's core-services at boot end). deploy.sh
-manages a marked block in it (backed up + ledger-tracked like any other file; the
-block is rebuilt idempotently on re-runs, and `--uninstall` restores the pre-Cachy
-file). Writes are `[ -w ]`-guarded so a stock-kernel fallback boot without a knob
-never errors.
+levels while keeping its performance.
+
+**PCI latency timers.** CachyOS's `pci-latency` script (verified 2026-08-16):
+`setpci` sets every PCI device's latency timer to 20 cycles, the host bridge to 0,
+and sound cards (class `04xx`) to 80 — their anti-audio-gap tweak ("prevent devices
+with high default latency timers from causing gaps in sound"). `setpci` ships in
+`pciutils` (guaranteed by deploy.sh).
 
 ```sh
-# >>> cachy-void THP runtime tuning (§3.1b) >>>
+# >>> cachy-void runtime tuning (§3.1b) >>>
 [ -w /sys/kernel/mm/transparent_hugepage/defrag ] && \
     echo defer+madvise > /sys/kernel/mm/transparent_hugepage/defrag
 [ -w /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none ] && \
     echo 409 > /sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none
-# <<< cachy-void THP runtime tuning <<<
+if command -v setpci >/dev/null 2>&1; then
+    setpci -s '*:*' latency_timer=20 2>/dev/null || true
+    setpci -s '0:0' latency_timer=0  2>/dev/null || true
+    setpci -d '*:*:04xx' latency_timer=80 2>/dev/null || true
+fi
+# <<< cachy-void runtime tuning <<<
 ```
 
 ### 3.2 zram (runit-native, no zram-generator)
@@ -254,6 +279,17 @@ Apply: `sudo udevadm control --reload && sudo udevadm trigger`.
   `sp5100_tco` (AMD Ryzen): a hardware watchdog nobody arms is pure periodic-timer
   overhead on a gaming box (found *loaded* on the reference laptop). `kernel.
   nmi_watchdog=0` in §3.1 is the software half of the same decision.
+- **`/etc/modprobe.d/99-cachy-amdgpu.conf`** — forces the modern `amdgpu` driver
+  over legacy `radeon` for GCN 1.0 (Southern Islands) and 2.x (Sea Islands)
+  cards (`si_support`/`cik_support`), unlocking Vulkan/RADV on that hardware.
+  Verbatim CachyOS. Inert on non-AMD machines; **honesty note: shipped untested
+  on real AMD hardware** (the reference box is NVIDIA) — verbatim adoption of
+  CachyOS's file is the mitigations here.
+- **`/etc/modprobe.d/99-cachy-nvidia.conf`** — `NVreg_DynamicPowerManagement=0x02`:
+  lets a Turing-or-newer *mobile* dGPU power fully down when idle (the option is
+  accepted-but-inert on older generations/desktops; drivers ≥ 435 know it).
+  CachyOS ships it. Its sibling `NVreg_InitializeSystemMemoryAllocations=0` is
+  deliberately NOT shipped (see §3.1 omissions).
 
 ---
 
@@ -312,9 +348,12 @@ Two upstream tools plus a composition wrapper:
   vcrun/dotnet/a font"), `Vulkan-Tools` (`vulkaninfo`/`vkcube` — the diagnostic
   companion to `--gpu`; note Void's **capital-V** package name), and
   `liberation-fonts-ttf` (metric-compatible Arial/Times substitutes — the classic
-  missing-text fix in Windows games). All four are members of CachyOS's own
-  `cachyos-gaming-meta` dependency set (verified 2026-08-15) and stock Void
-  packages — the §future-ideas maintenance test passes by construction.
+  missing-text fix in Windows games), and `wqy-microhei` (CJK coverage — the
+  tofu-box fix for East-Asian text in games; CachyOS's gaming set ships the
+  sibling `wqy-zenhei`, which Void does not package, so the packaged sibling is
+  adopted instead — verified 2026-08-16). All are members of CachyOS's own
+  gaming dependency sets (verified 2026-08-15/16) and stock Void packages — the
+  §future-ideas maintenance test passes by construction.
 - **`cachy-game`** — a launch wrapper that composes the offloader and gamemode:
   `gamemoderun` → `prime-run` (the NVIDIA PRIME offload, §6b) → optionally
   `gamescope --` → the game. It **skips any piece that is absent**, so it is
