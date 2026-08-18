@@ -83,15 +83,16 @@ QPushButton:pressed {{ background: #20242b; }}
 QPushButton:disabled {{ color: {FG_DIM}; border-color: #23272e; }}
 
 /* A utility, not an action: the check already ran on open and re-runs after
-   every command, so this must not compete with the real buttons. Flat, dim,
-   link-like — it exists for a stale long-open window, nothing more. */
+   every command, so this must not compete with the real buttons. Quieter than
+   a real button — dim text, no fill — but it keeps a thin border, because
+   without one nobody can tell it is clickable at all. */
 QPushButton#quiet {{
-    background: transparent; border: none; color: {FG_DIM};
-    padding: 4px 2px; text-align: right;
+    background: transparent; color: {FG_DIM};
+    border: 1px solid #333a44; border-radius: 4px; padding: 4px 10px;
 }}
-QPushButton#quiet:hover {{ color: {ACCENT}; }}
-QPushButton#quiet:pressed {{ color: {FG}; }}
-QPushButton#quiet:disabled {{ color: #3a4050; }}
+QPushButton#quiet:hover {{ color: {ACCENT}; border-color: {ACCENT}; }}
+QPushButton#quiet:pressed {{ color: {FG}; background: #20242b; }}
+QPushButton#quiet:disabled {{ color: #3a4050; border-color: #262b33; }}
 
 QPushButton#primary {{
     background: {ACCENT}; color: {ON_ACCENT};
@@ -264,21 +265,6 @@ class Updater(QWidget):
         titles.addWidget(subtitle)
         header.addLayout(titles)
         header.addStretch(1)
-        # The status pane is populated automatically on open and re-read after
-        # every command, so this is only for a window left open a long time.
-        # It used to be a full-weight top-right button labelled "Check for
-        # updates", which read as the thing you were supposed to press first
-        # (and left people unsure whether it had already run). "Re-check"
-        # states that a check happened; the age label says when.
-        self.checked_at = QLabel("")
-        self.checked_at.setObjectName("subtitle")
-        self.btn_check = QPushButton("Re-check for updates")
-        self.btn_check.setObjectName("quiet")
-        self.btn_check.setToolTip(
-            "Read the pending list again (read-only). Runs by itself when this "
-            "window opens and after every command.")
-        header.addWidget(self.checked_at, 0, Qt.AlignVCenter)
-        header.addWidget(self.btn_check, 0, Qt.AlignVCenter)
         self.btn_help = QPushButton("i")
         self.btn_help.setObjectName("info")
         self.btn_help.setToolTip("What does this updater actually do?")
@@ -319,6 +305,26 @@ class Updater(QWidget):
         status_box = QGroupBox("What's pending")
         sb = QVBoxLayout(status_box)
         sb.setContentsMargins(8, 6, 8, 8)
+
+        # Snapshot age + re-check live INSIDE this group, because they describe
+        # this pane and nothing else. Floating them up in the window header made
+        # them look like stray text parked at a random spot; the check itself is
+        # automatic (on open, and after every command), so this pair is only for
+        # a window left open a long time.
+        meta = QHBoxLayout()
+        meta.setSpacing(8)
+        meta.addStretch(1)
+        self.checked_at = QLabel("")
+        self.checked_at.setObjectName("subtitle")
+        self.btn_check = QPushButton("Re-check for updates")
+        self.btn_check.setObjectName("quiet")
+        self.btn_check.setToolTip(
+            "Read the pending list again (read-only). Runs by itself when this "
+            "window opens and after every command.")
+        meta.addWidget(self.checked_at, 0, Qt.AlignVCenter)
+        meta.addWidget(self.btn_check, 0, Qt.AlignVCenter)
+        sb.addLayout(meta)
+
         self.status = QPlainTextEdit(readOnly=True)
         self.status.setPlaceholderText("Click 'Check for updates' to see what's pending…")
         sb.addWidget(self.status)
