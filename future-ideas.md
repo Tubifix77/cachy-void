@@ -68,11 +68,22 @@ entire desktop assumption lives in **one optional applier**,
 
     **The trap: Plasma 6.7 is Wayland-by-default and Void follows upstream's
     split** — plain `kwin` ships only `kwin_wayland`, and X11 lives in the
-    separate `kwin-x11` + `plasma-workspace-x11` packages. On the nvidia470
-    testbed Wayland is not viable, so a Plasma session there **must** install
-    `plasma-workspace-x11` explicitly or SDDM will offer only a session that
-    cannot start. (This is the same hardware fact that voided §1's original
-    premise — now with a concrete workaround for *testing*.)
+    separate `kwin-x11` + `plasma-workspace-x11` packages. So installing "Plasma"
+    the obvious way can leave SDDM offering only a Wayland session; if X11 is
+    wanted, `plasma-workspace-x11` must be installed **explicitly**.
+
+    *Precision about Wayland on the testbed (correcting an over-broad claim made
+    earlier in this file's own history):* the laptop is **Optimus** — an Intel
+    HD 4000 iGPU alongside the GK107M. A Wayland compositor driven by the
+    **Intel** side is perfectly viable (Mesa, GBM, all present); what the
+    nvidia470 legacy branch cannot do is drive a Wayland session itself, and
+    offloading to a 470-era GPU under Wayland is the doubtful part. So "Wayland
+    is impossible here" is wrong — the accurate statement is that **X11 is the
+    known-good path for a 470 offload setup**, which is why the X11 packages
+    matter for testing. §1's retraction does not depend on this either way: it
+    rests on explicit sync being absent from 470 regardless of session type,
+    fractional scaling being unneeded on a 1080p TV, and controller navigation
+    belonging to Steam.
 
     **Why theming Plasma is easier than LXQt was:** KDE ships official,
     scriptable apply tools — `plasma-apply-colorscheme`,
@@ -85,8 +96,15 @@ entire desktop assumption lives in **one optional applier**,
     install Plasma *alongside* LXQt on the test box — desktops coexist as
     separate SDDM session entries, nothing is replaced, and a pre-install btrfs
     snapshot makes the whole experiment reversible. Then iterate the applier over
-    a few login cycles. Expect Plasma 6 on X11 to feel sluggish on 2013 dual-core
-    + GT 730M: fine for theming runs, not a daily driver on that machine.
+    a few login cycles.
+
+    **Performance is not the blocker** (owner's first-hand report, 2026-08-19):
+    Plasma has already run *fine* on this exact laptop under Debian and
+    Tumbleweed. **8 GB of RAM is what carries it** — KDE's cost is mostly memory
+    and compositing rather than raw CPU, so a 2013 Ivy Bridge with enough RAM is
+    comfortable. An earlier "expect sluggishness" note here was inference from
+    the CPU's age and has been withdrawn; it was contradicted by having actually
+    run the thing.
   - **XFCE** — cheap third (`xfconf` for wm theme + wallpaper), and worth noting
     the dual-boot Debian on the test laptop runs it.
   - **GTK/GNOME** — lowest priority; GNOME resists theming and ships its own
