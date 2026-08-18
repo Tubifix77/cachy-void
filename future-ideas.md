@@ -49,8 +49,44 @@ entire desktop assumption lives in **one optional applier**,
   - **LXQt** — built (`cachy-branding`; panel, openbox, session).
   - **KDE Plasma** — the obvious second target: it is CachyOS's flagship, it is
     Qt so every Tier-1 asset transfers, and it is what most Linux gamers run.
-    Scope is modest: a `.colors` scheme, the Kvantum bridge, wallpaper, and
-    `plasma-nm` instead of `nm-tray`.
+    Scope is modest: a `.colors` scheme, the Kvantum bridge, wallpaper, a Konsole
+    colour scheme, and `plasma-nm` instead of `nm-tray`. **Skip** plank, rofi,
+    picom and conky there — Plasma already owns those roles (panel, KRunner,
+    KWin compositing, widgets) — which makes the Plasma applier *smaller* than
+    the LXQt one, not bigger.
+
+    **Feasibility, verified against Void's repo 2026-08-19** (Plasma 6.7.4 is
+    packaged and current):
+
+    | Package | Size | Note |
+    |---|---|---|
+    | `plasma-desktop` | 41 MB | the desktop |
+    | `plasma-workspace` | 58 MB | ships **only** `/usr/share/wayland-sessions/plasma.desktop` |
+    | `plasma-workspace-x11` | — | ships `startplasma-x11` + `xsessions/plasmax11.desktop`; pulls `kwin-x11` |
+    | `plasma-nm` | 14 MB | Plasma's own network applet |
+    | `konsole` | 10 MB | terminal (its scheme replaces qterminal's) |
+
+    **The trap: Plasma 6.7 is Wayland-by-default and Void follows upstream's
+    split** — plain `kwin` ships only `kwin_wayland`, and X11 lives in the
+    separate `kwin-x11` + `plasma-workspace-x11` packages. On the nvidia470
+    testbed Wayland is not viable, so a Plasma session there **must** install
+    `plasma-workspace-x11` explicitly or SDDM will offer only a session that
+    cannot start. (This is the same hardware fact that voided §1's original
+    premise — now with a concrete workaround for *testing*.)
+
+    **Why theming Plasma is easier than LXQt was:** KDE ships official,
+    scriptable apply tools — `plasma-apply-colorscheme`,
+    `plasma-apply-wallpaperimage`, `plasma-apply-desktoptheme`,
+    `plasma-apply-lookandfeel`, `plasma-apply-cursortheme` — so the applier can
+    set and revert the look through supported interfaces instead of editing
+    config files behind the DE's back.
+
+    **Testability plan** (removes the "code-reviewed only" caveat below):
+    install Plasma *alongside* LXQt on the test box — desktops coexist as
+    separate SDDM session entries, nothing is replaced, and a pre-install btrfs
+    snapshot makes the whole experiment reversible. Then iterate the applier over
+    a few login cycles. Expect Plasma 6 on X11 to feel sluggish on 2013 dual-core
+    + GT 730M: fine for theming runs, not a daily driver on that machine.
   - **XFCE** — cheap third (`xfconf` for wm theme + wallpaper), and worth noting
     the dual-boot Debian on the test laptop runs it.
   - **GTK/GNOME** — lowest priority; GNOME resists theming and ships its own
