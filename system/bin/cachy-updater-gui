@@ -463,7 +463,7 @@ class Updater(QWidget):
         def _on_error(err):
             # if the CLI can't even start, finished() won't fire — un-busy here
             if err == QProcess.FailedToStart:
-                target.appendPlainText(
+                self._append_tail(target,
                     f"[could not run {CLI} — is the updater installed? "
                     "(deploy.sh installs it)]")
                 self._busy(False)
@@ -472,18 +472,39 @@ class Updater(QWidget):
         self.proc.finished.connect(lambda code, _st: self._finished(target, code, done))
         self.proc.start(CLI, args)
 
+    def _append_tail(self, target, text):
+        """Append with an EXPLICIT scroll policy per pane.
+
+        The two panes want opposite things, and leaving it to Qt's default got
+        both wrong: the Output pane is a log — you watch its newest line, and
+        having to scroll down to discover a command had finished is useless —
+        while the status pane is a document whose top matters ([1] System …),
+        yet it was being dragged down to the last tier on every refresh.
+
+        So: Output follows its tail, unless you have scrolled up to read
+        something (then you are left alone); the status pane never moves on its
+        own."""
+        bar = target.verticalScrollBar()
+        before = bar.value()
+        at_bottom = before >= bar.maximum() - 4
+        target.appendPlainText(text)
+        if target is self.out and at_bottom:
+            bar.setValue(bar.maximum())          # follow the newest line
+        else:
+            bar.setValue(before)                 # stay where the reader is
+
     def _drain(self, target):
         chunk = bytes(self.proc.readAll()).decode("utf-8", "replace")
         if chunk:
             if getattr(self, "_clear_on_output", False):
                 target.clear()
                 self._clear_on_output = False
-            target.appendPlainText(chunk.rstrip("\n"))
+            self._append_tail(target, chunk.rstrip("\n"))
 
     def _finished(self, target, code, done):
         self._busy(False)
         self._activity(None)
-        target.appendPlainText(f"\n— done (exit {code}) —")
+        self._append_tail(target, f"\n— done (exit {code}) —")
         if done:
             done(code)
 
@@ -500,7 +521,7 @@ class Updater(QWidget):
                 self._run(commit_args, self.out, clear=False,
                           done=lambda _c: self.check(), activity=activity)
             else:
-                self.out.appendPlainText(
+                self._append_tail(self.out,
                     "[sync failed — update aborted; nothing was changed]")
         self._run(["--sync"], self.out, confirm=confirm, done=after_sync,
                   activity="Syncing build templates (git rebase)…")
@@ -583,7 +604,7 @@ class Updater(QWidget):
         dialog — that dialog IS the §8.3 trust vouch — then write (--yes)."""
         def after_preview(code):
             if code != 0:
-                self.out.appendPlainText(
+                self._append_tail(self.out,
                     "[could not locate the BORE patch — see above; you can "
                     "pin manually per INSTALL.md §6.2]")
                 return
@@ -597,7 +618,7 @@ class Updater(QWidget):
                     "\n\nPin this patch?",
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No) != QMessageBox.Yes:
-                self.out.appendPlainText("[not pinned — nothing was written]")
+                self._append_tail(self.out, "[not pinned — nothing was written]")
                 return
             self._run(["--pin-bore", "--yes"], self.out, clear=False,
                       done=lambda _c: self.check(),
@@ -631,7 +652,7 @@ class Updater(QWidget):
         what would go, exactly like the BORE-pin flow."""
         def after_preview(code):
             if code != 0:
-                self.out.appendPlainText(
+                self._append_tail(self.out,
                     "[could not preview the cleanup — nothing was removed]")
                 return
             text = self.out.toPlainText()
@@ -653,7 +674,7 @@ class Updater(QWidget):
                     "\n\nProceed?",
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No) != QMessageBox.Yes:
-                self.out.appendPlainText("[cleanup cancelled — nothing removed]")
+                self._append_tail(self.out, "[cleanup cancelled — nothing removed]")
                 return
             self._run(["--clean", "--yes"], self.out, clear=False,
                       done=lambda _c: self.check(), activity="Cleaning up…")

@@ -133,6 +133,39 @@ class PinBannerTests(unittest.TestCase):
         self.w._update_pin_banner()
         self.assertTrue(self.w.btn_rollback.isVisible())
 
+    def test_output_pane_follows_its_newest_line(self):
+        """A log pane parked at line 1 is useless while a command runs — you had
+        to scroll down to discover it had finished."""
+        for i in range(300):
+            self.w._append_tail(self.w.out, f"line {i}")
+        bar = self.w.out.verticalScrollBar()
+        self.assertGreater(bar.maximum(), 0, "no scroll range to test")
+        self.assertEqual(bar.value(), bar.maximum())
+
+    def test_status_pane_stays_at_the_top(self):
+        """The status pane is a document, not a log: [1] System is at the top and
+        must stay visible. Qt's default did the opposite — it dragged the pane
+        down to the last tier on every refresh."""
+        for i in range(300):
+            self.w._append_tail(self.w.status, f"line {i}")
+        self.assertGreater(self.w.status.verticalScrollBar().maximum(), 0)
+        self.assertEqual(self.w.status.verticalScrollBar().value(), 0)
+
+    def test_scrolling_up_to_read_is_respected(self):
+        for i in range(300):
+            self.w._append_tail(self.w.out, f"line {i}")
+        bar = self.w.out.verticalScrollBar()
+        bar.setValue(0)                       # the user goes back to read
+        self.w._append_tail(self.w.out, "new line arrives")
+        self.assertEqual(bar.value(), 0)      # ...and is not yanked away
+
+    def test_completion_line_is_visible_without_scrolling(self):
+        for i in range(300):
+            self.w._append_tail(self.w.out, f"line {i}")
+        self.w._finished(self.w.out, 0, None)
+        bar = self.w.out.verticalScrollBar()
+        self.assertEqual(bar.value(), bar.maximum())
+
     def test_clean_previews_before_it_can_remove_anything(self):
         """Agreeing to 'orphans and cache' is agreeing to a category; the dialog
         must show the actual list (same pattern as the pin flow)."""
