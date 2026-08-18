@@ -35,10 +35,11 @@ import sys
 import time
 
 from PyQt5.QtCore import QProcess, Qt, QTimer
-from PyQt5.QtGui import QFont, QIcon, QPixmap
+from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import (
-    QApplication, QFrame, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
-    QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QApplication, QDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
+    QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QTextBrowser,
+    QVBoxLayout, QWidget,
 )
 
 CLI = shutil.which("cachy-void-update") or "/usr/local/bin/cachy-void-update"
@@ -127,11 +128,89 @@ QScrollBar::handle:hover {{ background: {ACCENT}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; border: none; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
+/* the round "i" — available even mid-run (reading is never a mutation) */
+QPushButton#info {{
+    background: transparent; color: {FG_DIM};
+    border: 1px solid #343a45; border-radius: 11px;
+    min-width: 22px; max-width: 22px; min-height: 22px; max-height: 22px;
+    padding: 0; font-weight: bold; font-style: italic;
+}}
+QPushButton#info:hover {{ color: {ACCENT}; border-color: {ACCENT}; }}
+
+QTextBrowser {{
+    background: {BG}; color: {FG};
+    border: 1px solid {PANEL}; border-radius: 4px; padding: 10px;
+    selection-background-color: {ACCENT}; selection-color: {ON_ACCENT};
+}}
+
 QMessageBox {{ background: {BG}; }}
 QMessageBox QLabel {{ color: {FG}; }}
 QToolTip {{
     background: {PANEL}; color: {FG}; border: 1px solid {ACCENT}; padding: 4px;
 }}
+"""
+
+
+# --------------------------------------------------------------------------
+# Help text ("i" button)
+# --------------------------------------------------------------------------
+# Written in GENERAL terms on purpose: it describes the *kinds* of things each
+# tier covers, never a package list, so adding packages to the overlay never
+# makes it wrong. The identity-defining specifics are named — BORE, 1000 Hz,
+# -O3 / x86-64-v3 — because those are the point of the project, not inventory.
+# It is anchored to the same tier numbers the status pane prints, so it teaches
+# this window instead of restating it.
+HELP_HTML = f"""
+<h3 style="color:{ACCENT}; margin:0 0 6px 0;">What this updater does</h3>
+<p>Cachy-Void is stock Void Linux plus a performance overlay. The pending list
+is grouped the same way the system is:</p>
+
+<p><b style="color:{FG}">[1] System (upstream Void)</b><br>
+Everything installed from Void's own binary repositories — desktop, drivers,
+applications, libraries — exactly as Void ships them. <b>Update</b> brings these
+current.</p>
+
+<p><b style="color:{FG}">[2] Performance overlay</b><br>
+A small curated set of performance-critical packages that this machine
+<i>compiles locally</i> instead, tuned for your CPU (<code>-O3</code>, the
+highest <code>x86-64-v*</code> level your hardware supports). Local builds share
+version numbers with the upstream copies, so <b>Update</b> also makes sure the
+locally built ones are the ones actually installed.</p>
+
+<p><b style="color:{FG}">[3] Kernel — linux-cachy / BORE</b><br>
+An optional kernel built here from Void's own kernel template plus the
+<b>BORE</b> scheduler patch (steadier responsiveness under load), at 1000&nbsp;Hz
+with full preemption. <b>Update kernel</b> syncs, verifies the BORE patch against
+a checksum <i>you</i> approved, builds it, and installs it <i>alongside</i> your
+stock kernel — you keep booting the known-good one until the new one proves
+healthy. Because BORE comes from outside Void, a human approves it once per
+kernel series: that is the <i>Review&nbsp;&amp;&nbsp;pin</i> notice, and until it
+is done the kernel simply stays paused while everything else still updates.</p>
+
+<p><b style="color:{FG}">[4] Maintenance</b><br>
+Orphaned packages and the downloaded-package cache. <b>Clean up</b> reclaims
+that space. Old kernels are never removed automatically.</p>
+
+<p><b style="color:{FG}">[5] GPU &amp; drivers</b><br>
+Informational only: the detected card, its driver, and whether out-of-tree
+modules have rebuilt for the running kernel.</p>
+
+<p><b style="color:{FG}">[6] Flatpak apps</b><br>
+If Flatpak is installed, its apps are refreshed as part of <b>Update</b>.</p>
+
+<h3 style="color:{ACCENT}; margin:12px 0 6px 0;">What needs you, and what doesn't</h3>
+<ul>
+<li>Tiers 1, 2, 4 and 6 need no attention — press <b>Update</b>.</li>
+<li>Tier 3 runs unattended <i>within</i> a kernel series; a new series needs one
+approval (the notice tells you, and nothing else is blocked meanwhile).</li>
+<li>The overlay's own files — this window, the tuning, the scripts — are updated
+by refreshing the Cachy-Void repository and re-running its installer, not by
+these buttons.</li>
+</ul>
+
+<p style="color:{FG_DIM}">Every button here runs the same tested command-line
+updater; nothing in this window has privileges of its own. Reboots are only ever
+needed for a new kernel.</p>
 """
 
 
@@ -182,6 +261,11 @@ class Updater(QWidget):
             "window opens and after every command.")
         header.addWidget(self.checked_at, 0, Qt.AlignVCenter)
         header.addWidget(self.btn_check, 0, Qt.AlignVCenter)
+        self.btn_help = QPushButton("i")
+        self.btn_help.setObjectName("info")
+        self.btn_help.setToolTip("What does this updater actually do?")
+        self.btn_help.clicked.connect(self.show_help)
+        header.addWidget(self.btn_help, 0, Qt.AlignVCenter)
         root.addLayout(header)
 
         # -- BORE-pin notice card (§8.3a) --------------------------------------
@@ -384,6 +468,34 @@ class Updater(QWidget):
                     "[sync failed — update aborted; nothing was changed]")
         self._run(["--sync"], self.out, confirm=confirm, done=after_sync,
                   activity="Syncing build templates (git rebase)…")
+
+    # -- help -------------------------------------------------------------
+    def show_help(self):
+        """Explain the update model. Deliberately NON-modal and outside the
+        busy-lock: the most likely moment to wonder "what is it doing?" is
+        while it is doing it, and reading can never mutate anything."""
+        dlg = getattr(self, "_help_dlg", None)
+        if dlg is not None:
+            dlg.show(); dlg.raise_(); dlg.activateWindow()
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("About Cachy-Void updates")
+        dlg.setStyleSheet(STYLE)
+        dlg.resize(660, 620)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(12, 12, 12, 12)
+        body = QTextBrowser()
+        body.setOpenExternalLinks(False)
+        body.setHtml(HELP_HTML)
+        lay.addWidget(body)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        close = QPushButton("Close")
+        close.clicked.connect(dlg.hide)
+        row.addWidget(close)
+        lay.addLayout(row)
+        self._help_dlg = dlg
+        dlg.show()
 
     # -- snapshot age -----------------------------------------------------
     @staticmethod

@@ -155,6 +155,75 @@ class PinBannerTests(unittest.TestCase):
 
 
 @unittest.skipUnless(HAVE_QT, "PyQt5 not installed")
+class HelpTextTests(unittest.TestCase):
+    """The "i" button explains the update model. Its text is deliberately
+    GENERAL so that adding packages to the overlay can never make it wrong —
+    that property is asserted here, not left to good intentions."""
+
+    @classmethod
+    def setUpClass(cls):
+        loader = importlib.machinery.SourceFileLoader("cachygui", str(GUI_PATH))
+        spec = importlib.util.spec_from_loader("cachygui", loader)
+        cls.mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.mod)
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.calls = []
+        self.mod.Updater._run = lambda s, args, target, **kw: self.calls.append(
+            (list(args), kw))
+        self.w = self.mod.Updater()
+        self.w.show()
+
+    def tearDown(self):
+        dlg = getattr(self.w, "_help_dlg", None)
+        if dlg is not None:
+            dlg.close()
+        self.w.deleteLater()
+
+    def test_covers_every_tier_the_status_pane_prints(self):
+        html = self.mod.HELP_HTML
+        for tier in ("[1]", "[2]", "[3]", "[4]", "[5]", "[6]"):
+            self.assertIn(tier, html)
+
+    def test_names_the_identity_specifics(self):
+        html = self.mod.HELP_HTML
+        for term in ("BORE", "1000", "-O3", "x86-64-v"):
+            self.assertIn(term, html)
+
+    def test_names_no_individual_packages(self):
+        """Package-level detail would need maintaining on every overlay change;
+        the text describes KINDS of things instead (owner's requirement)."""
+        html = self.mod.HELP_HTML.lower()
+        for pkg in ("mesa", "wine", "gamemode", "mangohud", "vkbasalt",
+                    "gamescope", "zramen", "earlyoom", "networkmanager",
+                    "nm-tray", "snooze", "xtools"):
+            self.assertNotIn(pkg, html, f"help text names the package {pkg!r}")
+
+    def test_says_the_overlay_itself_is_updated_elsewhere(self):
+        self.assertIn("re-running its installer", self.mod.HELP_HTML)
+
+    def test_help_stays_available_while_a_command_runs(self):
+        """The likeliest moment to ask "what is it doing?" is mid-run, and
+        reading cannot mutate anything — so help is outside the busy-lock."""
+        self.assertNotIn(self.w.btn_help, self.w._buttons)
+        self.w._busy(True)
+        self.assertTrue(self.w.btn_help.isEnabled())
+        self.w._busy(False)
+
+    def test_repeated_clicks_reuse_one_dialog(self):
+        self.w.show_help()
+        first = self.w._help_dlg
+        self.w.show_help()
+        self.assertIs(self.w._help_dlg, first)
+
+    def test_opening_help_spawns_no_process(self):
+        self.calls.clear()
+        self.w.btn_help.click()
+        self.assertEqual(self.calls, [])
+
+
+@unittest.skipUnless(HAVE_QT, "PyQt5 not installed")
 class ActionWiringTests(unittest.TestCase):
     """The update buttons must keep syncing first and scoping the kernel."""
 
