@@ -579,6 +579,13 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
 
     out("Cachy-Void — status")
     out("=" * 46)
+    # A failing tier must not swallow the tiers below it. Tier [2] used to
+    # `return EXIT_QUERY` on a broken/unbootstrapped void-packages, which hid
+    # the kernel, maintenance and GPU sections — including the §8.3a BORE-pin
+    # warning the GUI banner keys off (found live in a degraded sandbox where
+    # xbps-src refused to run). Remember the failure, keep reporting, return it
+    # at the end so scripts still see a non-zero code.
+    rc = EXIT_OK
 
     out("\n[1] System (upstream Void)")
     try:
@@ -613,12 +620,10 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
                 out("      deploy:  " + ", ".join(nd))
         else:
             out("    in sync with upstream")
-    except (XbpsError, MappingError, CycleError) as exc:
+    except (XbpsError, MappingError, CycleError, OSError) as exc:
         out(f"    query failed: {exc}")
-        return EXIT_QUERY
-    except OSError as exc:
-        out(f"    query failed: {exc}")
-        return EXIT_QUERY
+        out("    (the sections below are unaffected)")
+        rc = EXIT_QUERY
 
     out("\n[3] Kernel (linux-cachy / BORE)")
     _kernel_report(config, xbps, out=lambda m: out("    " + m))
@@ -676,7 +681,7 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
         out("    flatpak not installed")
 
     out("")
-    return EXIT_OK
+    return rc
 
 
 def cmd_pin_bore(config: Config, out=print, *, assume_yes: bool = False,

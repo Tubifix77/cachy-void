@@ -930,6 +930,24 @@ class StatusTests(unittest.TestCase):
         rc = cli.main(["--status"], xbps=FakeXbps(), config=_config([]), out=out)
         self.assertEqual(rc, cli.EXIT_OK)
 
+    def test_overlay_query_failure_still_reports_later_tiers(self):
+        """A broken void-packages must not hide the kernel/BORE-pin, maintenance
+        and GPU tiers — the GUI's pin banner keys off tier [3] (found live: an
+        unbootstrapped checkout truncated --status right before it)."""
+        from engine.xbps import XbpsError
+
+        class Boom(FakeXbps):
+            def show_local_updates(self):
+                raise XbpsError("./xbps-src: cannot run as root")
+
+        out = Sink()
+        rc = cli.cmd_status(Boom(), _config(["mesa"]), out=out, run=self._run)
+        t = out.text()
+        self.assertEqual(rc, cli.EXIT_QUERY)      # the failure is still reported
+        self.assertIn("query failed", t)
+        for marker in ("[3] Kernel", "[4] Maintenance", "[5] GPU", "[6] Flatpak"):
+            self.assertIn(marker, t)
+
 
 class CleanCommandTests(unittest.TestCase):
     """--clean: preview -> confirm -> remove orphans + cache; never purges kernels."""
