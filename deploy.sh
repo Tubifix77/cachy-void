@@ -562,12 +562,41 @@ install_branding() {
         done
     fi
     install_file "$SYS_DIR/bin/cachy-branding" "$CACHY_BRANDING_BIN" 0755 root root
-    # graphical updater front-end (PyQt5, inherits the Kvantum theme) + its launcher
+    install_greeter        # SDDM login screen (system-level; needs root, done here)
+    log "branding toolkit installed — apply the look by running (as your user): cachy-branding"
+}
+
+# install_updater_gui — the graphical updater front-end. CORE, not branding: it
+# is how a desktop user actually runs updates (and how the §8.3a BORE-pin banner
+# ever reaches them). It lived inside install_branding until a live test caught
+# the consequence — a box installed without --with-branding had no updater window
+# at all, so "the updater shows you a button" was simply false there. PyQt5 is
+# ensured as OPTIONAL: on a headless/minimal box the script still lands but stays
+# inert, and the CLI is unaffected.
+install_updater_gui() {
+    ensure_pkg python3-PyQt5 optional
     install_file "$SYS_DIR/bin/cachy-updater-gui" "$CACHY_UPDATER_GUI" 0755 root root
     install_file "$SYS_DIR/applications/cachy-updater.desktop" \
                  /usr/share/applications/cachy-updater.desktop 0644 root root
-    install_greeter        # SDDM login screen (system-level; needs root, done here)
-    log "branding toolkit installed — apply the look by running (as your user): cachy-branding"
+}
+
+# warn_stale_optionals — a redeploy that omits an opt-in flag leaves that
+# component's files at their OLD version, silently. The ledger knows what a box
+# already has, so say it out loud instead (real-hardware finding: a redeploy
+# without --with-branding left a stale updater GUI, and the "fix" looked applied).
+warn_stale_optionals() {
+    local n=0
+    if ! $WITH_BRANDING && manifest_has FILE "$CACHY_BRANDING_BIN"; then
+        warn "branding was installed on this system but --with-branding was NOT passed:"
+        warn "  its files were left at their previous version. Re-run with --with-branding to refresh."
+        n=$((n + 1))
+    fi
+    if ! $WITH_NM && manifest_has PKG "nm-tray"; then
+        warn "NetworkManager/nm-tray was installed but --with-networkmanager was NOT passed:"
+        warn "  re-run with --with-networkmanager to refresh that component."
+        n=$((n + 1))
+    fi
+    [ "$n" -eq 0 ] || warn "(deploy.sh does not remember flags between runs — pass the same opt-ins you used before.)"
 }
 
 # install_rclocal_tuning — §3.1b: tuning targets reachable by neither sysctl.d
@@ -1061,6 +1090,8 @@ do_install() {
     log "[8/10] gaming userspace layer: gamemode + MangoHud + cachy-game (§3.4)"
     install_gaming_userspace
 
+    install_updater_gui
+
     if $WITH_BRANDING; then
         log "[+] void-tactical desktop branding (opt-in, --with-branding)"
         install_branding
@@ -1098,6 +1129,7 @@ do_install() {
     fi
 
     ok "install complete (ledger tag: $DEPLOY_TAG)."
+    warn_stale_optionals
     $PARTIAL && warn "PARTIAL: compiler profile/overlay were skipped (see above)."
     cat <<EOF
 
