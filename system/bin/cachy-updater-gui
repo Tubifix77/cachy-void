@@ -32,6 +32,7 @@ it is applied unconditionally — one appearance everywhere, no env dependency.
 import os
 import shutil
 import sys
+import time
 
 from PyQt5.QtCore import QProcess, Qt, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPixmap
@@ -79,6 +80,17 @@ QPushButton {{
 QPushButton:hover {{ border-color: {ACCENT}; }}
 QPushButton:pressed {{ background: #20242b; }}
 QPushButton:disabled {{ color: {FG_DIM}; border-color: #23272e; }}
+
+/* A utility, not an action: the check already ran on open and re-runs after
+   every command, so this must not compete with the real buttons. Flat, dim,
+   link-like — it exists for a stale long-open window, nothing more. */
+QPushButton#quiet {{
+    background: transparent; border: none; color: {FG_DIM};
+    padding: 4px 2px; text-align: right;
+}}
+QPushButton#quiet:hover {{ color: {ACCENT}; }}
+QPushButton#quiet:pressed {{ color: {FG}; }}
+QPushButton#quiet:disabled {{ color: #3a4050; }}
 
 QPushButton#primary {{
     background: {ACCENT}; color: {ON_ACCENT};
@@ -155,8 +167,20 @@ class Updater(QWidget):
         titles.addWidget(subtitle)
         header.addLayout(titles)
         header.addStretch(1)
-        self.btn_check = QPushButton("Check for updates")
-        self.btn_check.setToolTip("Re-read what's pending (read-only)")
+        # The status pane is populated automatically on open and re-read after
+        # every command, so this is only for a window left open a long time.
+        # It used to be a full-weight top-right button labelled "Check for
+        # updates", which read as the thing you were supposed to press first
+        # (and left people unsure whether it had already run). "Re-check"
+        # states that a check happened; the age label says when.
+        self.checked_at = QLabel("")
+        self.checked_at.setObjectName("subtitle")
+        self.btn_check = QPushButton("Re-check for updates")
+        self.btn_check.setObjectName("quiet")
+        self.btn_check.setToolTip(
+            "Read the pending list again (read-only). Runs by itself when this "
+            "window opens and after every command.")
+        header.addWidget(self.checked_at, 0, Qt.AlignVCenter)
         header.addWidget(self.btn_check, 0, Qt.AlignVCenter)
         root.addLayout(header)
 
@@ -251,6 +275,14 @@ class Updater(QWidget):
         self._act_timer.setInterval(1000)
         self._act_timer.timeout.connect(self._tick)
         self._act_msg = ""; self._act_secs = 0
+
+        # snapshot age: the pending list is a point-in-time read, so say when it
+        # was taken rather than letting a stale pane look authoritative.
+        self._checked_at = None
+        self._age_timer = QTimer(self)
+        self._age_timer.setInterval(30000)
+        self._age_timer.timeout.connect(self._refresh_age)
+        self._age_timer.start()
 
         mono = QFont("Hack"); mono.setStyleHint(QFont.Monospace)
         mono.setPointSize(9)
@@ -353,11 +385,34 @@ class Updater(QWidget):
         self._run(["--sync"], self.out, confirm=confirm, done=after_sync,
                   activity="Syncing build templates (git rebase)…")
 
+    # -- snapshot age -----------------------------------------------------
+    @staticmethod
+    def _age_text(seconds):
+        """Human age of the pending snapshot (pure — unit-tested)."""
+        if seconds is None:
+            return ""
+        if seconds < 90:
+            return "checked just now"
+        minutes = int(seconds // 60)
+        if minutes < 60:
+            return f"checked {minutes} minute{'s' if minutes != 1 else ''} ago"
+        hours = minutes // 60
+        return f"checked {hours} hour{'s' if hours != 1 else ''} ago"
+
+    def _refresh_age(self):
+        if self._checked_at is None:
+            self.checked_at.setText("")
+            return
+        self.checked_at.setText(self._age_text(time.time() - self._checked_at))
+
     # -- actions ----------------------------------------------------------
     def check(self):
+        def done(_code):
+            self._checked_at = time.time()
+            self._refresh_age()
+            self._update_pin_banner()
         self._run(["--status"], self.status, busy_msg="Getting Cachy-Void status…",
-                  activity="Checking for updates…",
-                  done=lambda _c: self._update_pin_banner())
+                  activity="Checking for updates…", done=done)
 
     def _update_pin_banner(self):
         """Show the §8.3a notice iff --status flagged a missing trust pin

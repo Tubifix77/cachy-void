@@ -92,6 +92,34 @@ class PinBannerTests(unittest.TestCase):
         self.assertEqual(self.calls[0][0], ["--pin-bore", "--dry-run"])
         self.assertTrue(all("--yes" not in c[0] for c in self.calls))
 
+    def test_recheck_button_is_demoted_and_says_re_check(self):
+        """It ran on open and re-runs after every command, so it must not look
+        like the thing to press first — and its label must make clear a check
+        already happened (user feedback: 'unsure if it ran automatically')."""
+        self.assertEqual(self.w.btn_check.objectName(), "quiet")
+        self.assertTrue(self.w.btn_check.text().startswith("Re-check"))
+        # ...while the real primary action keeps its emphasis
+        self.assertEqual(self.w.btn_update.objectName(), "primary")
+
+    def test_age_text_wording(self):
+        age = self.w._age_text
+        self.assertEqual(age(None), "")
+        self.assertEqual(age(0), "checked just now")
+        self.assertEqual(age(89), "checked just now")
+        self.assertEqual(age(95), "checked 1 minute ago")
+        self.assertEqual(age(600), "checked 10 minutes ago")
+        self.assertEqual(age(3600), "checked 1 hour ago")
+        self.assertEqual(age(7200), "checked 2 hours ago")
+
+    def test_check_stamps_the_snapshot_age(self):
+        """A finished check must record when the pending list was read, so a
+        stale pane can never look authoritative."""
+        self.assertEqual(self.w.checked_at.text(), "")
+        self.calls.clear()
+        self.w.check()
+        self.calls[0][1]["done"](0)          # simulate the CLI finishing
+        self.assertEqual(self.w.checked_at.text(), "checked just now")
+
     def test_pin_button_label_escapes_its_ampersand(self):
         """A lone '&' is a Qt mnemonic: "Review & pin…" rendered as
         "Review _pin…" until it was escaped (found by looking at a render)."""
