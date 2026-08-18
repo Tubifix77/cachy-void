@@ -997,6 +997,77 @@ class CleanCommandTests(unittest.TestCase):
         # the invariant: no vkpurge rm is ever issued (§2.5/§4.7)
         self.assertFalse(any(c[:2] == ["vkpurge", "rm"] for c in calls))
 
+    def test_dry_run_previews_and_removes_nothing(self):
+        run, calls = self._run()
+        out = Sink()
+        rc = cli.cmd_clean(_config([]), assume_yes=True, dry_run=True,
+                           out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("preview only", out.text())
+        self.assertFalse(any(c[:3] == ["xbps-remove", "-o", "-y"] for c in calls))
+        self.assertFalse(any(c[:3] == ["xbps-remove", "-O", "-y"] for c in calls))
+
+    def test_refuses_orphan_sweep_containing_a_locally_built_package(self):
+        """libgamemode (built here, ships libgamemodeauto.so.0 for gamemoderun)
+        is orphan-eligible because nothing LINKS it — sweeping it would break
+        the gaming layer silently. Real find on the live box."""
+        calls = []
+
+        def run(args):
+            calls.append(list(args))
+            a = list(args)
+            if a[:1] == ["sudo"]:
+                a = a[2:]
+            if a[:4] == ["xbps-remove", "-o", "-n"]:
+                return cp(0,
+                          "libnma-1.10.6_1 remove x86_64 "
+                          "https://repo-default.voidlinux.org/current 1 1\n"
+                          "libgamemode-1.8.2_1 remove x86_64 "
+                          "/vp/hostdir/binpkgs 1 1\n")
+            if a[:4] == ["xbps-remove", "-O", "-n"]:
+                return cp(0, "old-pkg-1_1\n")
+            return cp(0, "")
+
+        out = Sink()
+        rc = cli.cmd_clean(_config([]), assume_yes=True, out=out, run=run)
+        t = out.text()
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("REFUSING to remove orphans", t)
+        self.assertIn("libgamemode-1.8.2_1", t)
+        self.assertIn("sudo xbps-pkgdb -m manual libgamemode-1.8.2_1", t)
+        # the sweep is skipped entirely (the flag cannot exclude one package)...
+        flat = [c[2:] if c[:1] == ["sudo"] else c for c in calls]
+        self.assertFalse(any(c[:3] == ["xbps-remove", "-o", "-y"] for c in flat))
+        # ...while cache cleaning is unaffected
+        self.assertTrue(any(c[:3] == ["xbps-remove", "-O", "-y"] for c in flat))
+
+    def test_upstream_only_orphans_are_swept_normally(self):
+        calls = []
+
+        def run(args):
+            calls.append(list(args))
+            a = list(args)[2:] if list(args)[:1] == ["sudo"] else list(args)
+            if a[:4] == ["xbps-remove", "-o", "-n"]:
+                return cp(0, "libnma-1.10.6_1 remove x86_64 "
+                             "https://repo-default.voidlinux.org/current 1 1\n")
+            return cp(0, "")
+
+        out = Sink()
+        cli.cmd_clean(_config([]), assume_yes=True, out=out, run=run)
+        flat = [c[2:] if c[:1] == ["sudo"] else c for c in calls]
+        self.assertNotIn("REFUSING", out.text())
+        self.assertTrue(any(c[:3] == ["xbps-remove", "-o", "-y"] for c in flat))
+
+    def test_local_origin_detection_matches_repo_and_subrepo(self):
+        lines = [
+            "a-1_1 remove x86_64 /vp/hostdir/binpkgs 1 1",
+            "b-1_1 remove x86_64 /vp/hostdir/binpkgs/nonfree 1 1",
+            "c-1_1 remove x86_64 https://repo-default.voidlinux.org/current 1 1",
+            "malformed line",
+        ]
+        hits = cli._local_origin_orphans(lines, ["/vp/hostdir/binpkgs"])
+        self.assertEqual(hits, ["a-1_1", "b-1_1"])
+
     def test_nothing_to_clean(self):
         run, calls = self._run(orphans="", cache="")
         out = Sink()

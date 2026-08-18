@@ -1136,8 +1136,32 @@ def _kernel_inventory(config: Config, run) -> list[OldKernel]:
 # ==========================================================================
 # Maintenance / cleanup (§4.7 note; extends the §4.1 sudo boundary)
 # ==========================================================================
-def cmd_clean(config: Config, *, assume_yes: bool, out=print, run=_run,
-              confirm=input) -> int:
+def _local_origin_orphans(orphan_lines: Sequence[str],
+                          local_repos: Sequence[str]) -> list[str]:
+    """Orphans whose *origin* is one of our overlay repos (§7.1 name domains).
+
+    A package the overlay deliberately BUILT is not garbage, even when nothing
+    links it: that is the signature of a runtime-only library (LD_PRELOAD /
+    dlopen), which xbps cannot see a dependency edge for. `xbps-remove -o`
+    cannot exclude individual packages — and the §4.1 grant forbids naming any —
+    so an orphan sweep containing one of these is all-or-nothing and must not
+    proceed. Live case: libgamemode (ships libgamemodeauto.so.0 for
+    gamemoderun) was orphan-eligible, and removing it would have broken the
+    gaming layer silently.
+    """
+    hits: list[str] = []
+    for line in orphan_lines:
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        if any(fields[3] == repo or fields[3].startswith(repo + "/")
+               for repo in local_repos):
+            hits.append(fields[0])
+    return hits
+
+
+def cmd_clean(config: Config, *, assume_yes: bool, dry_run: bool = False,
+              out=print, run=_run, confirm=input) -> int:
     """Reclaim disk: remove orphaned packages and clean the obsolete package
     cache. Preview-then-confirm; every removal goes through the §4.1 sudo
     boundary (this adds exactly the two ``xbps-remove`` maintenance forms — the
@@ -1172,6 +1196,21 @@ def cmd_clean(config: Config, *, assume_yes: bool, out=print, run=_run,
         out("    " + l)
     out(f"obsolete cached packages to clean: {len(cache)}")
 
+    # Refuse a mixed sweep: an orphan we BUILT is a protection gap, not garbage.
+    ours = _local_origin_orphans(orphans, config.repo_strs)
+    if ours:
+        out("\nREFUSING to remove orphans: " + ", ".join(ours)
+            + f" {'was' if len(ours) == 1 else 'were'} built by this overlay.")
+        out("    Nothing links them, but that is exactly how a runtime-only")
+        out("    library looks (LD_PRELOAD/dlopen) — removing one can break the")
+        out("    overlay silently. `xbps-remove -o` cannot skip a single package,")
+        out("    so the whole orphan sweep is skipped.")
+        for p in ours:
+            out(f"    keep it:  sudo xbps-pkgdb -m manual {p}")
+        out("    (or drop it from the allowlist if it is genuinely unused, then"
+            " re-run)")
+        orphans = []          # cache cleaning below is unaffected
+
     # old kernels — SUGGEST ONLY (never purge; §2.5/§4.7)
     inv = _kernel_inventory(config, run)
     if inv:
@@ -1182,6 +1221,12 @@ def cmd_clean(config: Config, *, assume_yes: bool, out=print, run=_run,
 
     if not orphans and not cache:
         out("\nnothing to clean — no orphans, cache already tidy.")
+        return EXIT_OK
+
+    if dry_run:
+        # The front-end previews with this before asking, so a user sees WHAT
+        # disappears rather than agreeing to a category ("orphans and cache").
+        out("\n(preview only — nothing was removed)")
         return EXIT_OK
 
     if not assume_yes:
@@ -1703,7 +1748,8 @@ def main(argv: Optional[Sequence[str]] = None, *,
         if args.rollback:
             return cmd_rollback(config, out=out)
         if args.clean:
-            return cmd_clean(config, assume_yes=args.yes, out=out)
+            return cmd_clean(config, assume_yes=args.yes,
+                             dry_run=args.dry_run, out=out)
         if args.health_daemon:
             daemon = build_health_daemon(config, out=out)
             # §8.7 confirm layer FIRST (once per boot): decide the fate of any

@@ -588,7 +588,25 @@ minimal, non-package-naming set:
 - **`--clean`** — preview→confirm removal of orphans + obsolete cache. Grants
   **exactly** `xbps-remove -o|-O -n|-y` (flags that cannot name a package).
   **Kernel purges stay manual** (§2.5/§4.7): it only *prints* `vkpurge list`;
-  `vkpurge` is never granted.
+  `vkpurge` is never granted. `--dry-run` previews and returns without removing
+  anything, which is what the front-end runs *before* its confirm dialog so the
+  user approves a **list**, not a category.
+  **Orphan-sweep refusal (normative).** An orphan whose *origin* is one of the
+  overlay repos `R` (§7.1) aborts the orphan sweep, naming the package and the
+  `xbps-pkgdb -m manual <pkg>` fix; cache cleaning still proceeds. Rationale: a
+  package the overlay deliberately built is not garbage even when nothing links
+  it — that is precisely how a **runtime-only** library looks, since LD_PRELOAD
+  and `dlopen` leave no dependency edge for xbps to see. And because the grant
+  forbids naming packages, `-o` is all-or-nothing: skipping the sweep is the only
+  safe response. *(Live find, 2026-08-18: `libgamemode` — which ships
+  `libgamemodeauto.so.0`, the library `gamemoderun` LD_PRELOADs and `cachy-game`
+  relies on — was `automatic-install: yes` with **zero** reverse dependencies, so
+  a Clean up would have silently disabled GameMode.)* The root-cause fix is
+  preventive and lives in `deploy.sh`: `protect_pkg` sets install-mode **manual**
+  for such libraries (`libgamemode`, `libgamemode-32bit`) at provisioning time,
+  ledger-recorded as **PKGMODE** with the previous mode so `--uninstall` restores
+  it. The refusal above remains as the belt-and-braces net for anything not yet
+  protected.
 - **`--gpu`** — read-only advisory (card, installed driver + pending update,
   legacy-series hint, DKMS health). No mutation, no grant.
 - **Flatpak** — an updater that silently skipped Flatpaks would give a false

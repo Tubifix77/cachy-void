@@ -616,10 +616,43 @@ class Updater(QWidget):
                   activity="Updating incl. kernel compile — do not power off")
 
     def clean(self):
-        self._run(["--clean", "--yes"], self.out, done=lambda _c: self.check(),
-                  confirm="Remove orphaned packages and clean the package cache now?"
-                          "\n\n(Old kernels are never auto-removed.)",
-                  activity="Cleaning up…")
+        """Preview, then confirm with the actual list — never a blind sweep.
+
+        Agreeing to "remove orphans and clean the cache" is agreeing to a
+        category, not to a decision: an orphan list can contain something you
+        depend on (a runtime-only library nothing links), and the cache holds
+        the older package versions a downgrade would need. So the dialog shows
+        what would go, exactly like the BORE-pin flow."""
+        def after_preview(code):
+            if code != 0:
+                self.out.appendPlainText(
+                    "[could not preview the cleanup — nothing was removed]")
+                return
+            text = self.out.toPlainText()
+            if "nothing to clean" in text:
+                return
+            if "REFUSING to remove orphans" in text:
+                QMessageBox.warning(
+                    self, "Cleanup needs a look first",
+                    "Some orphaned packages were built by the overlay itself, so "
+                    "the orphan sweep was skipped — removing them could break it "
+                    "silently.\n\nSee the output for the exact command to keep "
+                    "them, then run Clean up again.")
+                return
+            body = text[text.find("orphaned packages to remove:"):].strip() or text
+            if QMessageBox.question(
+                    self, "Confirm cleanup",
+                    "This will remove the following and clean the obsolete "
+                    "package cache. Old kernels are never touched.\n\n" + body +
+                    "\n\nProceed?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No) != QMessageBox.Yes:
+                self.out.appendPlainText("[cleanup cancelled — nothing removed]")
+                return
+            self._run(["--clean", "--yes"], self.out, clear=False,
+                      done=lambda _c: self.check(), activity="Cleaning up…")
+        self._run(["--clean", "--dry-run"], self.out, done=after_preview,
+                  activity="Checking what can be cleaned…")
 
     def gpu(self):
         self._run(["--gpu"], self.out,   # read-only advisory, no confirm

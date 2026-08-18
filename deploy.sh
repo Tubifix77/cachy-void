@@ -223,6 +223,9 @@ detect_legacy_optimus() {
 #   SERVICE  service-name       "-"        (we ENABLED it  → uninstall disables it)
 #   SVCOFF   service-name       "-"        (we DISABLED it → uninstall RE-ENABLES it)
 #   PKG      package-name       "-"        (only recorded if WE installed it)
+#   PKGMODE  package-name       previous-mode  (we set install-mode manual so an
+#                               orphan sweep cannot take a runtime-only library;
+#                               uninstall restores the previous mode)
 #   DIR      dir-path           "-"
 #   SUBVOL   subvol-path        "-"        (btrfs; kept on uninstall if non-empty)
 #   GRUB     /etc/default/grub  backup-path
@@ -356,6 +359,45 @@ disable_service() {
     ok "disabled runit service $name (re-enabled by --uninstall)"
 }
 
+# protect_pkg PKG — mark an installed package's install-mode "manual" so an
+# orphan sweep (`xbps-remove -o`, the updater's Clean up) can never take it.
+#
+# Why this is needed at all: a library that is only ever pulled in at RUNTIME —
+# LD_PRELOAD or dlopen — has no dependency edge for xbps to see, so it looks
+# like garbage. Real case that motivated this (live find, 2026-08-18):
+# `libgamemode` ships /usr/lib/libgamemodeauto.so.0, which `gamemoderun`
+# LD_PRELOADs and which our cachy-game wrapper depends on; nothing *links* it,
+# `xbps-query -X libgamemode` is empty, and it was flagged automatic-install —
+# so a Clean up would have silently removed GameMode's client library and
+# broken the gaming layer on every Cachy-Void box.
+#
+# Ledger-recorded (PKGMODE) with the previous mode, so --uninstall restores it.
+protect_pkg() {
+    local pkg="$1" prev
+    if [ -n "$ROOT" ]; then
+        warn "offline mode: cannot set install-mode for '$pkg' — do it from a chroot"
+        return 0
+    fi
+    xbps-query -- "$pkg" >/dev/null 2>&1 || return 0      # not installed: nothing to protect
+    manifest_has PKGMODE "$pkg" && return 0               # already ours
+    if [ "$(xbps-query -p automatic-install "$pkg" 2>/dev/null)" = yes ]; then
+        prev=auto
+    else
+        prev=manual
+    fi
+    if [ "$prev" = manual ]; then
+        log "package $pkg is already install-mode manual — orphan-safe"
+        return 0
+    fi
+    if $DRY_RUN; then log "[dry-run] xbps-pkgdb -m manual $pkg"; return; fi
+    if xbps-pkgdb -m manual "$pkg" >/dev/null 2>&1; then
+        manifest_add PKGMODE "$pkg" "$prev"
+        ok "protected $pkg from orphan sweeps (install-mode manual; was $prev)"
+    else
+        warn "could not set install-mode manual for $pkg — a Clean up may remove it"
+    fi
+}
+
 # install_dir DIR OWNER — create a tracked directory (removed on uninstall).
 install_dir() {
     local dir="$1" owner="${2:-root}"
@@ -453,6 +495,10 @@ install_schedule_service() {
 # wrapper. MangoHud-32bit is multilib-gated, hence optional (non-fatal if absent).
 install_gaming_userspace() {
     ensure_pkg "$PKG_GAMEMODE"
+    # gamemoderun LD_PRELOADs libgamemodeauto.so.0 from libgamemode, which
+    # nothing links — protect it (and its multilib twin) from orphan sweeps.
+    protect_pkg libgamemode
+    protect_pkg libgamemode-32bit
     # GameMode's governor/GPU helpers run via `pkexec cpugovctl …`, and the
     # shipped polkit policy DENIES everyone by default — the only grant is the
     # rules-file exception for members of the `gamemode` group (both files ship
@@ -1216,6 +1262,21 @@ uninstall_pkg() {  # pkg
             || warn "could not remove $pkg (still in use?) — left installed"
     fi
 }
+uninstall_pkgmode() {  # pkg previous-mode
+    local pkg="$1" prev="${2:-auto}"
+    if [ -n "$ROOT" ]; then
+        warn "offline mode: install-mode for '$pkg' left as manual"
+        return 0
+    fi
+    [ "$prev" = manual ] && return 0        # it was already manual: nothing of ours to undo
+    if $DRY_RUN; then log "[dry-run] xbps-pkgdb -m $prev $pkg"; return; fi
+    if xbps-query -- "$pkg" >/dev/null 2>&1; then
+        xbps-pkgdb -m "$prev" "$pkg" >/dev/null 2>&1 \
+            && ok "restored install mode ($prev) for $pkg" \
+            || warn "could not restore install mode for $pkg"
+    fi
+}
+
 uninstall_dir() {  # dir we created; may hold runtime state (kernel-state.json)
     local d="$1"
     if $DRY_RUN; then log "[dry-run] remove dir $d"; return; fi
@@ -1287,6 +1348,7 @@ do_uninstall() {
             SUBVOL)  uninstall_subvol  "$target" ;;
             GRUB)    uninstall_grub    "$target" "$extra" ;;
             PKG)     uninstall_pkg     "$target" ;;
+            PKGMODE) uninstall_pkgmode "$target" "$extra" ;;
             *)       warn "unknown ledger entry: $type $target" ;;
         esac
     done

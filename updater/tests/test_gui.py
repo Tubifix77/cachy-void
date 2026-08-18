@@ -133,6 +133,14 @@ class PinBannerTests(unittest.TestCase):
         self.w._update_pin_banner()
         self.assertTrue(self.w.btn_rollback.isVisible())
 
+    def test_clean_previews_before_it_can_remove_anything(self):
+        """Agreeing to 'orphans and cache' is agreeing to a category; the dialog
+        must show the actual list (same pattern as the pin flow)."""
+        self.calls.clear()
+        self.w.btn_clean.click()
+        self.assertEqual(self.calls[0][0], ["--clean", "--dry-run"])
+        self.assertTrue(all("--yes" not in c[0] for c in self.calls))
+
     def test_rollback_asks_before_acting(self):
         """It changes what the machine boots — never on a single click."""
         self.calls.clear()
