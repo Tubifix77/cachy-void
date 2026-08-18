@@ -17,9 +17,9 @@ The base system stays 100% upstream Void binaries. Only a short, curated overlay
 | **Runtime tuning** | Gaming `sysctl` (swappiness/zram, `max_map_count`, RT throttling off), per-medium I/O schedulers, 1000 Hz input polling. |
 | **Safe kernel updates** | SHA-256-pinned BORE patch trust, deterministic template regeneration, a config gate that catches silent `oldconfig` drops, and GRUB **one-shot** boot-testing — a bad kernel rolls back on the next power cycle with zero interaction. |
 | **Automated updater** | A fail-fast update engine that syncs `void-packages`, computes a topologically-ordered build queue, compiles, deploys with overlay priority, cycles runit services, and — because an updater should update *everything* — refreshes **Flatpak** apps too. Recovery is by recomputation from live state. |
-| **Graphical front-end** | `cachy-updater-gui` — a themed PyQt5 updater so updates actually happen (Update / Update kernel / Clean up / GPU advisory), over the same tested CLI. |
+| **Graphical front-end** | `cachy-updater-gui` — the window you actually live with after installing (see [The updater window](#the-updater-window)). Installed by default, painted in the void-tactical palette, and a thin shell over the same tested CLI: it never has privileges of its own. |
 | **Gaming layer** | `cachy-game` launch wrapper (GameMode → PRIME → optional gamescope → game) with opt-in MangoHud, **gamescope** (frame limiting/FSR) and **vkBasalt** toggles, `earlyoom` guarding the aggressive zram posture, and `cachy-proton` to install Proton-CachyOS. |
-| **Maintenance & GPU** | `--clean` (orphans + package cache; never touches kernels), `--gpu` (detected card, driver, DKMS health, legacy-series advice). |
+| **Maintenance & GPU** | `--clean` (orphans + package cache; **never** kernels, and it refuses a sweep containing a package the overlay built), `--gpu` (detected card, driver + pending update, module actually loaded, and a warning for any installed kernel with **no** out-of-tree module built). |
 | **btrfs rollback net** | Optional pre-deploy read-only snapshots taken right before each deploy (`[snapshot]`), on top of the always-converges recovery path. |
 | **Optional desktop look** | `void-tactical` — a low-key obsidian/green LXQt identity (Kvantum + panel + Conky telemetry + wallpaper + a branded SDDM login screen), fully reversible. |
 | **Void-native** | runit services (`zramen`, `cachy-health`), a narrow sudoers boundary, no systemd units or timers anywhere. |
@@ -59,6 +59,29 @@ Full instructions, configuration, multi-boot/Secure-Boot notes, and the uninstal
 
 ---
 
+## The updater window
+
+Once `deploy.sh` has finished, **`cachy-updater-gui` is the part of Cachy-Void you actually live with** — so it is treated as a product, not a wrapper. It is installed by default (not part of the optional theme), and it is a thin shell over the tested CLI: every button runs the same `cachy-void-update` command you could type, so the window has no privileges of its own.
+
+| Control | What it does |
+|---|---|
+| **Update** | Sync `void-packages`, then update the system + rebuild the performance overlay (kernel untouched). |
+| **Update kernel** | The same, including the BORE kernel: compiles, then a reboot switches to it. |
+| **Clean up** | Orphans + package cache. **Previews first** and lists exactly what will go; never removes kernels. |
+| **GPU / drivers** | Card, driver + pending update, whether the module is really loaded, DKMS builds per kernel — and a warning for any installed kernel with **no** module built. |
+| **Boot known-good kernel** | Appears *only* when the running kernel isn't the recorded known-good one; re-points the bootloader default, uninstalls nothing. |
+| **Review & pin…** | Appears *only* when your kernel series has no approved BORE patch: it fetches the patch, shows commit + checksum, and records it when you approve. Until then kernel updates pause while everything else still updates. |
+| **i** | What each status tier means, what maintains itself, and what needs you. Stays open and readable while a command runs. |
+| *checked N minutes ago* + **Re-check** | The pending list is a point-in-time read; the age says how stale, and re-reading is one quiet click (it also runs on open and after every command). |
+
+Three rules shape it, learned by using it on real hardware:
+
+- **Nothing that matters is CLI-only.** A paused kernel, an available rollback, a driver that never rebuilt — if the updater knows it, the window says it. Recovery lived behind a flag for months, which is no use to the person whose kernel just misbehaved.
+- **Preview, then confirm.** Destructive or trust-establishing actions show you the actual list or checksum first; you approve a *decision*, not a category.
+- **Annotate, never dump.** Leftover kernels carry their size and role (rollback target / running / spare) and their own removal command, because "which of these can I delete?" is the one question where a wrong guess costs a bootable system.
+
+---
+
 ## How it works
 
 The updater runs a four-stage pipeline (sync → queue → build → atomic deploy), driven by a queue algebra that only ever builds packages that are **both** outdated **and** installed, never touching the bootstrap layer (`glibc`, `musl`, `xbps`, `runit`, …). Crash recovery is by recomputation from live state, not a replayed log.
@@ -87,7 +110,7 @@ Everything the installer touches is recorded in a per-change **ledger** — insp
 
 | Flag | Adds |
 |---|---|
-| `--with-branding` | Packages `kvantum papirus-icon-theme papirus-folders plank rofi conky picom python3-PyQt5` (+ optional `arc-theme font-hack ImageMagick feh tint2 setxkbmap fastfetch`), theme assets under `/usr/share/cachy-void/branding`, the `cachy-branding` + `cachy-updater-gui` tools, and the **void-tactical** SDDM login theme. The desktop look itself is applied per-user by `cachy-branding` (backed up, `--remove` restores) |
+| `--with-branding` | Packages `kvantum papirus-icon-theme papirus-folders plank rofi conky picom python3-PyQt5` (+ optional `arc-theme font-hack ImageMagick feh tint2 setxkbmap fastfetch`), theme assets under `/usr/share/cachy-void/branding`, the `cachy-branding` applier, and the **void-tactical** SDDM login theme. The desktop look itself is applied per-user by `cachy-branding` (backed up, `--remove` restores). *(The updater window is **not** here — it installs by default; a box with no GUI would have no way to see what the updater is telling it.)* |
 | `--with-networkmanager` | `NetworkManager` + `nm-tray` (Qt WiFi picker), enables the NM service, **disables `dhcpcd`** (they conflict) |
 | `--with-grub` | Edits `/etc/default/grub` (ledger-backed): `GRUB_DEFAULT=saved` (required for one-shot kernel boot-tests) + `usbcore.autosuspend=-1` |
 | `--with-schedule` | Enables the daily unattended-update runit service |
