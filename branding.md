@@ -64,9 +64,17 @@ Single source of truth (mirrors `future-ideas.md` §6b). Everything else derives
 
 - `--fg-dim` (inactive/disabled text): `#5c6370` — the One-Dark "comment" grey; cool, low-sat, reads clearly muted.
 - `--on-accent` (text placed *on* the green): `--bg` `#1b1d1e` — maximum contrast.
+- `--warn` (warning indicator): `#967940` — a **muted brass amber** (40°, 40%, 42%),
+  matched to `--accent`'s lightness so it sits beside the green without shouting.
+  Added 2026-08-18 for the updater's "kernel updates are paused" notice (§8.3a);
+  the first case where a warning tone was genuinely needed. Usage follows the
+  `--alert` rule below: **border / icon / indicator only**, with the message text
+  itself in `--fg`. It is 4.4:1 on `--bg` — fine for a glyph or bold short label,
+  not for body copy.
 
-The palette is deliberately tiny. **Resist adding hues.** If a "warning" tone is ever
-truly needed, derive a *muted* amber — never a bright one — and add it here first.
+The palette is deliberately tiny. **Resist adding hues.** A "warning" tone now
+exists (`--warn` above) — derive nothing further without adding it here first, and
+never brighten it.
 
 **Contrast / usage rules (keeps it readable *and* on-brand):**
 

@@ -92,6 +92,33 @@ class PinBannerTests(unittest.TestCase):
         self.assertEqual(self.calls[0][0], ["--pin-bore", "--dry-run"])
         self.assertTrue(all("--yes" not in c[0] for c in self.calls))
 
+    def test_pin_button_label_escapes_its_ampersand(self):
+        """A lone '&' is a Qt mnemonic: "Review & pin…" rendered as
+        "Review _pin…" until it was escaped (found by looking at a render)."""
+        raw = self.w.btn_pin.text()
+        self.assertNotIn("&", raw.replace("&&", ""))
+
+    def test_window_paints_the_brand_palette(self):
+        """The window must not depend on the ambient Qt theme — it inherited a
+        light Fusion look whenever the platform theme wasn't loaded (over SSH,
+        or on a box installed without --with-branding)."""
+        sheet = self.w.styleSheet()
+        for token in ("#1b1d1e", "#282c34", "#abb2bf", "#478061", "#967940"):
+            self.assertIn(token, sheet)          # branding.md §2 palette
+
+    def test_status_pane_outweighs_the_output_pane(self):
+        """The pending-status pane is the content of this window; it was being
+        squeezed into a scrolled sliver beneath a mostly-empty Output box."""
+        layout = self.w.layout()
+        stretches = [layout.stretch(i) for i in range(layout.count())]
+        self.assertGreater(max(stretches), 0)
+        # the status group carries the largest stretch of any child
+        idx = next(i for i in range(layout.count())
+                   if layout.itemAt(i).widget() is not None
+                   and layout.itemAt(i).widget().findChild(type(self.w.status))
+                   is self.w.status)
+        self.assertEqual(layout.stretch(idx), max(stretches))
+
     def test_pin_button_joins_the_busy_lock(self):
         self.w._busy(True)
         self.assertFalse(self.w.btn_pin.isEnabled())

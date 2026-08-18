@@ -5,8 +5,7 @@ A clickable updater so updates actually happen (a terminal command gets skipped,
 and skipped updates = driver/perf left on the floor). It's a thin PyQt5 shell over
 the tested `cachy-void-update` CLI: every action runs the CLI via QProcess with
 live output, so nothing blocks the window and privilege stays inside the CLI's
-existing sudo-NOPASSWD boundary. Being a Qt5 app, it inherits the LXQt Kvantum
-"void-tactical" theme automatically.
+existing sudo-NOPASSWD boundary.
 
 Sections mirror the update model (architecture.md §4/§7/§8). Both update buttons
 run Stage 1 first (--sync, rebasing void-packages) so builds see current upstream
@@ -18,23 +17,110 @@ templates — the same --sync + --commit pairing the §4.9 scheduled runs use:
 The "Check" button runs `--status` and shows the read-only overview.
 
 BORE pin (§8.3a): when --status reports "BORE pin: MISSING" for this box's
-kernel series, a warning banner + "Pin BORE patch…" button appear. The button
+kernel series, a notice card + "Review & pin…" button appear. The button
 previews the proposal (--pin-bore --dry-run), shows it in a confirm dialog —
 that dialog IS the human trust approval — and only then writes the pin
 (--pin-bore --yes). Kernel updates stay paused until then; userspace never is.
+
+LOOK: the window paints itself from the canonical void-tactical palette
+(branding.md §2) instead of trusting the ambient Qt theme. It used to inherit
+whatever the session provided, which meant a light-mode Fusion window whenever
+the platform theme wasn't loaded (e.g. launched over SSH, or on a box installed
+without --with-branding). The palette is the brand and is dark by definition, so
+it is applied unconditionally — one appearance everywhere, no env dependency.
 """
+import os
 import shutil
 import sys
 
 from PyQt5.QtCore import QProcess, Qt, QTimer
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtGui import QFont, QIcon, QPixmap
 from PyQt5.QtWidgets import (
-    QApplication, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit,
-    QProgressBar, QPushButton, QVBoxLayout, QWidget,
+    QApplication, QFrame, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
+    QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 CLI = shutil.which("cachy-void-update") or "/usr/local/bin/cachy-void-update"
 ICON = "/usr/share/cachy-void/branding/void-cachy-updater.svg"
+
+# --- canonical void-tactical palette (branding.md §2 — single source of truth) --
+BG = "#1b1d1e"        # obsidian
+PANEL = "#282c34"     # graphite
+FG = "#abb2bf"        # grey-white
+ACCENT = "#478061"    # "the Void" green
+FG_DIM = "#5c6370"    # muted text
+WARN = "#967940"      # muted brass amber — indicator/border only
+ON_ACCENT = BG
+
+STYLE = f"""
+QWidget {{ background: {BG}; color: {FG}; }}
+QLabel#title {{ font-size: 16px; font-weight: bold; color: {FG}; }}
+QLabel#subtitle {{ color: {FG_DIM}; }}
+
+QGroupBox {{
+    border: 1px solid {PANEL}; border-radius: 6px;
+    margin-top: 16px; padding: 10px 8px 8px 8px;
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin; subcontrol-position: top left;
+    left: 10px; padding: 0 5px; color: {ACCENT}; font-weight: bold;
+}}
+
+QPlainTextEdit {{
+    background: {BG}; color: {FG};
+    border: 1px solid {PANEL}; border-radius: 4px; padding: 6px;
+    selection-background-color: {ACCENT}; selection-color: {ON_ACCENT};
+}}
+
+QPushButton {{
+    background: {PANEL}; color: {FG};
+    border: 1px solid #343a45; border-radius: 5px; padding: 7px 14px;
+}}
+QPushButton:hover {{ border-color: {ACCENT}; }}
+QPushButton:pressed {{ background: #20242b; }}
+QPushButton:disabled {{ color: {FG_DIM}; border-color: #23272e; }}
+
+QPushButton#primary {{
+    background: {ACCENT}; color: {ON_ACCENT};
+    border: 1px solid {ACCENT}; font-weight: bold;
+}}
+QPushButton#primary:hover {{ background: #4f8f6c; border-color: #4f8f6c; }}
+QPushButton#primary:disabled {{
+    background: #2f4a3b; color: #7d8a83; border-color: #2f4a3b;
+}}
+
+QFrame#notice {{
+    background: {PANEL}; border: 1px solid #333a44;
+    border-left: 3px solid {WARN}; border-radius: 5px;
+}}
+QFrame#notice QLabel {{ background: transparent; }}
+QLabel#noticeIcon {{
+    color: {WARN}; font-size: 20px; font-weight: bold; padding: 0 2px;
+}}
+QLabel#noticeText {{ color: {FG}; }}
+
+QProgressBar {{ background: {PANEL}; border: none; border-radius: 3px; }}
+QProgressBar::chunk {{ background: {ACCENT}; border-radius: 3px; }}
+
+/* Unstyled scrollbars render as bright stepper squares that stand out more
+   than the content they scroll — flatten them into the panel. */
+QScrollBar:vertical {{
+    background: transparent; width: 10px; margin: 2px 2px 2px 0;
+}}
+QScrollBar:horizontal {{
+    background: transparent; height: 10px; margin: 0 2px 2px 2px;
+}}
+QScrollBar::handle {{ background: #3a4050; border-radius: 5px; min-height: 24px; }}
+QScrollBar::handle:hover {{ background: {ACCENT}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; border: none; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+
+QMessageBox {{ background: {BG}; }}
+QMessageBox QLabel {{ color: {FG}; }}
+QToolTip {{
+    background: {PANEL}; color: {FG}; border: 1px solid {ACCENT}; padding: 4px;
+}}
+"""
 
 
 class Updater(QWidget):
@@ -43,74 +129,120 @@ class Updater(QWidget):
         self.proc = None
         self.setWindowTitle("Cachy-Void Updater")
         self.setWindowIcon(QIcon(ICON))
-        self.resize(760, 620)
+        self.setStyleSheet(STYLE)
+        self.resize(820, 700)
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(14, 14, 14, 12)
+        root.setSpacing(10)
 
+        # -- header: mark + title/subtitle + the read-only check ---------------
         header = QHBoxLayout()
+        header.setSpacing(10)
+        if os.path.exists(ICON):
+            mark = QLabel()
+            pm = QIcon(ICON).pixmap(30, 30)
+            if not pm.isNull():
+                mark.setPixmap(pm)
+                header.addWidget(mark, 0, Qt.AlignVCenter)
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
         title = QLabel("Cachy-Void Updater")
-        tf = title.font(); tf.setPointSize(15); tf.setBold(True); title.setFont(tf)
-        header.addWidget(title)
+        title.setObjectName("title")
+        subtitle = QLabel("System, performance overlay & BORE kernel")
+        subtitle.setObjectName("subtitle")
+        titles.addWidget(title)
+        titles.addWidget(subtitle)
+        header.addLayout(titles)
         header.addStretch(1)
         self.btn_check = QPushButton("Check for updates")
-        header.addWidget(self.btn_check)
+        self.btn_check.setToolTip("Re-read what's pending (read-only)")
+        header.addWidget(self.btn_check, 0, Qt.AlignVCenter)
         root.addLayout(header)
 
-        # status overview (read-only --status output)
+        # -- BORE-pin notice card (§8.3a) --------------------------------------
+        # Hidden unless --status reports a missing trust pin. Styled per the
+        # branding rules: --warn is the border/icon only, the message is --fg.
+        self.notice = QFrame()
+        self.notice.setObjectName("notice")
+        nb = QHBoxLayout(self.notice)
+        nb.setContentsMargins(12, 10, 12, 10)
+        nb.setSpacing(10)
+        icon = QLabel("⚠")
+        icon.setObjectName("noticeIcon")
+        icon.setAlignment(Qt.AlignTop)
+        self.pin_label = QLabel(
+            "Kernel updates are paused — the BORE patch for this kernel series "
+            "has not been approved yet. Reviewing it once unpauses them.")
+        self.pin_label.setObjectName("noticeText")
+        self.pin_label.setWordWrap(True)
+        # '&&' — a single '&' would be swallowed as a Qt mnemonic and render as
+        # "Review _pin…" (caught by actually looking at a render).
+        self.btn_pin = QPushButton("Review && pin…")
+        self.btn_pin.setToolTip(
+            "Fetch the BORE patch for your kernel series, show what was found "
+            "(commit, file, checksum), and record it once you approve")
+        self.btn_pin.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        nb.addWidget(icon, 0, Qt.AlignVCenter)
+        nb.addWidget(self.pin_label, 1)
+        nb.addWidget(self.btn_pin, 0, Qt.AlignVCenter)
+        root.addWidget(self.notice)
+        self.notice.hide()
+
+        # -- status overview (read-only --status output) ------------------------
         status_box = QGroupBox("What's pending")
         sb = QVBoxLayout(status_box)
+        sb.setContentsMargins(8, 6, 8, 8)
         self.status = QPlainTextEdit(readOnly=True)
         self.status.setPlaceholderText("Click 'Check for updates' to see what's pending…")
         sb.addWidget(self.status)
-        root.addWidget(status_box, 3)
+        # The status IS the content of this window — it used to be squeezed into a
+        # scrolled sliver under an empty Output box (renders don't lie).
+        root.addWidget(status_box, 5)
 
-        # BORE-pin banner (§8.3a) — hidden unless --status says the running
-        # series has no trust pin. The kernel silently-never-updating must be
-        # a visible, one-click-fixable state, not a man-page discovery.
-        pin_row = QHBoxLayout()
-        self.pin_label = QLabel(
-            "⚠ Kernel updates are paused: the BORE patch for this kernel "
-            "series is not yet approved.")
-        self.pin_label.setWordWrap(True)
-        self.pin_label.setStyleSheet(
-            "color: #e0af68; font-weight: bold; padding: 2px;")
-        self.btn_pin = QPushButton("Pin BORE patch…")
-        self.btn_pin.setToolTip(
-            "Fetch the BORE patch for your kernel series, review what was "
-            "found, and approve it (writes the bore.lock trust pin)")
-        pin_row.addWidget(self.pin_label, 1)
-        pin_row.addWidget(self.btn_pin)
-        root.addLayout(pin_row)
-        self.pin_label.hide(); self.btn_pin.hide()
-
-        # action buttons
+        # -- actions: one primary, the rest secondary --------------------------
         actions = QHBoxLayout()
-        self.btn_update = QPushButton("Update  (system + performance)")
-        self.btn_kernel = QPushButton("Update kernel  (BORE — compiles, reboot)")
+        actions.setSpacing(8)
+        self.btn_update = QPushButton("Update")
+        self.btn_update.setObjectName("primary")
+        self.btn_update.setToolTip(
+            "Update the system and rebuild the performance overlay "
+            "(leaves the kernel alone)")
+        self.btn_kernel = QPushButton("Update kernel")
+        self.btn_kernel.setToolTip(
+            "Everything, including the BORE kernel — compiles, then needs a reboot")
         self.btn_clean = QPushButton("Clean up")
         self.btn_clean.setToolTip("Remove orphaned packages and clean the package cache")
         self.btn_gpu = QPushButton("GPU / drivers")
         self.btn_gpu.setToolTip("Detected card, driver status, DKMS health (read-only)")
-        for b in (self.btn_update, self.btn_kernel, self.btn_clean, self.btn_gpu):
-            actions.addWidget(b)
+        actions.addWidget(self.btn_update)
+        actions.addWidget(self.btn_kernel)
+        actions.addStretch(1)
+        actions.addWidget(self.btn_clean)
+        actions.addWidget(self.btn_gpu)
         root.addLayout(actions)
 
-        # live command output
+        # -- live command output -----------------------------------------------
         out_box = QGroupBox("Output")
         ob = QVBoxLayout(out_box)
+        ob.setContentsMargins(8, 6, 8, 8)
         self.out = QPlainTextEdit(readOnly=True)
+        self.out.setPlaceholderText(
+            "Output from the running command appears here…")
+        self.out.setMinimumHeight(130)
         ob.addWidget(self.out)
-        root.addWidget(out_box, 4)
+        root.addWidget(out_box, 2)
 
         # activity strip: heartbeat label + pulsing bar. Long stretches of an
         # update produce no output (downloads, unpacking); without a visible
         # "still alive" signal the app reads as crashed.
         activity = QHBoxLayout()
         self.act_label = QLabel("")
+        self.act_label.setObjectName("subtitle")
         self.act_bar = QProgressBar()
         self.act_bar.setRange(0, 0)          # indeterminate pulse
         self.act_bar.setTextVisible(False)
-        self.act_bar.setFixedHeight(8)
+        self.act_bar.setFixedHeight(6)
         activity.addWidget(self.act_label, 1)
         activity.addWidget(self.act_bar, 2)
         root.addLayout(activity)
@@ -121,6 +253,7 @@ class Updater(QWidget):
         self._act_msg = ""; self._act_secs = 0
 
         mono = QFont("Hack"); mono.setStyleHint(QFont.Monospace)
+        mono.setPointSize(9)
         self.status.setFont(mono); self.out.setFont(mono)
 
         self.btn_check.clicked.connect(self.check)
@@ -227,11 +360,9 @@ class Updater(QWidget):
                   done=lambda _c: self._update_pin_banner())
 
     def _update_pin_banner(self):
-        """Show the §8.3a banner iff --status flagged a missing trust pin
+        """Show the §8.3a notice iff --status flagged a missing trust pin
         (keyed on the CLI's stable "BORE pin: MISSING" marker)."""
-        missing = "BORE pin: MISSING" in self.status.toPlainText()
-        self.pin_label.setVisible(missing)
-        self.btn_pin.setVisible(missing)
+        self.notice.setVisible("BORE pin: MISSING" in self.status.toPlainText())
 
     def pin_bore(self):
         """Two-step assisted pin: preview (--dry-run), human-approve in a
