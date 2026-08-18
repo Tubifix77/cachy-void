@@ -194,8 +194,14 @@ Orphaned packages and the downloaded-package cache. <b>Clean up</b> reclaims
 that space. Old kernels are never removed automatically.</p>
 
 <p><b style="color:{FG}">[5] GPU &amp; drivers</b><br>
-Informational only: the detected card, its driver, and whether out-of-tree
-modules have rebuilt for the running kernel.</p>
+Your graphics driver is an ordinary Void package, so <b>Update</b> keeps it
+current along with everything else — this section tells you whether one is
+waiting. It also reports which card was detected, which driver version is
+installed, whether the kernel module is actually loaded, and whether
+out-of-tree modules (NVIDIA's, for example) have been rebuilt for the kernel
+you are running. Those rebuilds happen on their own whenever a kernel is
+installed — Void's own DKMS hook does it, not this updater — so this is where
+you confirm it worked, and it prints the rebuild command if one is missing.</p>
 
 <p><b style="color:{FG}">[6] Flatpak apps</b><br>
 If Flatpak is installed, its apps are refreshed as part of <b>Update</b>.</p>
