@@ -241,11 +241,30 @@ The `[snapshot]` table is optional — omit it entirely and the defaults above a
 
 ### 6.2 BORE patch trust anchor — `bore.lock`
 
-Before the first `linux-cachy` build, pin the BORE patch you trust. Edit the
-mirrored lockfile `/usr/libexec/cachy-void-updater/bore.lock`: set
-`pinned_commit`, the per-series `sha256`, and stamp `approved`. The engine
-verifies the fetched patch against this hash and refuses to build on a mismatch —
-it never edits the lockfile for you (trust-on-first-use is a human act).
+Before the first `linux-cachy` build, the BORE patch for your kernel series
+must be **pinned** — a one-time human approval of its checksum. Most users
+never see this step: the shipped `bore.lock` already pins the common series.
+When yours isn't pinned, the updater says so instead of silently skipping the
+kernel — `--status` reports it, and **the updater GUI shows a warning banner
+with a "Pin BORE patch…" button**. The button fetches the patch for your
+series from the upstream BORE repository, shows you exactly what it found
+(commit, file, sha256, size), and writes the pin only when you approve in the
+dialog. The same flow exists on the command line:
+
+```bash
+cachy-void-update --pin-bore            # review, then approve at the [y/N] prompt
+cachy-void-update --pin-bore --dry-run  # preview only, writes nothing
+```
+
+The engine verifies every fetched patch against the pinned hash and refuses to
+build on a mismatch; the *update pipeline* never edits the lockfile for you
+(trust-on-first-use is a human act — the assisted pin just moves that act from
+a hand-edited TOML file into a reviewed confirmation). Manual pinning still
+works and remains the path for *replacing* an existing pin (e.g. after a
+`HALT_HASH_MISMATCH`): edit `/usr/libexec/cachy-void-updater/bore.lock` — set
+the per-series `file` + `sha256` (+ optional per-entry `commit`), stamp
+`approved`. Locally-made pins survive redeploys (deploy.sh merges instead of
+overwriting).
 
 ### 6.3 Kernel tracking state
 

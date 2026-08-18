@@ -1160,6 +1160,108 @@ class NoKernelScopeTests(unittest.TestCase):
         self.assertEqual(cli._always_build(cfg), [])
 
 
+class PinBoreCommandTests(unittest.TestCase):
+    """§8.3a assisted pin: preview writes nothing, approval appends the pin
+    and seeds the patch cache, refusals/duplicates change nothing."""
+
+    PATCH = b"@@ BORE @@\n"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        (tmp / "kernel").mkdir()
+        (tmp / "kernel" / "kernel-state.json").write_text(
+            json.dumps({"schema": 1, "state": "TRACKING",
+                        "base_series": "6.15"}), encoding="utf-8")
+        self.lock_path = tmp / "bore.lock"
+        self.lock_path.write_text(
+            '[repo]\nurl = "https://example/bore"\n'
+            f'pinned_commit = "{"a" * 40}"\n\n'
+            '[[patch]]\nseries = "6.12"\nfile = "patches/x.patch"\n'
+            f'sha256 = "{"0" * 64}"\n', encoding="utf-8")
+        self.cfg = cli.Config(void_packages=tmp / "vp", state_dir=tmp,
+                              bore_lock=self.lock_path)
+
+        from engine.trust import PinProposal, sha256_bytes
+        self.proposal = PinProposal(
+            series="6.15", repo_url="https://example/bore", commit="c" * 40,
+            file="patches/stable/linux-6.15-bore/0001.patch",
+            sha256=sha256_bytes(self.PATCH), bore_version="6.7.0",
+            size=len(self.PATCH))
+        self.discover = lambda **kw: (self.proposal, self.PATCH)
+
+    def _lock_text(self):
+        return self.lock_path.read_text(encoding="utf-8")
+
+    def test_dry_run_previews_and_writes_nothing(self):
+        out = Sink()
+        rc = cli.cmd_pin_bore(self.cfg, out, dry_run=True,
+                              discover=self.discover)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("Proposed BORE pin", out.text())
+        self.assertIn(self.proposal.sha256, out.text())
+        self.assertNotIn("6.15", self._lock_text())
+        self.assertFalse(self.cfg.kernel_patch_path.exists())
+
+    def test_approval_pins_and_seeds_cache(self):
+        out = Sink()
+        rc = cli.cmd_pin_bore(self.cfg, out, discover=self.discover,
+                              ask=lambda _q: "y")
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("6.15", self._lock_text())
+        self.assertIn(self.proposal.sha256, self._lock_text())
+        self.assertEqual(self.cfg.kernel_patch_path.read_bytes(), self.PATCH)
+
+    def test_assume_yes_skips_prompt(self):
+        rc = cli.cmd_pin_bore(self.cfg, Sink(), assume_yes=True,
+                              discover=self.discover,
+                              ask=lambda _q: self.fail("must not prompt"))
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("6.15", self._lock_text())
+
+    def test_decline_writes_nothing(self):
+        before = self._lock_text()
+        rc = cli.cmd_pin_bore(self.cfg, Sink(), discover=self.discover,
+                              ask=lambda _q: "n")
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertEqual(self._lock_text(), before)
+
+    def test_already_pinned_is_a_noop(self):
+        out = Sink()
+        (Path(self._tmp.name) / "kernel" / "kernel-state.json").write_text(
+            json.dumps({"base_series": "6.12"}), encoding="utf-8")
+        rc = cli.cmd_pin_bore(self.cfg, out,
+                              discover=lambda **kw: self.fail("no fetch"))
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("already pinned", out.text())
+
+    def test_discovery_failure_maps_to_query_exit(self):
+        from engine import trust
+
+        def failing(**kw):
+            raise trust.PatchUnavailable("no patch upstream")
+        rc = cli.cmd_pin_bore(self.cfg, Sink(), discover=failing)
+        self.assertEqual(rc, cli.EXIT_QUERY)
+
+    class _XbpsStub:
+        vercmp = staticmethod(_vercmp)
+
+    def test_kernel_report_flags_missing_pin(self):
+        """--status tier [3] must carry the GUI's banner marker."""
+        out = Sink()
+        cli._kernel_report(self.cfg, self._XbpsStub(), out)
+        self.assertIn("BORE pin: MISSING", out.text())
+
+    def test_kernel_report_shows_existing_pin(self):
+        (Path(self._tmp.name) / "kernel" / "kernel-state.json").write_text(
+            json.dumps({"base_series": "6.12"}), encoding="utf-8")
+        out = Sink()
+        cli._kernel_report(self.cfg, self._XbpsStub(), out)
+        self.assertIn("BORE pin: series 6.12 pinned", out.text())
+        self.assertNotIn("BORE pin: MISSING", out.text())
+
+
 class HealthDaemonConfigTests(unittest.TestCase):
     """A missing/unloadable config must PARK the health daemon, never crash-loop
     it under runit (finding: cachy-health spun before updater.toml existed)."""

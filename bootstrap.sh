@@ -68,8 +68,9 @@ ok "running kernel $KVER  ->  tracking series linux$BASE_SERIES (known-good = $K
 BORE_LOCK="$SCRIPT_DIR/updater/bore.lock"
 if [ -f "$BORE_LOCK" ] && ! grep -qE "series[[:space:]]*=[[:space:]]*\"$BASE_SERIES\"" "$BORE_LOCK"; then
     printf '%s!! bore.lock has no pin for series %s — the first linux-cachy build will be\n' "$C_ERR" "$BASE_SERIES" >&2
-    printf '   WITHHELD until you add a [[patch]] entry (commit + per-series sha256) for it\n' >&2
-    printf '   in bore.lock (INSTALL.md §6.2). Userspace updates work regardless.%s\n' "$C_OFF" >&2
+    printf '   WITHHELD until you approve the BORE patch. The updater GUI will show a\n' >&2
+    printf '   "Pin BORE patch" button for this (or run: cachy-void-update --pin-bore).\n' >&2
+    printf '   Userspace updates work regardless.%s\n' "$C_OFF" >&2
 fi
 
 # ---------------------------------------------------------------------------
@@ -161,8 +162,10 @@ defaults — review its [packages] allowlist). Next steps:
 
   1. Review the generated config (edit the allowlist to taste):
        sudoedit /etc/cachy-void/updater.toml
-  2. Pin the BORE patch trust anchor before the first kernel build:
-       edit /usr/libexec/cachy-void-updater/bore.lock — fill sha256 + approve (§8.3)
+  2. Pin the BORE patch trust anchor before the first kernel build — only
+     needed if your kernel series isn't already pinned. The updater GUI shows
+     a "Pin BORE patch" button when that's the case, or run:
+       cachy-void-update --pin-bore
   3. Preview the queue (read-only):
        /usr/libexec/cachy-void-updater/cachy_void_update.py --check --config /etc/cachy-void/updater.toml
   4. Build + deploy (compiles linux-cachy on first run; reboot when prompted):

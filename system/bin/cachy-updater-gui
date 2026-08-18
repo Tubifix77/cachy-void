@@ -16,6 +16,12 @@ templates — the same --sync + --commit pairing the §4.9 scheduled runs use:
   * Clean up    — remove orphans + clean the package cache  (--clean)
   * GPU         — detected card, driver, DKMS health (read-only)    (--gpu)
 The "Check" button runs `--status` and shows the read-only overview.
+
+BORE pin (§8.3a): when --status reports "BORE pin: MISSING" for this box's
+kernel series, a warning banner + "Pin BORE patch…" button appear. The button
+previews the proposal (--pin-bore --dry-run), shows it in a confirm dialog —
+that dialog IS the human trust approval — and only then writes the pin
+(--pin-bore --yes). Kernel updates stay paused until then; userspace never is.
 """
 import shutil
 import sys
@@ -57,6 +63,25 @@ class Updater(QWidget):
         self.status.setPlaceholderText("Click 'Check for updates' to see what's pending…")
         sb.addWidget(self.status)
         root.addWidget(status_box, 3)
+
+        # BORE-pin banner (§8.3a) — hidden unless --status says the running
+        # series has no trust pin. The kernel silently-never-updating must be
+        # a visible, one-click-fixable state, not a man-page discovery.
+        pin_row = QHBoxLayout()
+        self.pin_label = QLabel(
+            "⚠ Kernel updates are paused: the BORE patch for this kernel "
+            "series is not yet approved.")
+        self.pin_label.setWordWrap(True)
+        self.pin_label.setStyleSheet(
+            "color: #e0af68; font-weight: bold; padding: 2px;")
+        self.btn_pin = QPushButton("Pin BORE patch…")
+        self.btn_pin.setToolTip(
+            "Fetch the BORE patch for your kernel series, review what was "
+            "found, and approve it (writes the bore.lock trust pin)")
+        pin_row.addWidget(self.pin_label, 1)
+        pin_row.addWidget(self.btn_pin)
+        root.addLayout(pin_row)
+        self.pin_label.hide(); self.btn_pin.hide()
 
         # action buttons
         actions = QHBoxLayout()
@@ -103,9 +128,10 @@ class Updater(QWidget):
         self.btn_kernel.clicked.connect(self.update_kernel)
         self.btn_clean.clicked.connect(self.clean)
         self.btn_gpu.clicked.connect(self.gpu)
+        self.btn_pin.clicked.connect(self.pin_bore)
 
         self._buttons = (self.btn_check, self.btn_update, self.btn_kernel,
-                         self.btn_clean, self.btn_gpu)
+                         self.btn_clean, self.btn_gpu, self.btn_pin)
         self.check()  # populate on open
 
     # -- process plumbing -------------------------------------------------
@@ -197,7 +223,42 @@ class Updater(QWidget):
     # -- actions ----------------------------------------------------------
     def check(self):
         self._run(["--status"], self.status, busy_msg="Getting Cachy-Void status…",
-                  activity="Checking for updates…")
+                  activity="Checking for updates…",
+                  done=lambda _c: self._update_pin_banner())
+
+    def _update_pin_banner(self):
+        """Show the §8.3a banner iff --status flagged a missing trust pin
+        (keyed on the CLI's stable "BORE pin: MISSING" marker)."""
+        missing = "BORE pin: MISSING" in self.status.toPlainText()
+        self.pin_label.setVisible(missing)
+        self.btn_pin.setVisible(missing)
+
+    def pin_bore(self):
+        """Two-step assisted pin: preview (--dry-run), human-approve in a
+        dialog — that dialog IS the §8.3 trust vouch — then write (--yes)."""
+        def after_preview(code):
+            if code != 0:
+                self.out.appendPlainText(
+                    "[could not locate the BORE patch — see above; you can "
+                    "pin manually per INSTALL.md §6.2]")
+                return
+            text = self.out.toPlainText()
+            proposal = text[text.rfind("Proposed BORE pin"):].strip() or text
+            if QMessageBox.question(
+                    self, "Approve BORE patch pin",
+                    "This is the trust decision for your kernel's BORE patch. "
+                    "Approving records the checksum below; every future kernel "
+                    "build verifies the patch against it.\n\n" + proposal +
+                    "\n\nPin this patch?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No) != QMessageBox.Yes:
+                self.out.appendPlainText("[not pinned — nothing was written]")
+                return
+            self._run(["--pin-bore", "--yes"], self.out, clear=False,
+                      done=lambda _c: self.check(),
+                      activity="Writing the BORE trust pin…")
+        self._run(["--pin-bore", "--dry-run"], self.out, done=after_preview,
+                  activity="Fetching the BORE patch for review…")
 
     def update_userspace(self):
         # userspace only — the kernel is the explicit "Update kernel" button

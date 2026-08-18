@@ -890,6 +890,16 @@ Procedure on BUMP_PATCHLEVEL:
 
 **Offline/degraded fallback (permitted):** reuse-first (step 1) is the offline path — a cached `patches/0001-bore.patch` whose sha256 matches `bore.lock` is trusted with **no network**. A network timeout during step 2 falls back to that cached patch if (and only if) it validates; otherwise `PatchUnavailable`. Cache validation never weakens the hash check — an invalid cache is `HashMismatch`, never a silent pass.
 
+#### 8.3a Assisted pinning (`--pin-bore` / the GUI's "Pin BORE patch" button)
+
+"The machine never self-updates the lockfile" survives intact — what changed is *what counts as the clerical part*. The pin was always two things fused together: a **human trust decision** ("I vouch for this patch") and **clerical work** (locate the series patch upstream, download it, compute sha256, hand-edit TOML). The clerical half is exactly where users fail — nobody discovers a lockfile path from a GUI with one Update button — so `trust.discover_bore_patch()` + `trust.append_pin()` automate it while the decision stays human and explicit:
+
+- **Surfacing:** `--status` tier [3] always states the pin state out loud ("BORE pin: series X pinned …" / "BORE pin: MISSING …"). The GUI keys a warning banner + **Pin BORE patch…** button off the MISSING marker — the paused kernel is a visible, one-click-fixable state, never a silent one.
+- **Flow:** discovery fetches upstream **HEAD**, selects the series' `0001-…bore….patch` (companion patches like the SMT-idle tweak are ignored — only ONE file is ever pinned; ambiguity refuses and defers to a manual pin), and presents series/commit/file/sha256/size. Nothing is written until the human approves — terminal `[y/N]` for the CLI, the confirm dialog for the GUI (`--pin-bore --dry-run` previews, then `--pin-bore --yes` writes; the dialog *is* the approval). The update pipeline itself never calls any of this: an unpinned series still just withholds the kernel.
+- **Per-entry `commit`:** an appended `[[patch]]` records the upstream commit it was found at, and `ensure_trusted_patch` fetches each entry at `entry.commit or repo.pinned_commit` — so pinning a new series at today's HEAD can never invalidate an older entry whose file moved since `pinned_commit`. Approved pins also seed the §8.3 artifact cache immediately (the pin works offline from the moment it is made).
+- **Ownership/merge (deploy.sh):** the mirrored lockfile is owned by the updater user (a root-owned anchor would dead-end the flow behind a sudo grant §4.1 doesn't have), and redeploys **merge**: ship the repo lockfile, then re-append local `[[patch]]` series it doesn't carry — repo-shipped pins refresh, locally-approved pins survive.
+- **Deliberate limits:** replacing an existing pin (post-`HALT_HASH_MISMATCH`) stays a manual, eyes-on edit — `append_pin` refuses duplicates. Fully unattended pinning stays unimplemented: it would collapse trust-on-first-use into "trust whatever GitHub serves today".
+
 ### 8.4 Deterministic template regeneration
 
 Never textually patch the previous fork — **regenerate from the current upstream template every time** (idempotent; zero drift accumulation). All work happens in a temp worktree; `srcpkgs/linux-cachy` is swapped only after every assertion passes, so a failed regeneration leaves the previous fork untouched for free.

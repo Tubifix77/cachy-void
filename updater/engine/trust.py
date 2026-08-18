@@ -75,6 +75,11 @@ class PatchEntry:
     sha256: str
     bore_version: str
     approved: str
+    # Optional per-entry commit. A later pin must reference a NEWER upstream
+    # commit than [repo].pinned_commit without invalidating older entries
+    # (whose files may have moved at that commit) — so each entry may carry
+    # its own; empty = fall back to the repo-wide pinned_commit.
+    commit: str = ""
 
 
 @dataclass(frozen=True)
@@ -126,10 +131,14 @@ def load_bore_lock(path: str | Path) -> BoreLock:
         series = str(e["series"])
         if series in patches:
             raise TrustConfigError(f"duplicate [[patch]] for series {series!r}")
+        commit = str(e.get("commit", "") or "")
+        if commit and not re.fullmatch(r"[0-9a-fA-F]{7,40}", commit):
+            raise TrustConfigError(
+                f"[[patch]] commit for series {series!r} is not a git sha")
         patches[series] = PatchEntry(
             series=series, file=str(e["file"]), sha256=sha,
             bore_version=str(e.get("bore_version", "")),
-            approved=str(e.get("approved", "")))
+            approved=str(e.get("approved", "")), commit=commit)
     return BoreLock(str(repo["url"]), str(repo["pinned_commit"]), patches)
 
 
@@ -231,7 +240,7 @@ def ensure_trusted_patch(*, lock: BoreLock, series: str, patch_path: str | Path,
             f"offline and no valid cached patch for series {series}")
     fetcher = fetcher or GitPatchFetcher(patch_path.parent / ".bore-cache")
     try:
-        data = fetcher(lock.repo_url, lock.pinned_commit, entry.file)
+        data = fetcher(lock.repo_url, entry.commit or lock.pinned_commit, entry.file)
     except NetworkError as exc:
         raise PatchUnavailable(
             f"network unavailable and no valid cached patch for {series}: {exc}"
@@ -248,3 +257,134 @@ def ensure_trusted_patch(*, lock: BoreLock, series: str, patch_path: str | Path,
     patch_path.write_bytes(data)
     out(f"trust: fetched and verified patch for {series}")
     return PatchResult("network", got, patch_path)
+
+
+# ==========================================================================
+# Assisted pinning (§8.3a)
+# ==========================================================================
+# The pin stays a HUMAN act — these helpers only do the clerical work (locate
+# the patch upstream, hash it, write the TOML) so "vouching" is a reviewed
+# confirmation instead of a hand-edit. Nothing here is ever called by the
+# update pipeline itself: only the explicit --pin-bore command (and the GUI
+# button that wraps it) reaches this code, always behind a shown-proposal
+# confirmation. Auto-pinning would collapse the trust model into "trust
+# whatever GitHub serves today" and is deliberately not implemented.
+
+_BORE_DIR_TPL = "patches/stable/linux-{series}-bore"
+_BORE_VER_RE = re.compile(r"bore-?([0-9][\w.]*)\.patch$")
+
+
+def select_bore_patch(names: list[str], *, series: str = "?",
+                      subdir: str = "?") -> str:
+    """Pick THE BORE patch from a series directory's .patch files.
+
+    Real upstream layout (verified live 2026-08-18): each series dir holds
+    ``0001-…bore….patch`` (the scheduler patch — the only file our pipeline
+    applies and pins) plus optional numbered companions (e.g. an SMT-idle
+    tweak). Rule: exactly one filename containing "bore" wins; a single file
+    of any name also wins; anything else is ambiguous and defers to a manual
+    pin rather than guessing about someone's trust anchor.
+    """
+    bore = [n for n in names if "bore" in n.rsplit("/", 1)[-1].lower()]
+    if len(bore) == 1:
+        return bore[0]
+    if len(names) == 1:
+        return names[0]
+    raise PatchUnavailable(
+        f"ambiguous BORE patch layout for series {series} "
+        f"({len(names)} .patch files, {len(bore)} matching 'bore', in {subdir}) "
+        "— pin manually (INSTALL §6.2)")
+
+
+@dataclass(frozen=True)
+class PinProposal:
+    """Everything a human needs to see before approving a pin."""
+    series: str
+    repo_url: str
+    commit: str          # upstream HEAD the patch was found at
+    file: str
+    sha256: str
+    bore_version: str
+    size: int
+
+
+def discover_bore_patch(*, repo_url: str, series: str, cache_dir: str | Path,
+                        timeout: int = 60) -> tuple[PinProposal, bytes]:
+    """Locate the BORE patch for ``series`` at upstream HEAD and hash it.
+
+    Read-only with respect to the trust anchor: returns a proposal (and the
+    artifact bytes, so an approved pin can seed the cache without a refetch);
+    writing anything is the caller's post-confirmation job. Raises
+    PatchUnavailable when upstream publishes no patch for the series (or the
+    layout is ambiguous — manual pinning per INSTALL §6.2 then applies), and
+    NetworkError on fetch failure.
+    """
+    cache = Path(cache_dir)
+    cache.mkdir(parents=True, exist_ok=True)
+    git = ["git", "-C", str(cache)]
+
+    def _git(args: list[str], check: bool = True) -> subprocess.CompletedProcess:
+        try:
+            cp = subprocess.run(args, capture_output=True, timeout=timeout)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise NetworkError(f"{' '.join(args)} failed: {exc}") from exc
+        if check and cp.returncode != 0:
+            raise NetworkError(
+                f"{' '.join(args)} failed: "
+                f"{cp.stderr.decode('utf-8', 'replace').strip()}")
+        return cp
+
+    if not (cache / ".git").exists():
+        _git(["git", "init", "-q", str(cache)])
+        _git(git + ["remote", "add", "origin", repo_url], check=False)
+    _git(git + ["fetch", "-q", "--depth", "1", "origin", "HEAD"])
+    commit = _git(git + ["rev-parse", "FETCH_HEAD"]).stdout.decode().strip()
+
+    subdir = _BORE_DIR_TPL.format(series=series)
+    cp = _git(git + ["ls-tree", "-r", "--name-only", "FETCH_HEAD", subdir],
+              check=False)
+    names = [n for n in cp.stdout.decode("utf-8", "replace").splitlines()
+             if n.endswith(".patch")]
+    if not names:
+        raise PatchUnavailable(
+            f"upstream publishes no BORE patch for series {series} "
+            f"(looked in {subdir} at {commit[:12]})")
+    file = select_bore_patch(names, series=series, subdir=subdir)
+
+    data = _git(git + ["show", f"FETCH_HEAD:{file}"]).stdout
+    m = _BORE_VER_RE.search(file)
+    return (PinProposal(series=series, repo_url=repo_url, commit=commit,
+                        file=file, sha256=sha256_bytes(data),
+                        bore_version=m.group(1) if m else "",
+                        size=len(data)),
+            data)
+
+
+def append_pin(lock_path: str | Path, proposal: PinProposal, approved: str) -> None:
+    """Append an approved [[patch]] entry to bore.lock (text-append: the
+    file's human commentary survives). Refuses a duplicate series — replacing
+    an existing pin (e.g. after HALT_HASH_MISMATCH) is deliberately a manual,
+    eyes-on edit. Validates by re-loading; a failed append is rolled back.
+    """
+    p = Path(lock_path)
+    lock = load_bore_lock(p)                     # validates the current file
+    if proposal.series in lock.patches:
+        raise TrustConfigError(
+            f"series {proposal.series} is already pinned in {p} — replacing an "
+            "existing pin is a manual edit (INSTALL §6.2)")
+
+    original = p.read_text(encoding="utf-8")
+    block = (
+        f'\n[[patch]]\n'
+        f'series       = "{proposal.series}"\n'
+        f'file         = "{proposal.file}"\n'
+        f'sha256       = "{proposal.sha256}"\n'
+        f'bore_version = "{proposal.bore_version}"\n'
+        f'commit       = "{proposal.commit}"\n'
+        f'approved     = "{approved}"\n')
+    p.write_text(original.rstrip("\n") + "\n" + block, encoding="utf-8")
+    try:
+        load_bore_lock(p)
+    except TrustConfigError:
+        p.write_text(original, encoding="utf-8")   # roll back a bad append
+        raise

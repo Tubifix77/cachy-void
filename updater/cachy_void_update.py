@@ -11,6 +11,9 @@ semantic actions:
                  queued kernel (§8.5), and stage the candidate for a one-shot
                  trial boot (§8.6)
     --rollback   re-pin the GRUB default to the known-good kernel (§8.6/§8.7)
+    --pin-bore   assisted §8.3 trust pin: fetch+hash the BORE patch for the
+                 tracked series and write bore.lock on explicit human approval
+                 (the GUI's 'Pin BORE patch' button wraps this)
 
 Error-boundary contract (§4.8): every path returns an exit code from the table
 below; a traceback reaching the user is itself a bug (last-resort boundary in
@@ -231,6 +234,23 @@ def _kernel_report(config: Config, xbps, out) -> None:
         series = state.get("base_series") or ""
         if not series:
             return
+        # §8.3a pin visibility: say OUT LOUD whether this box's series is
+        # vouched for. "The kernel silently never updates" must never be a
+        # mystery state — the GUI keys its 'Pin BORE patch' banner off the
+        # exact substring "BORE pin: MISSING".
+        try:
+            lock = trust.load_bore_lock(config.bore_lock_path)
+            entry = lock.patches.get(series)
+            if entry:
+                out(f"BORE pin: series {series} pinned"
+                    + (f" (BORE {entry.bore_version})" if entry.bore_version else "")
+                    + (f" — {entry.approved}" if entry.approved else ""))
+            else:
+                out(f"BORE pin: MISSING for series {series} — kernel updates "
+                    "stay paused until you approve the patch (the updater's "
+                    "'Pin BORE patch' button, or: cachy-void-update --pin-bore)")
+        except trust.TrustConfigError as exc:
+            out(f"BORE pin: bore.lock unusable ({exc})")
         tpath = config.void_packages / "srcpkgs" / f"linux{series}" / "template"
         text = tpath.read_text(encoding="utf-8") if tpath.exists() else None
         ev, tmpl = grub.classify_bump(
@@ -656,6 +676,92 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
         out("    flatpak not installed")
 
     out("")
+    return EXIT_OK
+
+
+def cmd_pin_bore(config: Config, out=print, *, assume_yes: bool = False,
+                 dry_run: bool = False, discover=None, ask=input) -> int:
+    """§8.3a — assisted BORE pin: automate the CLERICAL work of vouching.
+
+    Locates the BORE patch for the tracked series at upstream HEAD, shows the
+    human exactly what was found (commit, file, sha256, size), and only writes
+    the bore.lock entry after an explicit confirmation. --dry-run previews and
+    writes nothing; --yes skips the terminal prompt (the GUI uses it AFTER its
+    own confirm dialog — the human approval always happens somewhere). The
+    update pipeline never calls this: an unpinned series stays withheld until
+    a person acts, exactly as before — this just makes acting take one click
+    instead of a hand-computed sha256 and a TOML edit.
+    """
+    try:
+        state = grub.KernelStateStore(config.kernel_state_path).load()
+    except OSError as exc:
+        out(f"error: cannot read kernel state ({exc})")
+        return EXIT_USAGE
+    series = state.get("base_series") or ""
+    if not series:
+        out("error: no tracked kernel series in kernel-state.json (§8.2) — "
+            "run bootstrap.sh, or set base_series manually, before pinning.")
+        return EXIT_USAGE
+
+    try:
+        lock = trust.load_bore_lock(config.bore_lock_path)
+    except trust.TrustConfigError as exc:
+        out(f"error: cannot use bore.lock at {config.bore_lock_path}: {exc}")
+        return EXIT_USAGE
+    if series in lock.patches:
+        e = lock.patches[series]
+        out(f"series {series} is already pinned (sha256 {e.sha256[:16]}…"
+            + (f", approved {e.approved}" if e.approved else "") + ") — nothing to do.")
+        return EXIT_OK
+
+    out(f"pin-bore: locating the BORE patch for series {series} at upstream HEAD…")
+    discover = discover or (lambda **kw: trust.discover_bore_patch(**kw))
+    try:
+        proposal, data = discover(
+            repo_url=lock.repo_url, series=series,
+            cache_dir=config.kernel_patch_path.parent / ".bore-cache")
+    except trust.TrustError as exc:
+        out(f"error: {exc}")
+        return EXIT_QUERY
+
+    out("")
+    out("Proposed BORE pin — review before approving:")
+    out(f"    series        {proposal.series}")
+    out(f"    repo          {proposal.repo_url}")
+    out(f"    commit        {proposal.commit}")
+    out(f"    file          {proposal.file}")
+    out(f"    BORE version  {proposal.bore_version or '<unknown>'}")
+    out(f"    sha256        {proposal.sha256}")
+    out(f"    size          {proposal.size} bytes")
+    out("")
+    if dry_run:
+        out("(preview only — nothing was written; approve with --pin-bore, "
+            "without --dry-run)")
+        return EXIT_OK
+
+    if not assume_yes:
+        try:
+            reply = ask("Pin this patch — trust it for all future kernel "
+                        f"builds on series {series}? [y/N] ")
+        except EOFError:
+            reply = ""
+        if reply.strip().lower() not in ("y", "yes"):
+            out("not pinned — nothing was written.")
+            return EXIT_OK
+
+    approved = (f"{time.strftime('%Y-%m-%d')} {os.environ.get('USER') or os.environ.get('LOGNAME') or 'operator'} "
+                f"(assisted pin at upstream HEAD {proposal.commit[:12]})")
+    try:
+        trust.append_pin(config.bore_lock_path, proposal, approved)
+        # Seed the verified artifact so the next kernel run's reuse-first path
+        # (§8.3) hits the cache — the pin works offline from this moment on.
+        config.kernel_patch_path.parent.mkdir(parents=True, exist_ok=True)
+        config.kernel_patch_path.write_bytes(data)
+    except (trust.TrustConfigError, OSError) as exc:
+        out(f"error: pin failed: {exc}")
+        return EXIT_USAGE
+    out(f"pinned: series {series} -> {proposal.sha256[:16]}… (bore.lock updated, "
+        "patch cached). The next 'Update kernel' run will build the BORE kernel.")
     return EXIT_OK
 
 
@@ -1421,6 +1527,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="reclaim disk: remove orphans + clean the package cache")
     action.add_argument("--gpu", action="store_true",
                         help="read-only GPU/driver advisory (card, driver, DKMS)")
+    action.add_argument("--pin-bore", dest="pin_bore", action="store_true",
+                        help="assisted §8.3 pin: fetch+hash the BORE patch for the "
+                             "tracked series, show it, and write bore.lock on your "
+                             "explicit approval (--dry-run previews)")
     action.add_argument("--health-daemon", dest="health_daemon", action="store_true",
                         help="§8.7: run the post-boot health watchdog loop")
     p.add_argument("--config", default=DEFAULT_CONFIG, help=f"config path (default {DEFAULT_CONFIG})")
@@ -1472,6 +1582,9 @@ def main(argv: Optional[Sequence[str]] = None, *,
         config.kernel_enable = False
 
     try:
+        if args.pin_bore:
+            return cmd_pin_bore(config, out=out, assume_yes=args.yes,
+                                dry_run=args.dry_run)
         if args.rollback:
             return cmd_rollback(config, out=out)
         if args.clean:

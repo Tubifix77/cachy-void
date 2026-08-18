@@ -370,7 +370,34 @@ install_engine() {
     install_file "$SRC_DIR/updater/cachy_void_update.py" \
                  "$CACHY_ENGINE/cachy_void_update.py" 0755 root root
     # §8.3 trust anchor — must sit beside the engine (bore_lock_path default).
-    install_file "$SRC_DIR/updater/bore.lock" "$CACHY_ENGINE/bore.lock" 0644 root root
+    # OWNED BY THE UPDATER USER, not root: the §8.3a assisted pin (the GUI's
+    # 'Pin BORE patch' button / --pin-bore) appends human-approved entries as
+    # that user — root ownership would dead-end the whole flow behind a sudo
+    # grant the §4.1 boundary deliberately doesn't have. And a redeploy must
+    # never clobber locally-approved pins: ship the repo lockfile, then
+    # re-append any local [[patch]] series the shipped file doesn't carry.
+    local lock_src="$SRC_DIR/updater/bore.lock"
+    local lock_dst="$CACHY_ENGINE/bore.lock" lock_tmp
+    lock_tmp="$(mktemp)"
+    cp -- "$lock_src" "$lock_tmp"
+    if [ -f "$(rp "$lock_dst")" ] && ! $DRY_RUN; then
+        local s
+        for s in $(grep -oE '^series[[:space:]]*=[[:space:]]*"[^"]+"' "$(rp "$lock_dst")" \
+                       | sed 's/.*"\(.*\)"/\1/'); do
+            grep -qE "^series[[:space:]]*=[[:space:]]*\"$s\"" "$lock_src" && continue
+            log "bore.lock: preserving locally-pinned series $s across redeploy"
+            awk -v s="$s" '
+                function flush() { if (keep) printf "\n%s", buf; buf=""; keep=0 }
+                /^\[\[patch\]\]/ { flush(); inb=1; buf=$0 "\n"; next }
+                inb { buf=buf $0 "\n"
+                      if ($0 ~ ("^series[ \t]*=[ \t]*\"" s "\"")) keep=1
+                      next }
+                END { flush() }
+            ' "$(rp "$lock_dst")" >> "$lock_tmp"
+        done
+    fi
+    install_file "$lock_tmp" "$lock_dst" 0644 "${CHOWN_USER:-root}" root
+    rm -f -- "$lock_tmp"
     install_dir "$CACHY_ENGINE/engine" root
     local f base
     for f in "$SRC_DIR"/updater/engine/*.py; do
