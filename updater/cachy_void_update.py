@@ -1419,8 +1419,14 @@ def cmd_gpu(xbps, config: Config, out=print, run=_run) -> int:
             note = ""
             if running and running in l:
                 note = "   <- running kernel"
-            elif any(s in l for s in spares):
-                note = "   (superseded kernel — removable, see Clean up)"
+            else:
+                # Name the command, never "see Clean up": Clean up NEVER removes
+                # kernels (§2.5/§4.7), so pointing at it promised something it
+                # deliberately will not do — and a user who had just run it was
+                # rightly confused that the kernel was still there.
+                hit = next((s for s in spares if s in l), "")
+                if hit:
+                    note = f"   (superseded kernel — remove: sudo vkpurge rm {hit})"
             out("    " + l + note)
         if any("installed" not in l.lower() for l in ds):
             out("    warning: a DKMS module is NOT 'installed' — it may be "

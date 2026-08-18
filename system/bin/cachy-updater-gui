@@ -192,12 +192,14 @@ is done the kernel simply stays paused while everything else still updates.</p>
 
 <p><b style="color:{FG}">[4] Maintenance</b><br>
 Orphaned packages and the downloaded-package cache — <b>Clean up</b> reclaims
-that space. Old kernels are <i>never</i> removed automatically: a kernel that
-boots fine today can still fail next week on something you have not done yet,
-and rebuilding one takes hours. Leftover kernels are listed with their size and
-labelled — which one is your rollback target, which is running, which is merely
-superseded — and if spares start piling up you get a warning with the exact
-removal command. Deleting one stays your decision, never the updater's.</p>
+that space, and that is <i>all</i> it removes. Kernels are never deleted here:
+not by <b>Clean up</b>, not by any other button, because a kernel that boots
+fine today can still fail next week on something you have not done yet, and
+rebuilding one takes hours. Leftover kernels are only <i>reported</i> — with
+their size, and labelled by role (your rollback target, the running one, or a
+mere spare) — each carrying the exact <code>vkpurge</code> command to remove it
+yourself. If spares start piling up you also get a warning. Deleting a kernel
+stays your decision, never the updater's.</p>
 
 <p><b style="color:{FG}">Boot known-good kernel</b><br>
 Appears only when the kernel you are running is not the one recorded as
@@ -352,7 +354,9 @@ class Updater(QWidget):
             "Pin the bootloader default back to the last kernel known to work. "
             "Nothing is uninstalled; a reboot applies it.")
         self.btn_clean = QPushButton("Clean up")
-        self.btn_clean.setToolTip("Remove orphaned packages and clean the package cache")
+        self.btn_clean.setToolTip(
+            "Remove orphaned packages and clean the package cache. "
+            "Never removes kernels.")
         self.btn_gpu = QPushButton("GPU / drivers")
         self.btn_gpu.setToolTip("Detected card, driver status, DKMS health (read-only)")
         actions.addWidget(self.btn_update)

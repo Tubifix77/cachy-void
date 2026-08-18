@@ -1186,6 +1186,29 @@ class GpuCommandTests(unittest.TestCase):
         self.assertIn("WARNING: this looks like a Turing card", t)
         self.assertIn("driver series by GPU family", t)     # table shown on doubt
 
+    def test_superseded_build_names_the_command_not_clean_up(self):
+        """Clean up NEVER removes kernels (§2.5/§4.7), so a note saying 'see
+        Clean up' promised something it deliberately will not do — a user who
+        had just run Clean up was rightly confused the kernel was still there."""
+        def run(args):
+            a = list(args)
+            if a[0] == "sh":
+                return cp(0, "01:00.0 VGA: NVIDIA GK107M\n")
+            if a[0] == "dkms":
+                return cp(0, "nvidia/470.256.02, 6.12.95_1-cachy, x86_64: installed\n")
+            if a[:2] == ["ls", "-1"]:
+                return cp(0, "6.12.95_1-cachy\n")
+            if a[:2] == ["vkpurge", "list"]:
+                return cp(0, "6.12.95_1-cachy\ncurrent\n")
+            if a[0] == "du":
+                return cp(0, "232448\t/lib/modules/6.12.95_1-cachy\n")
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_gpu(FakeXbps(), _config([]), out=out, run=run)
+        t = out.text()
+        self.assertIn("remove: sudo vkpurge rm 6.12.95_1-cachy", t)
+        self.assertNotIn("see Clean up", t)
+
     def test_running_kernel_is_marked_in_the_dkms_list(self):
         import os as _os
         running = _os.uname().release
