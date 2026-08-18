@@ -443,3 +443,144 @@ Recorded here so none of it gets re-proposed as an "idea" later.
    real list/checksum first; approving a *category* is not consent.
 3. Annotate, never dump — sizes, roles and exact commands, because "which of
    these can I delete?" is where a wrong guess costs a bootable system.
+
+---
+
+## 9. Peer-overlay audit (2026-08-18) — seven expansion ideas
+
+Method: diffed Cachy-Void 1:1 against six comparable projects, reading their
+actual config trees rather than their feature pages — **CachyOS**
+(`CachyOS-Settings`, file by file), **ALHP** (the Arch x86-64-v3/v4 rebuild),
+**Garuda**, **Nobara**, **Manjaro**, **PikaOS**. Every candidate below was then
+checked against Void's live package index and against the §7 maintenance test.
+
+**Parity result first, so nobody re-runs this audit:** we are at or ahead of
+CachyOS on the config layer. All 11 sysctls in their
+`usr/lib/sysctl.d/70-cachyos-settings.conf` are present in ours, plus six they
+don't set (`max_map_count`, `split_lock_mitigate=0`, `tcp_fastopen`, `bbr`,
+`inotify.max_user_watches`, `sched_rt_runtime_us`). Their THP tmpfiles
+(`defrag=defer+madvise`, `khugepaged/max_ptes_none=409`) are already applied by
+`deploy.sh`. Their five perf-relevant udev rules are all ported. Their
+`game-performance` is a thin `powerprofilesctl` wrapper — `cachy-game` (gamemode
++ PRIME + gamescope + vkBasalt) is strictly more. The only rules we lack are
+`30-zram`, `69-hdparm`, `85-iw-regulatory` (marginal) and `71-nvidia` (mostly
+covered by `99-cachy-nvidia.conf`). Everything below is what genuinely remains.
+
+### 9.1 `grub-btrfs` — the missing half of the snapshot story
+
+`grub-btrfs 4.14` **is in Void's repos**, shipping a `grub-btrfs-runit` package —
+the daemon is already runit-wired upstream, so this is one `xbps-install` and
+passes §7 outright. Today we take a read-only pre-deploy snapshot into
+`/.cachy-snapshots` (§9.5) and then offer **no way to boot one**: recovery is a
+live-system restore from a system that may not be up. Garuda, openSUSE and
+CachyOS (limine-snapper-sync) all close this loop. We have the safety net
+without the ladder out.
+
+**Caveat that sets the sequencing:** grub-btrfs writes GRUB menu entries, so it
+is only meaningful on a host where **Void owns GRUB** — it belongs bundled with
+the §6c "give Void the bootloader" opt-in and the §8.6 one-shot path, not
+before it. On a foreign-GRUB box (the Medion) it has nowhere to write.
+`snapper 0.13.1` is also in Void if a rollback UI is ever wanted, but check its
+timer assumptions against `snooze` before adopting — that could drag a
+self-maintained unit in through the back door.
+
+### 9.2 RT priority is half-wired — `limits.d/20-audio.conf`
+
+We set `kernel.sched_rt_runtime_us = -1` (§3.1) and ported CachyOS's `hpet` /
+`rtc0` / `cpu_dma_latency` group-`audio` rules into `40-rtaudio-perms.rules` —
+but not their `etc/security/limits.d/20-audio.conf`:
+
+```
+@audio - rtprio 99
+@audio - nice  -11
+```
+
+Without it nothing in userspace can actually **claim** the RT priority we went
+to the trouble of unthrottling. PipeWire/JACK and the audio half of the gaming
+profile are the beneficiaries. One file, installed by `deploy.sh` under the
+existing ledger tags.
+
+**Verify before shipping:** that Void's `/etc/pam.d/system-login` stack pulls
+`pam_limits.so` (if it doesn't, the file is inert and the fix is elsewhere), and
+that the `audio` group exists on a stock Void install.
+
+### 9.3 `XBPS_LDFLAGS` is unset entirely — no LTO, no link-time flags
+
+`system/etc/conf` is `-march=@MARCH@ -O3 -pipe` and nothing else. This is the
+one thing **every** v3-rebuild peer does that we don't: ALHP has enabled LTO for
+all packages built since 2021-11-04; CachyOS layers Clang ThinLTO plus
+`-fno-semantic-interposition`, `-fno-plt`, `-Wl,--as-needed`, `-Wl,-O2`.
+
+Cheapest remaining perf lever in the overlay, and it costs nothing to maintain —
+it's a build flag, not a component. Needs a per-package opt-out list because LTO
+breaks a handful of things, but a 10-entry allowlist is exactly the right size
+to trial it on. Check first what `xbps-src` already sets by default so we extend
+rather than clobber. Ordering: this is a full rebuild cycle, so it lands with a
+deliberate `-Su` + §4.6 takeover pass, not sneaked into a routine update.
+
+### 9.4 Secure Boot is undetected — and it makes our whole product not boot
+
+`sbctl 0.18` is in Void. The core act of this project is installing a
+**self-built, unsigned** kernel; with Secure Boot enabled that host does not
+boot, and nothing in the preflight, the G1/G2 gates or `cachy-health` notices.
+CachyOS ships `sbctl-batch-sign` for exactly this.
+
+This does not need to become a signing feature. A read of
+`/sys/firmware/efi/efivars/SecureBoot-*` in the preflight that **refuses the
+kernel build with a clear message** (userspace updates unaffected, per the
+existing G2 precedent) is the whole ask. Signing support is a separate, larger
+decision.
+
+### 9.5 No `.github/` — 245 tests that never run, and a `curl | sh` install
+
+The repo has no `.github/` directory at all: no CI on push, no tags, no
+releases, no CHANGELOG, no SECURITY.md, no issue templates. `CachyOS-Settings`
+itself ships CONTRIBUTING.md and CODE_OF_CONDUCT.md. The test suite is the
+project's strongest quality claim and it currently only ever runs when one
+person remembers to run it.
+
+Related and sharper: `get.sh` is fetched and piped to `sh` with **no checksum or
+signature**. Every peer distributes through a signed repo or a signed ISO. For a
+public repo that invites strangers to pipe a script into a shell, this is the
+gap a stranger sees first. Minimum viable fix: publish a SHA-256 in the README
+next to the command and have `get.sh` verify what it then downloads.
+
+### 9.6 `fwupd` — the third update domain
+
+`fwupd 2.1.7` is in Void. The updater owns xbps and (since the overhaul) flatpak;
+device firmware is the remaining domain, and "update everything" is the window's
+stated job. Nobara and Bazzite both surface it. Fits the §7 test trivially.
+
+Design note: firmware updates are reboot-coupled and occasionally brick things,
+so this is a **preview-then-confirm** citizen under design rule 2 — surface
+`fwupdmgr get-updates` in the window, never fold it into the Update button.
+
+### 9.7 NTSYNC — track it, pinned to the next base bump
+
+Absent from `overlay/config/` and from `modules-load.d/cachy.conf` (which loads
+only `tcp_bbr`). It is CachyOS's headline Wine/Proton win and they ship a
+`modules-load.d/ntsync.conf` for it.
+
+**Correctly premature, not an omission:** Wine's implementation wants kernel
+≥6.14 and our `base_series` is 6.12. Recording it here so it is a tracked item
+attached to the next base bump (§8.2 detects the bump; the fragment gains
+`CONFIG_NTSYNC=y` and the module load lands with it) rather than something we
+rediscover in another audit.
+
+### 9.8 Confirmed correctly absent — closed, do not re-raise
+
+The audit re-verified these against Void's index on 2026-08-18 and they all
+returned **empty**: `ananicy-cpp`, `scx-scheds`, `uksmd`, `tuned`,
+`auto-cpufreq`, `umu-launcher`, `steam-devices`. §7 therefore rules them out
+exactly as already recorded — the disqualifier is still standing, so the closed
+decisions stay closed. `mitigations=off` remains I7. The no-ISO / no-binary-repo
+stance is the design, not an oversight: it is what makes riding upstream Void
+free.
+
+Two peer *concepts* we lack that the audit judged **taste, not gaps**: a
+hardware/driver auto-detect layer (Manjaro `mhwd`, CachyOS `chwd`, Nobara Driver
+Manager — the window's GPU pane already carries most of that value), and a
+"welcome" app (CachyOS Hello, Garuda Assistant).
+
+**If only two of the seven ever get built:** §9.3 (pure upside, zero maintenance
+bill) and §9.5 (the gap a stranger sees first).
