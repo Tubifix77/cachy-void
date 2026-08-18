@@ -120,6 +120,26 @@ class PinBannerTests(unittest.TestCase):
         self.calls[0][1]["done"](0)          # simulate the CLI finishing
         self.assertEqual(self.w.checked_at.text(), "checked just now")
 
+    def test_rollback_button_hidden_until_there_is_somewhere_to_go(self):
+        self.assertFalse(self.w.btn_rollback.isVisible())
+        self.w.status.setPlainText(PINNED)
+        self.w._update_pin_banner()
+        self.assertFalse(self.w.btn_rollback.isVisible())
+
+    def test_rollback_button_appears_on_the_status_marker(self):
+        self.w.status.setPlainText(
+            PINNED + "    rollback available: running 6.12.103_1-cachy, "
+                     "known-good 6.12.95_1\n")
+        self.w._update_pin_banner()
+        self.assertTrue(self.w.btn_rollback.isVisible())
+
+    def test_rollback_asks_before_acting(self):
+        """It changes what the machine boots — never on a single click."""
+        self.calls.clear()
+        self.w.rollback()
+        self.assertEqual(self.calls[0][0], ["--rollback"])
+        self.assertIn("known-good", self.calls[0][1]["confirm"])
+
     def test_pin_button_label_escapes_its_ampersand(self):
         """A lone '&' is a Qt mnemonic: "Review & pin…" rendered as
         "Review _pin…" until it was escaped (found by looking at a render)."""

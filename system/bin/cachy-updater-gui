@@ -190,8 +190,18 @@ kernel series: that is the <i>Review&nbsp;&amp;&nbsp;pin</i> notice, and until i
 is done the kernel simply stays paused while everything else still updates.</p>
 
 <p><b style="color:{FG}">[4] Maintenance</b><br>
-Orphaned packages and the downloaded-package cache. <b>Clean up</b> reclaims
-that space. Old kernels are never removed automatically.</p>
+Orphaned packages and the downloaded-package cache — <b>Clean up</b> reclaims
+that space. Old kernels are <i>never</i> removed automatically: a kernel that
+boots fine today can still fail next week on something you have not done yet,
+and rebuilding one takes hours. Leftover kernels are listed with their size and
+labelled — which one is your rollback target, which is running, which is merely
+superseded — and if spares start piling up you get a warning with the exact
+removal command. Deleting one stays your decision, never the updater's.</p>
+
+<p><b style="color:{FG}">Boot known-good kernel</b><br>
+Appears only when the kernel you are running is not the one recorded as
+known-good. It re-points the bootloader's default at that known-good kernel —
+nothing is uninstalled, and a reboot applies it.</p>
 
 <p><b style="color:{FG}">[5] GPU &amp; drivers</b><br>
 Your graphics driver is an ordinary Void package, so <b>Update</b> keeps it
@@ -327,16 +337,26 @@ class Updater(QWidget):
         self.btn_kernel = QPushButton("Update kernel")
         self.btn_kernel.setToolTip(
             "Everything, including the BORE kernel — compiles, then needs a reboot")
+        # Recovery, shown only when there is something to go back TO (the CLI
+        # says so in --status). Until now rollback existed only as a CLI flag,
+        # which is exactly the wrong place for the one action you want when a
+        # kernel misbehaves.
+        self.btn_rollback = QPushButton("Boot known-good kernel")
+        self.btn_rollback.setToolTip(
+            "Pin the bootloader default back to the last kernel known to work. "
+            "Nothing is uninstalled; a reboot applies it.")
         self.btn_clean = QPushButton("Clean up")
         self.btn_clean.setToolTip("Remove orphaned packages and clean the package cache")
         self.btn_gpu = QPushButton("GPU / drivers")
         self.btn_gpu.setToolTip("Detected card, driver status, DKMS health (read-only)")
         actions.addWidget(self.btn_update)
         actions.addWidget(self.btn_kernel)
+        actions.addWidget(self.btn_rollback)
         actions.addStretch(1)
         actions.addWidget(self.btn_clean)
         actions.addWidget(self.btn_gpu)
         root.addLayout(actions)
+        self.btn_rollback.hide()
 
         # -- live command output -----------------------------------------------
         out_box = QGroupBox("Output")
@@ -386,9 +406,11 @@ class Updater(QWidget):
         self.btn_clean.clicked.connect(self.clean)
         self.btn_gpu.clicked.connect(self.gpu)
         self.btn_pin.clicked.connect(self.pin_bore)
+        self.btn_rollback.clicked.connect(self.rollback)
 
         self._buttons = (self.btn_check, self.btn_update, self.btn_kernel,
-                         self.btn_clean, self.btn_gpu, self.btn_pin)
+                         self.btn_clean, self.btn_gpu, self.btn_pin,
+                         self.btn_rollback)
         self.check()  # populate on open
 
     # -- process plumbing -------------------------------------------------
@@ -536,8 +558,19 @@ class Updater(QWidget):
 
     def _update_pin_banner(self):
         """Show the §8.3a notice iff --status flagged a missing trust pin
-        (keyed on the CLI's stable "BORE pin: MISSING" marker)."""
-        self.notice.setVisible("BORE pin: MISSING" in self.status.toPlainText())
+        (keyed on the CLI's stable "BORE pin: MISSING" marker), and the
+        rollback button iff there is a different known-good kernel to go to."""
+        text = self.status.toPlainText()
+        self.notice.setVisible("BORE pin: MISSING" in text)
+        self.btn_rollback.setVisible("rollback available" in text)
+
+    def rollback(self):
+        self._run(["--rollback"], self.out, done=lambda _c: self.check(),
+                  confirm="Boot the last known-good kernel from now on?\n\n"
+                          "This only changes which kernel the bootloader starts "
+                          "by default — nothing is uninstalled, and the current "
+                          "kernel stays available. Reboot to apply it.",
+                  activity="Pinning the known-good kernel…")
 
     def pin_bore(self):
         """Two-step assisted pin: preview (--dry-run), human-approve in a

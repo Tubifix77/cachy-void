@@ -990,8 +990,10 @@ class CleanCommandTests(unittest.TestCase):
         run, calls = self._run()
         out = Sink()
         cli.cmd_clean(_config([]), assume_yes=True, out=out, run=run)
-        self.assertIn("old kernels present", out.text())
+        self.assertIn("old kernel files present", out.text())
         self.assertIn("6.12.30_1", out.text())
+        # it now also hands over the exact command instead of a vague hint
+        self.assertIn("sudo vkpurge rm 6.12.30_1", out.text())
         # the invariant: no vkpurge rm is ever issued (§2.5/§4.7)
         self.assertFalse(any(c[:2] == ["vkpurge", "rm"] for c in calls))
 
@@ -1176,6 +1178,90 @@ class NoKernelScopeTests(unittest.TestCase):
         cfg = _config(["mesa"])
         cfg.kernel_enable = False
         self.assertEqual(cli._always_build(cfg), [])
+
+
+class OldKernelInventoryTests(unittest.TestCase):
+    """§2.5/§4.7: leftover kernels are annotated and warned about, never purged."""
+
+    def test_current_symlink_is_never_offered_for_removal(self):
+        """`vkpurge list` prints "current" — the /boot/vmlinuz-current SYMLINK.
+        Listing it as removable would invite deleting the boot symlink."""
+        items = cli.classify_old_kernels(["6.12.95_1-cachy", "current"])
+        self.assertEqual([i.kver for i in items], ["6.12.95_1-cachy"])
+
+    def test_roles_protect_the_fallback_and_the_running_kernel(self):
+        items = cli.classify_old_kernels(
+            ["6.12.90_1-cachy", "6.12.95_1", "6.12.103_1-cachy"],
+            known_good="6.12.95_1", running="6.12.103_1-cachy")
+        roles = {i.kver: i.role for i in items}
+        self.assertEqual(roles["6.12.95_1"], "fallback")
+        self.assertEqual(roles["6.12.103_1-cachy"], "running")
+        self.assertEqual(roles["6.12.90_1-cachy"], "removable")
+
+    def test_keepers_are_labelled_and_only_spares_get_a_remove_command(self):
+        items = cli.classify_old_kernels(
+            ["6.12.90_1-cachy", "6.12.95_1"], known_good="6.12.95_1",
+            size_of=lambda _k: 232448)
+        text = "\n".join(cli.old_kernel_lines(items))
+        self.assertIn("6.12.95_1 — 227 MB   [rollback target: KEEP]", text)
+        self.assertIn("sudo vkpurge rm 6.12.90_1-cachy", text)
+        self.assertNotIn("sudo vkpurge rm 6.12.95_1\n", text + "\n")
+
+    def test_single_spare_is_not_warned_about(self):
+        items = cli.classify_old_kernels(["6.12.90_1-cachy"])
+        self.assertNotIn("piling up", "\n".join(cli.old_kernel_lines(items)))
+
+    def test_more_than_one_spare_warns_with_total_size(self):
+        """The owner's call: don't auto-purge, but don't let them pile up
+        silently either."""
+        items = cli.classify_old_kernels(
+            ["6.12.80_1-cachy", "6.12.90_1-cachy", "6.12.95_1"],
+            known_good="6.12.95_1", size_of=lambda _k: 232448)
+        text = "\n".join(cli.old_kernel_lines(items))
+        self.assertIn("warning: 2 superseded kernels are piling up", text)
+        self.assertIn("454 MB", text)
+        self.assertIn("one spare is enough", text)
+
+    def test_size_unknown_degrades_gracefully(self):
+        items = cli.classify_old_kernels(["6.12.90_1-cachy"],
+                                         size_of=lambda _k: None)
+        self.assertIn("size unknown", cli.old_kernel_lines(items)[0])
+
+
+class RollbackVisibilityTests(unittest.TestCase):
+    """--status must announce that recovery is possible; the GUI keys its
+    rollback button off that line."""
+
+    def _cfg_and_state(self, tmp, known_good):
+        (Path(tmp) / "kernel").mkdir(exist_ok=True)
+        (Path(tmp) / "kernel" / "kernel-state.json").write_text(json.dumps({
+            "schema": 1, "state": "TRACKING", "base_series": "6.12",
+            "known_good": {"kver": known_good, "grub_ref": None}}),
+            encoding="utf-8")
+        lock = Path(tmp) / "bore.lock"
+        lock.write_text('[repo]\nurl = "u"\npinned_commit = "' + "a" * 40 +
+                        '"\n\n[[patch]]\nseries = "6.12"\nfile = "f"\n'
+                        f'sha256 = "{"0" * 64}"\n', encoding="utf-8")
+        return cli.Config(void_packages=Path(tmp) / "vp", state_dir=Path(tmp),
+                          bore_lock=lock)
+
+    class _Xbps:
+        vercmp = staticmethod(_vercmp)
+
+    def test_marker_present_when_running_differs_from_known_good(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg_and_state(tmp, "6.12.95_1")   # not what we run
+            out = Sink()
+            cli._kernel_report(cfg, self._Xbps(), out)
+            self.assertIn("rollback available", out.text())
+
+    def test_no_marker_when_running_is_the_known_good(self):
+        import os as _os
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg_and_state(tmp, _os.uname().release)
+            out = Sink()
+            cli._kernel_report(cfg, self._Xbps(), out)
+            self.assertNotIn("rollback available", out.text())
 
 
 class PinBoreCommandTests(unittest.TestCase):

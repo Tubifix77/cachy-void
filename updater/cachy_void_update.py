@@ -251,6 +251,20 @@ def _kernel_report(config: Config, xbps, out) -> None:
                     "'Pin BORE patch' button, or: cachy-void-update --pin-bore)")
         except trust.TrustConfigError as exc:
             out(f"BORE pin: bore.lock unusable ({exc})")
+
+        # Recovery visibility: if the running kernel is not the recorded
+        # known-good one, say that going back is possible. The front-end keys
+        # its rollback button off the exact substring "rollback available" —
+        # otherwise recovery stays a CLI-only secret, which is no use to the
+        # person whose kernel just misbehaved.
+        good = (state.get("known_good") or {}).get("kver") or ""
+        try:
+            running = os.uname().release
+        except (AttributeError, OSError):
+            running = ""
+        if good and running and good != running:
+            out(f"rollback available: running {running}, known-good {good}")
+
         tpath = config.void_packages / "srcpkgs" / f"linux{series}" / "template"
         text = tpath.read_text(encoding="utf-8") if tpath.exists() else None
         ev, tmpl = grub.classify_bump(
@@ -634,12 +648,13 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
         out(f"    orphaned packages: {len(_lines(cp)) if cp.returncode == 0 else 'unknown (needs root)'}")
     except OSError:
         pass
-    try:
-        cp = run(["vkpurge", "list"])
-        old = _lines(cp) if cp.returncode == 0 else []
-        out("    removable old kernels: " + (", ".join(old) if old else "none"))
-    except OSError:
-        pass
+    inv = _kernel_inventory(config, run)
+    if inv:
+        out("    old kernel files present:")
+        for line in old_kernel_lines(inv):
+            out("      " + line)
+    else:
+        out("    removable old kernels: none")
     try:
         cp = run(["du", "-sh", "/var/cache/xbps"])
         if cp.returncode == 0 and cp.stdout.strip():
@@ -1020,6 +1035,105 @@ def cmd_rollback(config: Config, out=print, run=_run) -> int:
 
 
 # ==========================================================================
+# Old-kernel inventory (§2.5/§4.7 — suggest, never purge)
+# ==========================================================================
+# `vkpurge list` also prints "current", which is the /boot/vmlinuz-current
+# SYMLINK, not a kernel. Offering it as removable would invite a user to delete
+# their boot symlink, so it is filtered here in one place for every caller.
+VKPURGE_NON_KERNELS = frozenset({"current"})
+
+
+@dataclass(frozen=True)
+class OldKernel:
+    kver: str
+    size_kb: Optional[int]
+    role: str            # "removable" | "fallback" | "running"
+
+
+def classify_old_kernels(vkpurge_lines: Sequence[str], *,
+                         known_good: str = "", running: str = "",
+                         size_of: Optional[Callable[[str], Optional[int]]] = None
+                         ) -> list[OldKernel]:
+    """Annotate `vkpurge list` output so a human can act on it safely.
+
+    Leftover kernel files are not interchangeable: one of them may be the
+    recorded rollback target, and one may be the kernel currently running.
+    Naming which is which is the difference between a useful suggestion and a
+    dangerous one — so roles are computed, never left to the reader.
+    """
+    items: list[OldKernel] = []
+    for raw in vkpurge_lines:
+        kver = raw.strip()
+        if not kver or kver in VKPURGE_NON_KERNELS:
+            continue
+        if running and kver == running:
+            role = "running"
+        elif known_good and kver == known_good:
+            role = "fallback"
+        else:
+            role = "removable"
+        items.append(OldKernel(kver, size_of(kver) if size_of else None, role))
+    return items
+
+
+def old_kernel_lines(items: Sequence[OldKernel]) -> list[str]:
+    """Render the inventory, warning when superseded kernels are piling up.
+
+    Deliberately no auto-purge (§2.5/§4.7): a kernel that boots healthy today
+    can still fail next week on suspend or a codec path, and rebuilding one
+    costs hours. Piling up silently is the only part worth fixing, so it is
+    reported instead of resolved.
+    """
+    lines: list[str] = []
+    for k in items:
+        size = f"{k.size_kb // 1024} MB" if k.size_kb else "size unknown"
+        if k.role == "fallback":
+            lines.append(f"{k.kver} — {size}   [rollback target: KEEP]")
+        elif k.role == "running":
+            lines.append(f"{k.kver} — {size}   [currently running: KEEP]")
+        else:
+            lines.append(f"{k.kver} — {size}   (remove: sudo vkpurge rm {k.kver})")
+    spare = [k for k in items if k.role == "removable"]
+    if len(spare) > 1:
+        total = sum(k.size_kb or 0 for k in spare) // 1024
+        lines.append(
+            f"warning: {len(spare)} superseded kernels are piling up"
+            + (f" (~{total} MB)" if total else "")
+            + " — one spare is enough. Purges stay manual (§2.5/§4.7); "
+              "remove the oldest first.")
+    return lines
+
+
+def _kernel_inventory(config: Config, run) -> list[OldKernel]:
+    """Collect the annotated old-kernel inventory (best-effort, read-only)."""
+    def _size(kver: str) -> Optional[int]:
+        try:
+            cp = run(["du", "-sk", f"/lib/modules/{kver}"])
+            return int(cp.stdout.split()[0]) if cp.returncode == 0 else None
+        except (OSError, ValueError, IndexError):
+            return None
+
+    try:
+        cp = run(["vkpurge", "list"])
+        raw = [l for l in (cp.stdout or "").splitlines() if l.strip()] \
+            if cp.returncode == 0 else []
+    except OSError:
+        return []
+    good = ""
+    try:
+        state = grub.KernelStateStore(config.kernel_state_path).load()
+        good = (state.get("known_good") or {}).get("kver") or ""
+    except (OSError, grub.GrubError):
+        pass
+    try:
+        running = os.uname().release
+    except (AttributeError, OSError):
+        running = ""
+    return classify_old_kernels(raw, known_good=good, running=running,
+                                size_of=_size)
+
+
+# ==========================================================================
 # Maintenance / cleanup (§4.7 note; extends the §4.1 sudo boundary)
 # ==========================================================================
 def cmd_clean(config: Config, *, assume_yes: bool, out=print, run=_run,
@@ -1059,16 +1173,12 @@ def cmd_clean(config: Config, *, assume_yes: bool, out=print, run=_run,
     out(f"obsolete cached packages to clean: {len(cache)}")
 
     # old kernels — SUGGEST ONLY (never purge; §2.5/§4.7)
-    try:
-        old = _lines(run(["vkpurge", "list"]))
-    except OSError:
-        old = []
-    if old:
-        out("\nold kernels present (NOT removed — kernel purges are manual, "
+    inv = _kernel_inventory(config, run)
+    if inv:
+        out("\nold kernel files present (NOT removed — kernel purges are manual, "
             "§2.5/§4.7):")
-        for k in old:
-            out(f"    {k}")
-        out("    keep the last known-good kernel; when ready: sudo vkpurge rm <ver>")
+        for line in old_kernel_lines(inv):
+            out(f"    {line}")
 
     if not orphans and not cache:
         out("\nnothing to clean — no orphans, cache already tidy.")
