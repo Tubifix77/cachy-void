@@ -3,9 +3,14 @@
 This document summarizes the concepts and features planned for our Cachy-fied
 Void Linux installer/updater in the next phase of development.
 
-> Status: **ideas / not yet implemented.** Nothing here is built. It captures
-> intent for a future run; the authoritative design for what *is* implemented
-> remains [`architecture.md`](architecture.md).
+> Status: **mixed — read the per-item notes, not the title.** This started as a
+> pure idea list, but a good part of it has since shipped (§6 already tracks
+> that, and §3 is now largely delivered *as the updater window* rather than as an
+> installer). Some of it has also been deliberately **superseded** or **closed**:
+> §3's neon/cyan aesthetic lost to the canonical palette in
+> [`branding.md`](branding.md) §2, and §7/§8 record decisions that must not be
+> relitigated. The authoritative design for what *is* implemented remains
+> [`architecture.md`](architecture.md).
 
 ---
 
@@ -62,6 +67,32 @@ and terminal outputs.
 - A clear visual dashboard showing the active boot status (`kernel-state.json`),
   displaying the currently active "known good" kernel and any staged one-shot
   test kernels.
+
+**Status (2026-08-18) — mostly delivered, but as the UPDATER window, not an
+installer.** `cachy-updater-gui` is now the project's main visible program
+(README "The updater window"; `system/bin/cachy-updater-gui`), so this section is
+no longer a plan:
+
+- **Delivered:** the monospace live-log pane (Output, tail-following); the
+  kernel/boot dashboard — pin state, known-good vs running, and a rollback
+  control that appears only when there is something to roll back to; a
+  themed identity applied by the app itself rather than inherited.
+- **Superseded:** the aesthetic. "Glowing neon-green + electric cyan/teal" lost
+  to [`branding.md`](branding.md) §2 — obsidian/graphite with the single Void
+  green, and an explicit *resist adding hues* rule. Cyan never arrived; the only
+  hue added since is `--warn` (a muted brass amber, added through the process
+  §2 prescribes) for the "kernel updates paused" notice.
+- **Deliberately done differently:** the "real-time, accurate compilation
+  progress bar". A percentage for an `xbps-src` build (let alone an 18-hour
+  kernel compile) is not knowable, and a bar that lies is worse than none — so
+  the window ships an indeterminate pulse + an elapsed-time heartbeat + the
+  current stage in words. Do not re-propose a percentage.
+- **Still open:** a *staged candidate* readout (the status pane shows the pin,
+  the known-good and the drift, but not "candidate X awaiting its trial boot");
+  and the interactive component checkboxes, which today are `deploy.sh` flags.
+- **Reframed:** an installer GUI itself looks unnecessary now — `get.sh` reduced
+  installation to one pasted line, which is a better fit for a tool that lands on
+  an existing Void than a graphical wizard would be.
 
 ---
 
@@ -311,3 +342,53 @@ Rationale: this is a solo hobby overlay that deliberately rides upstream Void so
 it "doesn't rot" (the same reasoning that rejected the standalone-distro/binary-
 repo path). Every self-maintained component is a standing bill against that
 design; the kernel is the only bill worth paying.
+
+---
+
+## 8. Delivered / closed on 2026-08-18 (the updater overhaul)
+
+Recorded here so none of it gets re-proposed as an "idea" later.
+
+**Delivered:**
+
+- **One-line install** — `get.sh` (xbps-fetch or `curl | sh`) clones and hands off
+  to `bootstrap.sh`; flags ride through to `deploy.sh`. This closes the
+  "installation is fiddly" complaint *without* a binary repo or an ISO — both of
+  which stay rejected (see §7's rationale: the overlay rides upstream so it
+  doesn't rot).
+- **Assisted BORE pin** (architecture.md §8.3a) — the trust anchor is still
+  human-owned, but the clerical half (locate the patch, hash it, edit TOML) is
+  automated behind a reviewed confirmation, surfaced in the window as a notice
+  card. A user can no longer fail to discover why their kernel never updates.
+- **Recovery in the window** — `--rollback` was CLI-only for months; the status
+  pane now emits `rollback available` and the GUI reveals a *Boot known-good
+  kernel* button on it.
+- **The updater window is core, not branding** — it used to install only with
+  `--with-branding`, i.e. a box could have no GUI at all, which quietly
+  invalidated every "the updater will tell you" claim.
+
+**Closed decisions (do not relitigate):**
+
+- **Auto-purging old kernels: REJECTED.** Tempting (they pile up at ~227 MB
+  each), but a kernel that boots healthy today can still fail next week on a path
+  not yet exercised, and rebuilding one costs hours. The agreed middle ground is
+  *visibility*: every leftover is reported with size + role (rollback target /
+  running / spare) + its own `vkpurge` command, and more than one spare raises a
+  warning. Deletion stays a human act (§2.5/§4.7).
+- **A "purge old kernels" button: REJECTED** — it would mean granting `vkpurge`
+  to the updater (widening the §4.1 boundary) to save typing one command a couple
+  of times a year. The suggestion text carries the command instead.
+- **The updater running `grub-mkconfig`: REJECTED, and now provably
+  unnecessary** — Void's own `grub` package ships
+  `/etc/kernel.d/post-install/50-grub` *and* `post-remove/50-grub`, so a
+  GRUB-owning Void host regenerates its config on every kernel install/removal.
+  Provisioning does it once (`deploy.sh --with-grub`); a foreign bootloader is
+  never touched (§8.6 `external`).
+
+**Design rules the overhaul established** (see also memory / README):
+
+1. Nothing that matters is CLI-only — if the engine knows it, the window says it.
+2. Preview, then confirm — destructive or trust-establishing actions show the
+   real list/checksum first; approving a *category* is not consent.
+3. Annotate, never dump — sizes, roles and exact commands, because "which of
+   these can I delete?" is where a wrong guess costs a bootable system.
