@@ -1,4 +1,4 @@
-# Roadmap: GUI, Plasma Theme, and Smart Detection
+# Roadmap: desktop integration, theming, and parked ideas
 
 This document summarizes the concepts and features planned for our Cachy-fied
 Void Linux installer/updater in the next phase of development.
@@ -14,15 +14,59 @@ Void Linux installer/updater in the next phase of development.
 
 ---
 
-## 1. KDE Plasma as the Locked-In Gaming Target
+## 1. Desktop environments — agnostic by default, themed where it pays
 
-We have decided to target all graphical optimizations and system integrations
-specifically toward **KDE Plasma (Wayland)**. This ensures:
+**RETRACTED (2026-08-18): there is no "locked-in" desktop, and there never
+should have been one.** This section used to declare KDE Plasma (Wayland) *the*
+target, which misrepresented the whole project. The three reasons given were all
+Wayland-era KWin features argued from a **GTX 750 Ti**: explicit sync (the real
+box is Kepler on the **470 legacy** driver, which predates the GBM/explicit-sync
+support that makes NVIDIA Wayland viable at all), fractional scaling (a 1080p TV
+wants 100%), and controller navigation for Big Picture (that is *Steam's*
+feature — it works from any session, even a bare WM). A desktop identity had been
+imported as if it were a technical requirement, most likely because CachyOS
+leads with Plasma as its flagship.
 
-- Full utilization of **NVIDIA Explicit Sync** on the GTX 750 Ti graphics card.
-- Perfect **fractional scaling** on the living room TV.
-- Smooth **controller navigation** and a console-like experience when launching
-  Steam Big Picture.
+**What is actually true of the code (measured, not asserted):** the performance
+layer, the gaming layer and the updater contain **zero** DE references — sysctl,
+udev, zram, kernel, compiler profile, `cachy-game`, GameMode/MangoHud/vkBasalt,
+earlyoom, snapshots, `cachy-void-update` and its window are all DE-agnostic
+already (the window paints its own palette precisely so it does not depend on
+the session's theme). `deploy.sh` mentions LXQt only in branding paths. The
+entire desktop assumption lives in **one optional applier**,
+`system/bin/cachy-branding`, plus the tray-applet choice in
+`--with-networkmanager`.
+
+**The intended shape — support several desktops, favour none:**
+
+- **Tier 0 — every desktop, and none.** Everything above. Works today on any
+  session, on a bare WM, or headless. This is the overlay.
+- **Tier 1 — any Qt desktop.** Palette assets that need no DE integration:
+  Kvantum theme, wallpaper, `qterminal` scheme, the branded SDDM greeter, the
+  icon set. Applies unchanged under LXQt, Plasma, or a lone Openbox.
+- **Tier 2 — per-DE integration**, one small applier each, written against that
+  DE's own config mechanism and nothing else:
+  - **LXQt** — built (`cachy-branding`; panel, openbox, session).
+  - **KDE Plasma** — the obvious second target: it is CachyOS's flagship, it is
+    Qt so every Tier-1 asset transfers, and it is what most Linux gamers run.
+    Scope is modest: a `.colors` scheme, the Kvantum bridge, wallpaper, and
+    `plasma-nm` instead of `nm-tray`.
+  - **XFCE** — cheap third (`xfconf` for wm theme + wallpaper), and worth noting
+    the dual-boot Debian on the test laptop runs it.
+  - **GTK/GNOME** — lowest priority; GNOME resists theming and ships its own
+    network applet.
+- **Rules, unchanged:** never install a desktop, never override a user's own
+  theme (opt-in only, reversible), and an unrecognised session gets Tier 1 plus a
+  plain message — never a broken half-applied look.
+
+**The honest costs.** Each Tier-2 applier is a standing maintenance bill in the
+sense of §7 — not disqualified (it is our own config code, not a forked
+package), but not free either; two or three is a sane ceiling. And **we cannot
+test Plasma theming on the current hardware**: no Plasma is installed anywhere
+in this project's reach, so a Plasma applier would ship code-reviewed and
+mock-tested only — the same honesty caveat as the Void-owned-GRUB one-shot path
+(§8.6). Void packages Plasma, so installing it alongside LXQt on the test box is
+the cheap way to make it testable before claiming support.
 
 ---
 
@@ -32,12 +76,19 @@ To respect Void's philosophy of minimal intervention (never forcing unnecessary
 configurations on a user), we will build an intelligent detection scanner into
 our Python program.
 
-**How it works:** the program scans the system for the presence of KDE Plasma
-files (e.g. checking whether `/usr/bin/plasmashell` or `kwin` exists).
+**How it works (generalised 2026-08-18 — it was written Plasma-first, matching
+§1's retracted lock-in):** identify the session rather than one product. Read
+`XDG_CURRENT_DESKTOP` first, corroborate with binaries on PATH
+(`lxqt-session`, `plasmashell`/`kwin_x11`, `xfce4-session`, `gnome-shell`), and
+map the result to a §1 Tier-2 applier — falling back to Tier 1 for anything
+unrecognised, which is a supported outcome and not a failure.
 
-- **If Plasma IS installed:** the user is prompted at the end of installation to
-  inject our custom hybrid Void/Cachy theme — SDDM login screen, terminal
-  configuration, hybrid color palette, and desktop shortcuts.
+- **If a KNOWN desktop is detected:** the user is prompted at the end of
+  installation to apply the matching identity — SDDM greeter, terminal scheme,
+  palette, wallpaper, plus that desktop's own integration (panel/colour scheme).
+- **If Plasma specifically is detected:** prefer `plasma-nm` over `nm-tray` for
+  the WiFi picker, since the tray applet must match the session's toolkit — the
+  same reasoning that made nm-tray right for LXQt and nm-applet wrong.
 - **If Plasma is NOT installed:**
   - The program cleanly hides all Plasma-related theming options.
   - Instead, it offers a lightweight fallback: place a sharp, high-quality static
