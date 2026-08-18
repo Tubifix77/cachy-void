@@ -38,8 +38,48 @@ uses SHA-256 pinning (`bore.lock`, §6), so no separate signature tool is needed
 
 ## 2. Quick Start (Automated Bootstrap)
 
-The fastest, least error-prone route is [`bootstrap.sh`](bootstrap.sh). Run it as
-**your regular user** (not root) — it escalates with `sudo` only where required:
+### 2.0 One-line install ([`get.sh`](get.sh))
+
+On a completely fresh Void install you can skip §1 and the manual clone
+entirely — `xbps-fetch` ships with xbps itself, so this single pasted line
+needs nothing pre-installed. Run as **your regular user** (not root):
+
+```bash
+xbps-fetch https://raw.githubusercontent.com/Tubifix77/cachy-void/main/get.sh && sh get.sh
+```
+
+If `curl` is already installed, the pipe form works too:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Tubifix77/cachy-void/main/get.sh | sh
+```
+
+`get.sh` installs `git` if missing, clones this repository to `~/cachy-void`
+(override with `CACHY_VOID_DIR=…`), and hands off to `bootstrap.sh` below.
+Arguments are forwarded through `bootstrap.sh` to `deploy.sh`, so §4's opt-in
+flags ride along:
+
+```bash
+sh get.sh --with-networkmanager --with-branding
+# pipe form:  curl -fsSL …/get.sh | sh -s -- --with-networkmanager
+```
+
+Two things to know:
+
+- **The clone at `~/cachy-void` is permanent by design** — it is the overlay's
+  source tree (deploy installs from it) and your uninstaller
+  (`sudo ~/cachy-void/deploy.sh --uninstall`). Don't delete it after install;
+  re-running `get.sh` later refreshes it with `git pull --ff-only`.
+- The script is wrapped in a `main()` invoked only on its last line, so a
+  truncated download executes nothing; when piped, it rebinds stdin to
+  `/dev/tty` so the sudo password and `[Y/n]` prompts still work.
+
+### 2.1 From a clone ([`bootstrap.sh`](bootstrap.sh))
+
+If you'd rather clone yourself, `bootstrap.sh` is the same fastest,
+least error-prone route. Run it as **your regular user** (not root) — it
+escalates with `sudo` only where required. Any arguments are forwarded to
+`deploy.sh` (e.g. `./bootstrap.sh --with-networkmanager`):
 
 ```bash
 git clone https://github.com/Tubifix77/cachy-void.git

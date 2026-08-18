@@ -11,8 +11,11 @@
 #
 #   ./bootstrap.sh
 #   VOID_PACKAGES=/path/to/void-packages ./bootstrap.sh   # override checkout
+#   ./bootstrap.sh --with-networkmanager --with-branding  # extra deploy.sh flags
 #
-# See INSTALL.md for the full manual.
+# Any arguments are forwarded verbatim to deploy.sh (appended after the
+# standard --with-grub/--user/--void-packages set). See INSTALL.md for the
+# full manual; get.sh wraps this for a one-line install from a fresh Void.
 
 set -euo pipefail
 
@@ -86,7 +89,7 @@ ok "prerequisites installed"
 step "Ensuring void-packages at $VOID_PACKAGES"
 if [ ! -d "$VOID_PACKAGES/.git" ]; then
     printf 'void-packages not found at %s — clone it now? [Y/n] ' "$VOID_PACKAGES"
-    read -r reply
+    read -r reply || reply=""   # EOF (non-interactive stdin) = accept the default
     case "${reply:-Y}" in
         [Nn]*) die "void-packages is required; set VOID_PACKAGES=<path> and re-run" ;;
     esac
@@ -110,11 +113,12 @@ fi
 # deploy.sh (run as root) installs system config, mirrors the engine to
 # /usr/libexec/cachy-void-updater, performs the sanctioned GRUB edits, and
 # creates $STATE_DIR/kernel owned by $BUILD_USER.
-step "Provisioning system via deploy.sh --with-grub"
+step "Provisioning system via deploy.sh --with-grub $*"
 sudo bash "$SCRIPT_DIR/deploy.sh" \
     --with-grub \
     --user "$BUILD_USER" \
-    --void-packages "$VOID_PACKAGES"
+    --void-packages "$VOID_PACKAGES" \
+    "$@"
 ok "system provisioned"
 
 # ---------------------------------------------------------------------------

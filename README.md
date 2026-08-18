@@ -28,7 +28,13 @@ The base system stays 100% upstream Void binaries. Only a short, curated overlay
 
 ## Quick Start
 
-Run as your **regular user** (not root) on a Void host:
+One pasted command on a **completely fresh** Void install — `xbps-fetch` ships with xbps itself, so nothing needs to be installed first. Run as your **regular user** (not root):
+
+```bash
+xbps-fetch https://raw.githubusercontent.com/Tubifix77/cachy-void/main/get.sh && sh get.sh
+```
+
+Optional flags ride along (e.g. `sh get.sh --with-networkmanager --with-branding`). If you already have `curl`, the pipe form works too: `curl -fsSL https://raw.githubusercontent.com/Tubifix77/cachy-void/main/get.sh | sh`. And of course the classic route still works:
 
 ```bash
 git clone https://github.com/Tubifix77/cachy-void.git
@@ -36,7 +42,7 @@ cd cachy-void
 ./bootstrap.sh
 ```
 
-`bootstrap.sh` verifies the environment, derives the kernel tracking state from your running kernel, installs the prerequisites, ensures a `void-packages` checkout, provisions the system (including a default `/etc/cachy-void/updater.toml`), and seeds the initial state — end to end.
+Either way you end up in the same place: `get.sh` clones the repository to `~/cachy-void` (its permanent home — the clone is the overlay's source tree and your uninstaller, so keep it) and hands off to `bootstrap.sh`, which verifies the environment, derives the kernel tracking state from your running kernel, installs the prerequisites, ensures a `void-packages` checkout, provisions the system (including a default `/etc/cachy-void/updater.toml`), and seeds the initial state — end to end.
 
 Two quick things before your first update: **review `/etc/cachy-void/updater.toml`** (the `[packages]` allowlist), and — *only if you want the BORE kernel* — **pin `bore.lock` for your kernel series** ([INSTALL §6.2](INSTALL.md)). Then:
 
@@ -96,6 +102,7 @@ The kernel (`linux-cachy`) and the compiled overlay live in **your** `void-packa
 architecture.md          Authoritative design spec (single source of truth)
 INSTALL.md               Installation & provisioning manual
 branding.md              The void-tactical desktop look (optional)
+get.sh                   One-line installer bootstrap (fetch -> clone -> bootstrap.sh)
 bootstrap.sh             Zero-touch provisioning entry point
 deploy.sh                Idempotent, reversible system installer (--with-grub/-branding/-schedule)
 system/                  Static config + runit services + gaming/branding assets:
