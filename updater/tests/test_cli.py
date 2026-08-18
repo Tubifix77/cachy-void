@@ -1119,6 +1119,112 @@ class GpuCommandTests(unittest.TestCase):
         self.assertIn("Kepler", t)          # the legacy-series hint
         self.assertIn("470.256.02", t)      # dkms line
 
+    def test_warns_about_a_kernel_with_no_module_built(self):
+        """The check the panel claimed to do but didn't: listing what DKMS HAS
+        never reveals what is MISSING. Live case — nvidia470 builds for the 6.12
+        kernels but not for the installed 6.18 series, so booting 6.18 silently
+        drops to nouveau."""
+        def run(args):
+            a = list(args)
+            if a[0] == "sh":
+                return cp(0, "01:00.0 VGA: NVIDIA GK107M [GeForce GT 730M]\n")
+            if a[0] == "dkms":
+                return cp(0, "nvidia/470.256.02, 6.12.103_1-cachy, x86_64: installed\n")
+            if a[:2] == ["ls", "-1"]:
+                return cp(0, "6.12.103_1-cachy\n6.18.38_1\n")
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_gpu(FakeXbps(installed=["nvidia470"],
+                             inst_ver={"nvidia470": "nvidia470-470.256.02_2"}),
+                    _config([]), out=out, run=run)
+        t = out.text()
+        self.assertIn("kernel 6.18.38_1 has NO out-of-tree module", t)
+        self.assertIn("nouveau", t)
+        self.assertNotIn("kernel 6.12.103_1-cachy has NO", t)
+
+    def test_no_warning_when_every_kernel_is_covered(self):
+        def run(args):
+            a = list(args)
+            if a[0] == "sh":
+                return cp(0, "01:00.0 VGA: NVIDIA GK107M [GeForce GT 730M]\n")
+            if a[0] == "dkms":
+                return cp(0, "nvidia/470.256.02, 6.12.103_1-cachy, x86_64: installed\n")
+            if a[:2] == ["ls", "-1"]:
+                return cp(0, "6.12.103_1-cachy\n")
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_gpu(FakeXbps(), _config([]), out=out, run=run)
+        self.assertNotIn("NO out-of-tree module", out.text())
+
+    def test_series_hint_is_suppressed_when_the_series_matches(self):
+        """It is a 300-character wall; it earns its place only when something
+        looks wrong."""
+        def run(args):
+            a = list(args)
+            if a[0] == "sh":
+                return cp(0, "01:00.0 VGA: NVIDIA GK107M [GeForce GT 730M]\n")
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_gpu(FakeXbps(installed=["nvidia470"],
+                             inst_ver={"nvidia470": "nvidia470-470.256.02_2"}),
+                    _config([]), out=out, run=run)
+        t = out.text()
+        self.assertIn("driver series matches this card (Kepler -> nvidia470)", t)
+        self.assertNotIn("driver series by GPU family", t)
+
+    def test_wrong_series_warns_and_shows_the_table(self):
+        def run(args):
+            a = list(args)
+            if a[0] == "sh":   # Turing card...
+                return cp(0, "01:00.0 VGA: NVIDIA TU117M [GeForce GTX 1650]\n")
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_gpu(FakeXbps(installed=["nvidia470"],      # ...legacy driver
+                             inst_ver={"nvidia470": "nvidia470-470.256.02_2"}),
+                    _config([]), out=out, run=run)
+        t = out.text()
+        self.assertIn("WARNING: this looks like a Turing card", t)
+        self.assertIn("driver series by GPU family", t)     # table shown on doubt
+
+    def test_running_kernel_is_marked_in_the_dkms_list(self):
+        import os as _os
+        running = _os.uname().release
+
+        def run(args):
+            a = list(args)
+            if a[0] == "sh":
+                return cp(0, "01:00.0 VGA: NVIDIA GK107M\n")
+            if a[0] == "dkms":
+                return cp(0, f"nvidia/470.256.02, {running}, x86_64: installed\n"
+                             "nvidia/470.256.02, 9.99.9_1, x86_64: installed\n")
+            if a[:2] == ["ls", "-1"]:
+                return cp(0, f"{running}\n9.99.9_1\n")
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_gpu(FakeXbps(), _config([]), out=out, run=run)
+        self.assertIn("<- running kernel", out.text())
+
+    def test_dkms_kernel_column_parsed_in_both_layouts(self):
+        installed = ["6.12.103_1-cachy"]
+        modern = ["nvidia/470.256.02, 6.12.103_1-cachy, x86_64: installed"]
+        legacy = ["nvidia, 470.256.02, 6.12.103_1-cachy, x86_64: installed"]
+        self.assertEqual(cli.dkms_kernels(modern, installed),
+                         {"6.12.103_1-cachy": "installed"})
+        self.assertEqual(cli.dkms_kernels(legacy, installed),
+                         {"6.12.103_1-cachy": "installed"})
+        # and without a /lib/modules listing to match against
+        self.assertEqual(cli.dkms_kernels(modern), {"6.12.103_1-cachy": "installed"})
+        self.assertEqual(cli.dkms_kernels(legacy), {"6.12.103_1-cachy": "installed"})
+
+    def test_chip_code_beats_marketing_name_for_series(self):
+        self.assertEqual(cli.expected_nvidia_series("nvidia gk107m [geforce gt 730m]"),
+                         ("nvidia470", "Kepler"))
+        self.assertEqual(cli.expected_nvidia_series("nvidia gf119 [geforce gt 520]"),
+                         ("nvidia390", "Fermi"))
+        self.assertEqual(cli.expected_nvidia_series("nvidia tu117m"),
+                         ("nvidia", "Turing"))
+        self.assertEqual(cli.expected_nvidia_series("some unlabelled card"), ("", ""))
+
     def test_dkms_not_installed_warns(self):
         def run(args):
             a = list(args)

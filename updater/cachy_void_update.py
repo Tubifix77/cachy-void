@@ -1263,6 +1263,58 @@ _NVIDIA_LEGACY_HINT = (
     "Fermi (4xx/5xx) -> nvidia390; Maxwell and newer (9xx/10xx/16xx/20xx+) -> "
     "nvidia (current). Match your card above; the wrong series will not load.")
 
+# Chip codes are far more reliable than marketing names for this, and lspci
+# usually prints them ("GK107M [GeForce GT 730M]"): GF=Fermi, GK=Kepler,
+# GM/GP/GV/TU/GA/AD = Maxwell and newer.
+_NVIDIA_CHIP_RE = re.compile(r"\b(gf|gk|gm|gp|gv|tu|ga|ad)\d{3}", re.I)
+_NVIDIA_CHIP_SERIES = {"gf": "nvidia390", "gk": "nvidia470"}
+_NVIDIA_FAMILY_NAME = {"gf": "Fermi", "gk": "Kepler", "gm": "Maxwell",
+                       "gp": "Pascal", "gv": "Volta", "tu": "Turing",
+                       "ga": "Ampere", "ad": "Ada"}
+
+
+def expected_nvidia_series(gpu_blob: str) -> tuple[str, str]:
+    """(package, family-name) the detected chip wants, or ("", "") if unknown.
+
+    Keyed on the chip code rather than the marketing name — "GK107M" is
+    unambiguous where "GeForce GT 730M" is not.
+    """
+    m = _NVIDIA_CHIP_RE.search(gpu_blob)
+    if not m:
+        return "", ""
+    prefix = m.group(1).lower()
+    return (_NVIDIA_CHIP_SERIES.get(prefix, "nvidia"),
+            _NVIDIA_FAMILY_NAME.get(prefix, ""))
+
+
+def dkms_kernels(status_lines: Sequence[str],
+                 installed_kernels: Sequence[str] = ()) -> dict[str, str]:
+    """Map kernel release -> module state from ``dkms status`` output.
+
+    dkms has shipped two column layouts ("nvidia/470, KVER, arch: state" and
+    "nvidia, 470, KVER, arch: state"), so the kernel column is identified by
+    matching the set of kernels actually present under /lib/modules when it is
+    known, falling back to the field before the architecture.
+    """
+    known = set(installed_kernels)
+    found: dict[str, str] = {}
+    for line in status_lines:
+        head, _, state = line.partition(":")
+        fields = [f.strip() for f in head.split(",")]
+        if len(fields) < 2:
+            continue
+        kver = ""
+        for f in fields[1:]:
+            if f in known:
+                kver = f
+                break
+        if not kver:
+            # no /lib/modules listing available: arch is last, kernel precedes it
+            kver = fields[-2] if len(fields) >= 3 else fields[1]
+        if kver:
+            found[kver] = state.strip() or "unknown"
+    return found
+
 
 def cmd_gpu(xbps, config: Config, out=print, run=_run) -> int:
     """Read-only GPU/driver advisory: detect the card, report the installed
@@ -1319,7 +1371,21 @@ def cmd_gpu(xbps, config: Config, out=print, run=_run) -> int:
             out(f"    kernel module loaded: nvidia {ver}")
         except OSError:
             out("    kernel module: nvidia not loaded")
-        out("    " + _NVIDIA_LEGACY_HINT)
+
+        # The series hint is a 300-character wall; it earns its place only when
+        # something looks wrong. Confirm in one line when the installed series
+        # matches the detected chip, and print the full table otherwise.
+        want, family = expected_nvidia_series(blob)
+        if want and drv:
+            if any(d == want or d.startswith(want + "-") for d in drv):
+                out(f"    driver series matches this card"
+                    + (f" ({family} -> {want})" if family else f" ({want})"))
+            else:
+                out(f"    WARNING: this looks like a {family or 'newer'} card, which "
+                    f"wants {want} — installed: {', '.join(drv)}.")
+                out("    " + _NVIDIA_LEGACY_HINT)
+        else:
+            out("    " + _NVIDIA_LEGACY_HINT)
     elif "amd" in blob or "ati" in blob or "radeon" in blob:
         out("\nAMD card — driver is Mesa (amdgpu/RADV), no proprietary package "
             "needed; it updates with the normal system Update.")
@@ -1330,18 +1396,54 @@ def cmd_gpu(xbps, config: Config, out=print, run=_run) -> int:
     # DKMS health (applies to any out-of-tree driver, nvidia*-dkms included)
     try:
         ds = _lines(run(["dkms", "status"]))
-        if ds:
-            out(f"\nDKMS modules ({len(ds)}):")
-            for l in ds:
-                out("    " + l)
-            if any("installed" not in l.lower() for l in ds):
-                out("    warning: a DKMS module is NOT 'installed' — it may be "
-                    "missing for the running kernel (rebuild: sudo "
-                    "xbps-reconfigure -f <driver>-dkms).")
-        else:
-            out("\nDKMS: no out-of-tree modules (driver is in-tree or absent).")
     except OSError:
-        pass
+        ds = []
+    try:
+        kernels = [k for k in _lines(run(["ls", "-1", "/lib/modules"])) if k]
+    except OSError:
+        kernels = []
+    try:
+        running = os.uname().release
+    except (AttributeError, OSError):
+        running = ""
+    if ds:
+        # Which leftover kernels are merely spares? Lets the list say why a
+        # build exists for a kernel you may be about to purge.
+        try:
+            spares = {k.kver for k in _kernel_inventory(config, run)
+                      if k.role == "removable"}
+        except OSError:
+            spares = set()
+        out(f"\nDKMS modules ({len(ds)}):")
+        for l in ds:
+            note = ""
+            if running and running in l:
+                note = "   <- running kernel"
+            elif any(s in l for s in spares):
+                note = "   (superseded kernel — removable, see Clean up)"
+            out("    " + l + note)
+        if any("installed" not in l.lower() for l in ds):
+            out("    warning: a DKMS module is NOT 'installed' — it may be "
+                "missing for the running kernel (rebuild: sudo "
+                "xbps-reconfigure -f <driver>-dkms).")
+
+        # The check this panel claimed to perform but did not: an installed
+        # kernel with NO build at all. Listing what DKMS *has* never reveals
+        # what is *missing*, and the consequence is losing the proprietary
+        # driver the moment you boot that kernel. (Live find: nvidia470 has no
+        # module for the installed 6.18 series.)
+        built = dkms_kernels(ds, kernels)
+        gaps = [k for k in kernels if k not in built]
+        for k in gaps:
+            out(f"    WARNING: kernel {k} has NO out-of-tree module built — "
+                "booting it would leave you on the in-tree driver "
+                "(nouveau/modesetting for NVIDIA).")
+        if gaps:
+            out("    A legacy driver series usually cannot build against a much "
+                "newer kernel; rebuild attempt: sudo xbps-reconfigure -f "
+                "<driver>-dkms")
+    else:
+        out("\nDKMS: no out-of-tree modules (driver is in-tree or absent).")
 
     out("")
     return EXIT_OK
