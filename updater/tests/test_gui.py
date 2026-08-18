@@ -187,13 +187,11 @@ class HelpTextTests(unittest.TestCase):
             self.assertIn(tier, html)
 
     def test_frames_the_project_as_an_overlay_not_a_distro(self):
-        """Cachy-Void is added to a Void the user installed THEMSELVES; it never
-        supplies the base system. The first draft said 'Cachy-Void is stock Void
-        Linux plus a performance overlay', which reads as a distro handing you
-        Void a second time (owner's correction)."""
+        """It is an overlay FOR Void — it does not ship Void. An early draft
+        said 'stock Void Linux plus a performance overlay', which reads as a
+        distro handing you Void a second time."""
         html = self.mod.HELP_HTML
-        self.assertIn("overlay for the Void Linux you installed", html)
-        self.assertIn("does not supply or replace the base system", html)
+        self.assertIn("performance overlay for Void Linux", html)
         self.assertNotIn("plus a performance overlay", html)
 
     def test_names_the_identity_specifics(self):

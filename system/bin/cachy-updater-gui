@@ -162,11 +162,10 @@ QToolTip {{
 # this window instead of restating it.
 HELP_HTML = f"""
 <h3 style="color:{ACCENT}; margin:0 0 6px 0;">What this updater does</h3>
-<p>Cachy-Void is a <b>performance overlay for the Void Linux you installed
-yourself</b>. It does not supply or replace the base system — your Void stays
-upstream Void, and the overlay adds tuning, a curated set of locally compiled
-packages, and (optionally) a BORE kernel on top of it. This updater keeps both
-sides current, grouped the way the pending list is:</p>
+<p>Cachy-Void is a <b>performance overlay for Void Linux</b>. Your base system
+stays upstream Void; the overlay adds tuning, a curated set of locally compiled
+packages, and (optionally) a BORE kernel. This updater keeps both current,
+grouped the way the pending list is:</p>
 
 <p><b style="color:{FG}">[1] System (upstream Void)</b><br>
 Everything installed from Void's own binary repositories — desktop, drivers,
