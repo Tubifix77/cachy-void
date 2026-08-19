@@ -41,7 +41,29 @@ else C=""; K=""; W=""; Z=""; fi
 log(){ printf '%s==>%s %s\n' "$C" "$Z" "$*"; }
 ok(){  printf '%s ok%s %s\n' "$K" "$Z" "$*"; }
 warn(){ printf '%swarn%s %s\n' "$W" "$Z" "$*" >&2; }
-bak(){ [ -e "$1" ] && [ ! -e "$1.pre-cachy.bak" ] && cp -a "$1" "$1.pre-cachy.bak"; }
+# bak FILE — remember FILE's pre-branding state, exactly once.
+#
+# The absent-marker half is not decoration. A config file the desktop has not
+# written yet does not exist on a fresh install, so a plain "back it up if it is
+# there" records nothing — and then the NEXT run happily backs up the file we
+# ourselves just branded. --remove then "restores" our own look and reports
+# success. That is precisely what happened with kdeglobals: ColorScheme survived
+# a remove. Recording "this did not exist" makes --remove delete it instead.
+bak(){
+    if [ -e "$1" ]; then
+        [ -e "$1.pre-cachy.bak" ] || [ -e "$1.pre-cachy.absent" ] || cp -a "$1" "$1.pre-cachy.bak"
+    else
+        [ -e "$1.pre-cachy.bak" ] || : > "$1.pre-cachy.absent"
+    fi
+}
+# unbak FILE — put FILE back the way bak found it.
+unbak(){
+    if [ -e "$1.pre-cachy.bak" ]; then
+        mv -f "$1.pre-cachy.bak" "$1"; rm -f "$1.pre-cachy.absent"; ok "restored $1"
+    elif [ -e "$1.pre-cachy.absent" ]; then
+        rm -f "$1" "$1.pre-cachy.absent"; ok "removed $1 (it did not exist before branding)"
+    fi
+}
 
 [ "$(id -u)" -ne 0 ] || { warn "run as your normal user, not root (Plasma config is per-user)"; exit 1; }
 command -v kwriteconfig6 >/dev/null 2>&1 || { warn "KDE Plasma (kwriteconfig6) not found — nothing to do"; exit 1; }
@@ -50,13 +72,12 @@ command -v kwriteconfig6 >/dev/null 2>&1 || { warn "KDE Plasma (kwriteconfig6) n
 if [ "${1:-}" = "--remove" ]; then
     log "restoring pre-branding Plasma config from backups"
     for f in "$CFG/kdeglobals" "$CFG/kwinrc" "$CFG/konsolerc" "$CFG/plasmarc" "$CFG/kcminputrc"; do
-        [ -e "$f.pre-cachy.bak" ] && mv -f "$f.pre-cachy.bak" "$f" && ok "restored $f"
+        unbak "$f"
     done
     rm -f "$SHARE/color-schemes/$SCHEME.colors"
     rm -f "$SHARE/konsole/$SCHEME.colorscheme" "$SHARE/konsole/$SCHEME.profile"
     rm -f "$CFG/autostart/cachy-branding-plasma-firstrun.desktop"
-    [ -e "$CFG/Kvantum/kvantum.kvconfig.pre-cachy.bak" ] && \
-        mv -f "$CFG/Kvantum/kvantum.kvconfig.pre-cachy.bak" "$CFG/Kvantum/kvantum.kvconfig"
+    unbak "$CFG/Kvantum/kvantum.kvconfig"
     ok "removed — log out and back in for Plasma to reload."
     exit 0
 fi
@@ -215,7 +236,7 @@ IntensityAmount=0.1
 IntensityEffect=0
 EOF
 
-bak "$CFG/kdeglobals"; bak "$CFG/kwinrc"; bak "$CFG/konsolerc"; bak "$CFG/plasmarc"
+for _f in kdeglobals kwinrc konsolerc plasmarc kcminputrc; do bak "$CFG/$_f"; done
 
 # plasma-apply-colorscheme both merges the scheme into kdeglobals AND tells a
 # running session to reload it. Without a session it can refuse, so fall back to

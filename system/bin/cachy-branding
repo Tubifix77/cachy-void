@@ -25,7 +25,17 @@ else C=""; K=""; W=""; Z=""; fi
 log(){ printf '%s==>%s %s\n' "$C" "$Z" "$*"; }
 ok(){ printf '%s ok%s %s\n' "$K" "$Z" "$*"; }
 warn(){ printf '%swarn%s %s\n' "$W" "$Z" "$*" >&2; }
-bak(){ [ -e "$1" ] && [ ! -e "$1.pre-cachy.bak" ] && cp -a "$1" "$1.pre-cachy.bak"; }
+# bak FILE — remember FILE's pre-branding state, exactly once. If FILE does not
+# exist yet, record THAT (a marker), because otherwise a later run backs up the
+# file we branded ourselves and --remove "restores" our own look. See the same
+# comment in cachy-branding-plasma, where a live remove proved it.
+bak(){
+    if [ -e "$1" ]; then
+        [ -e "$1.pre-cachy.bak" ] || [ -e "$1.pre-cachy.absent" ] || cp -a "$1" "$1.pre-cachy.bak"
+    else
+        [ -e "$1.pre-cachy.bak" ] || : > "$1.pre-cachy.absent"
+    fi
+}
 # spawn CMD [ARGS...] — start a desktop daemon fully detached from this script.
 # Two things have to be true or the script never returns, which is how this was
 # found: `cachy-branding | tail` sat there forever with all its work already done.
@@ -88,7 +98,11 @@ if [ "${1:-}" = "--remove" ]; then
              "$CFG"/Kvantum/kvantum.kvconfig "$CFG"/openbox/rc.xml \
              "$CFG"/lxqt/lxqt-powermanagement.conf "$CFG"/gtk-3.0/settings.ini \
              "$CFG"/pcmanfm-qt/lxqt/settings.conf "$CFG"/qterminal.org/qterminal.ini; do
-        [ -e "$f.pre-cachy.bak" ] && mv -f "$f.pre-cachy.bak" "$f" && ok "restored $f"
+        if [ -e "$f.pre-cachy.bak" ]; then
+            mv -f "$f.pre-cachy.bak" "$f"; rm -f "$f.pre-cachy.absent"; ok "restored $f"
+        elif [ -e "$f.pre-cachy.absent" ]; then
+            rm -f "$f" "$f.pre-cachy.absent"; ok "removed $f (it did not exist before branding)"
+        fi
     done
     # shell: strip our bash block; drop/restore our zsh rc; switch login shell back to bash
     [ -f "$HOME/.bashrc" ] && sed -i '/# >>> cachy-void >>>/,/# <<< cachy-void <<</d' "$HOME/.bashrc"
@@ -129,6 +143,7 @@ PY
         else
             rm -f "$CFG/$_obf"
         fi
+        rm -f "$CFG/$_obf.pre-cachy.absent"
     done
     command -v papirus-folders >/dev/null 2>&1 && sudo papirus-folders -C blue -t Papirus-Dark 2>/dev/null
     pkill -x picom 2>/dev/null; pkill -x plank 2>/dev/null; pkill -x conky 2>/dev/null; pkill -x xcape 2>/dev/null; pkill -x tint2 2>/dev/null
