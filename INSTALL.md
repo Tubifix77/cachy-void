@@ -727,6 +727,30 @@ Notes:
 
 ---
 
+### 14.1 The bare "Openbox" session
+
+Installing LXQt also registers a plain **Openbox** entry in the login screen — a
+byproduct of LXQt using openbox as its window manager, not a desktop you chose.
+Stock openbox draws *nothing* there (no panel, no wallpaper), so branding finishes
+it rather than leaving a black screen (`branding.md` §5.9). Because a bare window
+manager never reads `/etc/xdg/autostart`, the session must start explicitly what a
+desktop provides invisibly — `cachy-branding` writes an autostart that launches:
+
+| Piece | Why it must be listed |
+|---|---|
+| `xsettingsd` | Serves the icon/GTK theme. Without it Qt and GTK apps resolve **no** icon theme and tray icons render blank. |
+| `pipewire` | **Without it the session has no audio at all** (`pactl` → "Connection refused"). Starting `pipewire` alone brings up wireplumber, exactly as LXQt's XDG entry does. |
+| polkit agent, notification daemon | Otherwise GUI privilege prompts fail silently and notifications go nowhere. |
+| `tint2` | Taskbar + system tray + clock — without a taskbar a launched window can hide behind another. |
+| `nm-tray`, `pasystray`, `udiskie`, `cbatticon` | Network, volume, removable media, battery — the tray LXQt gets from panel plugins. The battery one starts only where a battery exists. |
+| `feh`, `picom`, `conky` | Wallpaper, compositor, telemetry. |
+
+`deploy.sh --with-branding` installs these (all optional — a missing one costs its
+icon, never the session). Nothing here runs under LXQt, which has its own panel
+plugins and XDG autostart.
+
+---
+
 ## 15. Network: the WiFi picker & the `dhcpcd` swap (opt-in)
 
 Void ships **no network GUI**. On a laptop that roams between networks that's the piece
