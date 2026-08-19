@@ -82,6 +82,10 @@ readonly MANGOHUD_CONF="/etc/xdg/MangoHud/MangoHud.conf"
 # §branding: void-tactical LXQt desktop (opt-in, --with-branding). The applier
 # runs per-user (cachy-branding); deploy.sh only installs packages + assets.
 readonly PKG_BRANDING="kvantum papirus-icon-theme papirus-folders plank rofi conky picom python3-PyQt5"
+# xsettingsd: an XSETTINGS manager for the BARE Openbox session only. A full
+# desktop provides one; without it Qt/GTK apps there resolve no icon theme and
+# tray applets render blank (verified live). Optional — absence only costs icons.
+readonly PKG_XSETTINGSD="xsettingsd"
 # §network: opt-in laptop WiFi picker (--with-networkmanager). nm-tray is the
 # Qt/LXQt-native applet whose icon themes properly (nm-applet is GNOME's and renders
 # its own dark, un-themeable icon — never install that one).
@@ -685,6 +689,7 @@ install_branding() {
                     && ok "qterminal void-tactical scheme -> $qcs/color-schemes"; break; }
         done
     fi
+    ensure_pkg "$PKG_XSETTINGSD" optional
     install_file "$SYS_DIR/bin/cachy-branding" "$CACHY_BRANDING_BIN" 0755 root root
     install_greeter        # SDDM login screen (system-level; needs root, done here)
     log "branding toolkit installed — apply the look by running (as your user): cachy-branding"

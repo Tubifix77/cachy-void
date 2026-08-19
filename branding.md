@@ -435,6 +435,24 @@ its built-in greeter — login is never at risk.
 
 LXQt uses openbox as its WM, so the greeter also lists a bare **Openbox** session.
 
+> **THE ONE SANCTIONED EXCEPTION (owner's rule, 2026-08-19).** Branding a desktop
+> the user did not ask for happens here and nowhere else. The rule that permits it
+> is narrow: *an environment that the chosen desktop itself ships as a byproduct
+> session.* LXQt installs openbox and openbox registers its own greeter entry, so
+> the user ends up with a session they never chose and cannot remove — leaving it
+> as a black screen is a worse answer than branding it. It is also a point of
+> pride rather than an imposition: an LXQt user should see that their byproduct
+> session was finished to the same standard, not forgotten.
+>
+> **It does not generalise to standalone window managers.** i3, dwm, sway,
+> awesome and friends are *chosen* environments with their own conventions and
+> configs, and they are not gaming platforms — this is a gaming overlay. We ship
+> nothing to them beyond the Tier-1 assets any Qt app picks up. Likewise **no
+> dock in a WM session**: Plank belongs to the LXQt desktop, never here — a WM
+> user gets a taskbar because windows must be findable, not a dock because it
+> looks nice. If another desktop is ever added that also ships a byproduct
+> session, the same rule extends to it; otherwise this list stays at one.
+>
 > **It is a byproduct, not a chosen desktop.** Nobody installs LXQt in order to get
 > an Openbox session — it appears because LXQt's window manager also registers its
 > own session entry. That is why branding it is in scope at all: the same
@@ -450,9 +468,18 @@ runs; right-click gives its root menu), but it reads as "broken" to anyone who
 selects it by accident.
 
 `cachy-branding` therefore writes a minimal `~/.config/openbox/autostart` so the
-bare session is usable and on-brand without dragging in a whole DE: wallpaper (via
-`feh`), the Picom compositor, a **tint2 panel**, the Conky telemetry, and — when
-installed — **nm-tray** — apps come from the openbox root menu or Super+Space (rofi).
+bare session is usable and on-brand without dragging in a whole DE: **xsettingsd**
+(first — see below), wallpaper (via `feh`), the Picom compositor, a **tint2
+panel**, the Conky telemetry, and — when installed — **nm-tray** — apps come from the openbox root menu or Super+Space (rofi).
+
+**Why xsettingsd comes first:** a full desktop runs an XSETTINGS manager (LXQt
+does); a bare WM does not. Without one, Qt and GTK apps resolve **no icon theme**,
+so `nm-tray` docks into the tray correctly and then draws *nothing* — an invisible
+click target, which is worse than an absent one. Verified live 2026-08-19: with
+`xsettingsd` serving `Net/IconThemeName`, the same applet renders its icon in
+`--fg`. `cachy-branding` writes `~/.config/xsettingsd/xsettingsd.conf` from the
+icon/GTK themes it just chose, and `deploy.sh --with-branding` installs the
+package (optional — its absence costs only icons).
 
 **Why nm-tray must be listed explicitly:** it ships an XDG autostart entry, and a
 bare Openbox session never runs those — Void's `/etc/xdg/openbox/autostart` is
