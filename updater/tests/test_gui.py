@@ -142,29 +142,29 @@ class PinBannerTests(unittest.TestCase):
         self.assertGreater(bar.maximum(), 0, "no scroll range to test")
         self.assertEqual(bar.value(), bar.maximum())
 
-    def test_status_pane_stays_at_the_top(self):
-        """The status pane is a document, not a log: [1] System is at the top and
-        must stay visible. Qt's default did the opposite — it dragged the pane
-        down to the last tier on every refresh."""
-        for i in range(300):
-            self.w._append_tail(self.w.status, f"line {i}")
-        self.assertGreater(self.w.status.verticalScrollBar().maximum(), 0)
-        self.assertEqual(self.w.status.verticalScrollBar().value(), 0)
+    def test_both_panes_follow_the_newest_line(self):
+        """One rule for both panes (owner's call): text just written is text you
+        want to see. Splitting the behaviour — Output following, the pending list
+        pinned to line 1 — only moved the complaint between windows, because the
+        status text is taller than its pane."""
+        for pane in (self.w.out, self.w.status):
+            for i in range(300):
+                self.w._append_tail(pane, f"line {i}")
+            self.app.processEvents()
+            bar = pane.verticalScrollBar()
+            self.assertGreater(bar.maximum(), 0, "no scroll range to test")
+            self.assertEqual(bar.value(), bar.maximum())
 
-    def test_scrolling_up_to_read_is_respected(self):
-        for i in range(300):
-            self.w._append_tail(self.w.out, f"line {i}")
-        bar = self.w.out.verticalScrollBar()
-        bar.setValue(0)                       # the user goes back to read
-        self.w._append_tail(self.w.out, "new line arrives")
-        self.assertEqual(bar.value(), 0)      # ...and is not yanked away
+    def test_scrolling_up_is_respected_in_both_panes(self):
+        """The one exception: a reader mid-scroll is never yanked to the bottom."""
+        for pane in (self.w.out, self.w.status):
+            for i in range(300):
+                self.w._append_tail(pane, f"line {i}")
+            pane.verticalScrollBar().setValue(0)
+            self.w._append_tail(pane, "new arrival")
+            self.app.processEvents()
+            self.assertEqual(pane.verticalScrollBar().value(), 0)
 
-    def test_completion_line_is_visible_without_scrolling(self):
-        for i in range(300):
-            self.w._append_tail(self.w.out, f"line {i}")
-        self.w._finished(self.w.out, 0, None)
-        bar = self.w.out.verticalScrollBar()
-        self.assertEqual(bar.value(), bar.maximum())
 
     def test_clean_previews_before_it_can_remove_anything(self):
         """Agreeing to 'orphans and cache' is agreeing to a category; the dialog

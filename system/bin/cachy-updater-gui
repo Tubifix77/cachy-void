@@ -477,25 +477,28 @@ class Updater(QWidget):
         self.proc.start(CLI, args)
 
     def _append_tail(self, target, text):
-        """Append with an EXPLICIT scroll policy per pane.
+        """Append, keeping the view on the newest line — in BOTH panes.
 
-        The two panes want opposite things, and leaving it to Qt's default got
-        both wrong: the Output pane is a log — you watch its newest line, and
-        having to scroll down to discover a command had finished is useless —
-        while the status pane is a document whose top matters ([1] System …),
-        yet it was being dragged down to the last tier on every refresh.
+        One rule, deliberately. An earlier version split the behaviour (Output
+        followed its tail while the pending list was pinned to its first line) on
+        the theory that a status document should be read top-down. In practice
+        that just moved the complaint from one pane to the other: the pending
+        list is taller than its pane, so its last tiers sat permanently out of
+        sight, and it read as the same bug having changed windows. Owner's call
+        (2026-08-19): text you just wrote is text you want to see — both panes
+        follow.
 
-        So: Output follows its tail, unless you have scrolled up to read
-        something (then you are left alone); the status pane never moves on its
-        own."""
+        The exception stays: if you have scrolled up to read something, nothing
+        yanks you back down."""
         bar = target.verticalScrollBar()
         before = bar.value()
         at_bottom = before >= bar.maximum() - 4
         target.appendPlainText(text)
-        if target is self.out and at_bottom:
-            bar.setValue(bar.maximum())          # follow the newest line
+        if at_bottom:
+            bar.setValue(bar.maximum())      # follow the newest line
         else:
-            bar.setValue(before)                 # stay where the reader is
+            bar.setValue(before)             # a reader is mid-scroll: leave them
+
 
     def _drain(self, target):
         chunk = bytes(self.proc.readAll()).decode("utf-8", "replace")
