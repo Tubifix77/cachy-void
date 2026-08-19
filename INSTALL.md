@@ -801,6 +801,15 @@ anything; the first login just finishes the job. To apply it by hand instead:
 cachy-branding-plasma
 ```
 
+**Pick the right session at login.** Plasma 6 is Wayland-first, so installing
+`plasma-workspace-x11` alongside it means your login screen offers both
+**Plasma (Wayland)** and **Plasma (X11)**. On a legacy NVIDIA box (driver 470 or
+older, like the Optimus testbed) choose **Plasma (X11)**: KWin's Wayland session
+needs GBM, which those drivers do not provide, so the Wayland entry will not come
+up. The applier detects that driver and says so when it runs, because a black
+screen on first login reads as "installing a desktop broke my machine" when it is
+really just the wrong entry in a menu.
+
 Reverting is `cachy-branding --remove` (which reverts every branded desktop), or
 `cachy-branding-plasma --remove` for Plasma alone.
 

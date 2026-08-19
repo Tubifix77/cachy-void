@@ -637,6 +637,14 @@ rather than guessing:
 **Rule this establishes:** every autostart entry an applier writes must name the
 session it belongs to. An ungated entry is a bug the day a second desktop appears.
 
+**One more trap, and it is not ours to fix — only to name.** Plasma 6 is
+Wayland-first, so a box with `plasma-workspace-x11` installed offers both
+*Plasma (Wayland)* and *Plasma (X11)* at login. KWin's Wayland compositor needs
+GBM, which legacy NVIDIA drivers (<= 470) do not provide, so on such hardware the
+Wayland entry cannot come up. The applier detects the driver and says which entry
+to pick, because a black screen at first login is otherwise read as "the second
+desktop broke my machine".
+
 ---
 
 ## 6. Scope & rules

@@ -386,6 +386,23 @@ fi
 # Rather than leave the first Plasma login half-branded, arm a one-shot autostart
 # that re-runs this applier INSIDE the session and then deletes itself. It is
 # gated OnlyShowIn=KDE, so it can never fire in LXQt or anywhere else.
+# --- the session-picker trap on legacy NVIDIA ------------------------------
+# Plasma 6 is Wayland-first and Void follows upstream, so a machine that has
+# plasma-workspace-x11 installed offers BOTH "Plasma (Wayland)" and
+# "Plasma (X11)" at the login screen. KWin's Wayland compositor needs GBM, which
+# the legacy NVIDIA drivers (<= 470) do not provide — so on those machines the
+# Wayland entry is a black screen waiting to happen, and the user quite
+# reasonably reads that as "installing a second desktop broke my computer".
+# Saying it once, here, costs nothing and prevents exactly that conclusion.
+_nv="$(cat /sys/module/nvidia/version 2>/dev/null)"
+if [ -n "$_nv" ] && [ "${_nv%%.*}" -le 470 ] 2>/dev/null \
+   && [ -f /usr/share/wayland-sessions/plasma.desktop ]; then
+    warn "this box runs the legacy NVIDIA driver ($_nv), and your login screen now"
+    warn "  offers both 'Plasma (Wayland)' and 'Plasma (X11)'."
+    warn "  Pick 'Plasma (X11)'. KWin's Wayland session needs GBM, which <=470 does"
+    warn "  not provide, so the Wayland entry will not come up on this hardware."
+fi
+
 HOOK="$CFG/autostart/cachy-branding-plasma-firstrun.desktop"
 if $LIVE; then
     rm -f "$HOOK"
