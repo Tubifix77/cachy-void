@@ -88,7 +88,7 @@ desktop ships its own network applet (Plasma → `plasma-nm`), prefer it over
 
 ---
 
-## 3. Updater window — remaining gaps
+## 3. Updater — remaining gaps
 
 - **Staged-candidate readout.** The status pane shows the BORE pin, the
   known-good kernel and any drift, but not "candidate X is staged, awaiting its
@@ -99,6 +99,24 @@ desktop ships its own network applet (Plasma → `plasma-nm`), prefer it over
   unnecessary now that `get.sh` reduced installation to one pasted line.
 - **A lighter "daily" mode.** Run the `-Su` + service-cycle and *prompt* before
   any long compile, instead of doing the whole build/deploy in one `--commit`.
+- **Verify the new kernel is actually bootable.** Nothing currently checks the
+  step between "kernel built and installed" and "kernel present in the boot
+  menu". On a GRUB-owning host that step is Void's own job — the `grub` package's
+  `/etc/kernel.d/post-install/50-grub` hook regenerates `grub.cfg` on every
+  kernel install, the same mechanism whose sibling `10-dkms` is proven to fire
+  for `linux-cachy` — so the updater must **not** regenerate anything (see
+  `rejected-ideas.md`). What it *can* do is confirm the outcome: after installing
+  a kernel, check that `grub.cfg` contains an entry for the new version and say
+  so, or warn if it does not. The engine already parses `grub.cfg` for §8.6
+  staging, so this is a read-only check needing no new privileges, and it catches
+  the failure modes that today leave a kernel built but unbootable with nobody
+  the wiser (a hook that errored, `/boot` not mounted at install time).
+- **Say the multi-boot truth out loud.** On a foreign-bootloader host (the
+  `external` class — a dual-boot gamer's normal case) new kernels *do* boot
+  automatically, via the evergreen `/boot/vmlinuz-current` symlink that the
+  `99-boot-symlinks` hook repoints; what is impossible is *choosing* an older one
+  without regenerating the other OS's menu. The updater should state that plainly
+  instead of leaving the user to infer it from a "bookkeeping-only" message.
 
 ---
 
@@ -114,13 +132,6 @@ desktop ships its own network applet (Plasma → `plasma-nm`), prefer it over
   is exactly how the `game-devices-udev` spec bug happened. This is the *install*
   side; invariant I6 governs the build side (never cross-build i686 with
   `x86-64-v*`).
-- **Give Void its own GRUB (opt-in).** `efibootmgr -o <void>,<rest>` to reorder
-  the UEFI boot order, then `os-prober` + `grub-mkconfig` so Void's GRUB absorbs
-  the other OSes. This is the **missing precondition for §8.6 one-shot kernel
-  staging** — the reason staging degrades to the `external` class on the test
-  box. Deliberately *not* done there: Debian-owns-GRUB is that machine's escape
-  hatch. Worth an INSTALL.md "multi-boot: give Void the bootloader" section for
-  anyone who wants the one-shot boot test.
 
 ---
 
