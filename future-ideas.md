@@ -26,7 +26,20 @@ else.
   wallpaper, terminal scheme, SDDM greeter, icon set). Already applies unchanged
   under LXQt, Plasma or a lone Openbox.
 - **Tier 2 — one small applier per desktop**, written against that desktop's own
-  config mechanism and nothing else. LXQt exists (`cachy-branding`).
+  config mechanism and nothing else. **Two already exist**, both in
+  `cachy-branding` and both tested on real hardware: **LXQt** (panel, session,
+  Kvantum) and the **bare Openbox session** (branding.md §5.9) — so Plasma would
+  be the *third* environment, not the first attempt at a second.
+
+  The Openbox work is worth reading before writing another applier, because it
+  produced the transferable lesson: an applier's real job is covering *what the
+  environment does not provide*. Stock Openbox draws nothing, so a user who picks
+  that session gets a black screen and reads it as broken; it needed a wallpaper,
+  a compositor, a **tint2 panel** (without a taskbar a launched window can open
+  behind another and reads as "I clicked Terminal and nothing happened") and a
+  curated root menu, since Openbox's stock one lists ~48 apps from other desktops.
+  Plasma is the opposite case — it provides all of that itself — which is exactly
+  why its applier is smaller: colours, Kvantum bridge, wallpaper, Konsole scheme.
 
 **Next target: KDE Plasma.** CachyOS's flagship, Qt (so every Tier-1 asset
 transfers), and what most Linux gamers run. Scope: a `.colors` scheme, the

@@ -22,7 +22,7 @@ The base system stays 100% upstream Void binaries. Only a short, curated overlay
 | **Gaming layer** | `cachy-game` launch wrapper (GameMode → PRIME → optional gamescope → game) with opt-in MangoHud, **gamescope** (frame limiting/FSR) and **vkBasalt** toggles, `earlyoom` guarding the aggressive zram posture, and `cachy-proton` to install Proton-CachyOS. |
 | **Maintenance & GPU** | `--clean` (orphans + package cache; **never** kernels, and it refuses a sweep containing a package the overlay built), `--gpu` (detected card, driver + pending update, module actually loaded, and a warning for any installed kernel with **no** out-of-tree module built). |
 | **btrfs rollback net** | Optional pre-deploy read-only snapshots taken right before each deploy (`[snapshot]`), on top of the always-converges recovery path. |
-| **Optional desktop look** | `void-tactical` — a low-key obsidian/green identity (Kvantum + panel + Conky telemetry + wallpaper + a branded SDDM login screen), fully reversible. The desktop *integration* is currently written for **LXQt**; everything else in this table is desktop-agnostic and runs under any session, a bare WM, or headless. |
+| **Optional desktop look** | `void-tactical` — a low-key obsidian/green identity (Kvantum + panel + Conky telemetry + wallpaper + a branded SDDM login screen), fully reversible. The desktop *integration* covers **LXQt** and a **bare Openbox session** (which stock Openbox leaves as a black screen — the applier adds wallpaper, panel, compositor and a curated root menu); everything else in this table is desktop-agnostic and runs under any session, a bare WM, or headless. |
 | **Void-native** | runit services (`zramen`, `cachy-health`), a narrow sudoers boundary, no systemd units or timers anywhere. |
 
 ---
