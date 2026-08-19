@@ -386,18 +386,31 @@ for _n in ("drive-removable-media-usb-panel", "drive-removable-media-usb-pendriv
     plain[_n] = (_BD + "/drive-removable-media-usb-pendrive.svg",
                  _BD + "/drive-removable-media.svg",
                  AD + "/drive-removable-media-symbolic.svg")
+# ...and the rest of udiskie's menu, from the same _icon_names table: 'eject' asks
+# for media-eject, and the tray falls back to media-optical/media-flash for those
+# drive types. Luv DOES ship all three, which is why they were easy to miss — it
+# ships them at #636363/#4d4d4d, i.e. dark grey on a dark panel (measured).
+_BA = "/usr/share/icons/breeze/actions/22"
+plain["media-eject"] = (_BA + "/media-eject.svg", AS + "/media-eject-symbolic.svg")
+plain["media-optical"] = (_BD + "/media-optical.svg", AD + "/media-optical-symbolic.svg")
+plain["media-flash"] = (_BD + "/media-flash.svg", _BD + "/drive-removable-media-usb-pendrive.svg")
 
 for name, cands in plain.items():
     src = next((c for c in cands if os.path.exists(c)), None)
     if src is None:
         continue
     body = lift(open(src).read())
-    for ctx in ("devices", "status"):
+    for ctx in ("devices", "status", "actions"):
         for sz in ("16", "22", "24", "32"):
             d = os.path.join(LVDST, ctx, sz)
             os.makedirs(d, exist_ok=True)
             open(os.path.join(d, name + ".svg"), "w").write(body)
             open(os.path.join(d, name + "-symbolic.svg"), "w").write(body)
+    # Luv may already ship this name in a context we do not write (media-eject
+    # lives in actions/), and that original wins the lookup, so our branded copy
+    # would never be seen. Overwrite every copy of the name the theme carries.
+    for _old in glob.glob(os.path.join(LVDST, "*", "*", name + ".svg")):
+        open(_old, "w").write(body)
 PY
     command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -f "$LVDST" 2>/dev/null
     [ -f "$LVDST/index.theme" ] && ICON_THEME="Luv-Void"
