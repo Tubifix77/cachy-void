@@ -74,6 +74,8 @@ readonly PKG_XZ="xz"                        # cachy-proton extracts .tar.xz rele
 readonly PKG_MULTILIB="void-repo-multilib"
 readonly PKG_MULTILIB_NONFREE="void-repo-multilib-nonfree"
 readonly PKG_MESA32="mesa-dri-32bit"        # verified name (NOT mesa-32bit-dri)
+readonly PKG_GLVND32="libglvnd-32bit"       # 32-bit GL dispatch; not pulled by the drivers
+readonly PKG_VULKAN32="vulkan-loader-32bit" # 32-bit DXVK talks to this loader
 readonly CACHY_GAME_WRAPPER="/usr/local/bin/cachy-game"
 readonly CACHY_PROTON_HELPER="/usr/local/bin/cachy-proton"
 readonly MANGOHUD_CONF="/etc/xdg/MangoHud/MangoHud.conf"
@@ -559,6 +561,12 @@ install_32bit_driver_libs() {
         log "32-bit driver libraries (Mesa: AMD/Intel/nouveau)"
         ensure_pkg "$PKG_MESA32" optional
     fi
+    # Neither mesa-dri-32bit nor nvidia*-libs-32bit depends on these (verified
+    # 2026-08-19), yet a 32-bit title needs both: the GL dispatch library, and the
+    # Vulkan loader that 32-bit DXVK talks to. Without the loader, 32-bit Proton
+    # games fail at Vulkan init with the driver apparently installed.
+    ensure_pkg "$PKG_GLVND32" optional
+    ensure_pkg "$PKG_VULKAN32" optional
 }
 
 install_gaming_userspace() {

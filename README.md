@@ -115,6 +115,7 @@ Everything the installer touches is recorded in a per-change **ledger** — insp
 | `--with-networkmanager` | `NetworkManager` + `nm-tray` (Qt WiFi picker), enables the NM service, **disables `dhcpcd`** (they conflict) |
 | `--with-grub` | Edits `/etc/default/grub` (ledger-backed): `GRUB_DEFAULT=saved` (required for one-shot kernel boot-tests) + `usbcore.autosuspend=-1` |
 | `--with-schedule` | Enables the daily unattended-update runit service |
+| `--no-multilib` | *Opts **out*** of the default 32-bit gaming support (multilib repo + 32-bit driver/loader libs). Only useful if you never run 32-bit titles or manage repositories yourself |
 
 The kernel (`linux-cachy`) and the compiled overlay live in **your** `void-packages` checkout and local repo — they're ordinary XBPS packages, visible via `xbps-query` like everything else.
 

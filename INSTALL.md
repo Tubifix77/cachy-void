@@ -178,6 +178,8 @@ sudoers fragment is validated with `visudo -c` before it is ever activated.
 | `/etc/xbps.d/00-cachy-overlay.conf` | Registers the local optimized repo ahead of the mirror. |
 | `<void-packages>/etc/conf` | Compiler profile (`-march=… -O3 -pipe`, ccache). |
 | `/etc/sysctl.d/99-cachy-gaming.conf` | Gaming sysctl profile. |
+| `void-repo-multilib` (+ `-nonfree` if your host uses nonfree) | **Packages, not files.** Enables Void's 32-bit repository so Steam/Proton and the 32-bit overlays work; ledger-recorded, removed again by `--uninstall`. Skip with `--no-multilib` (§12). |
+| 32-bit driver libs: `nvidia<series>-libs-32bit` *or* `mesa-dri-32bit`, plus `libglvnd-32bit` + `vulkan-loader-32bit` | Chosen from the driver actually installed. Optional installs — a miss warns rather than failing the deploy. |
 | `/etc/udev/rules.d/60-ioschedulers.rules` | Per-medium I/O schedulers. |
 | `/etc/udev/rules.d/{20-audio-pm,40-rtaudio-perms,50-sata-alpm}.rules` | CachyOS-settings parity (§3.3): HDA power-save off on AC (anti-crackle), RT-audio timer/latency device perms, SATA ALPM off. |
 | `/etc/modprobe.d/99-gaming-input.conf`, `/etc/modules-load.d/cachy.conf` | Input polling + BBR module. |
@@ -454,7 +456,15 @@ you never compile them.
 > one name is case-sensitive (`MangoHud-32bit`, capital M-H). See
 > [the game-devices-udev lesson](architecture.md).
 
-**1. Enable the multilib repositories** (as root):
+> **Steps 1–3 are done for you by `deploy.sh` (§3.4 of the spec).** The gaming
+> stage enables the multilib repository and installs the 32-bit driver libraries
+> for the *detected* GPU, plus the GL dispatch and Vulkan loader that no driver
+> package pulls on its own. This section is therefore a reference — read it if you
+> passed **`--no-multilib`**, if you want to check what landed, or if you are
+> setting a machine up by hand. Re-running `deploy.sh` is also a valid fix: the
+> step is idempotent and says "multilib repository already enabled".
+
+**1. Enable the multilib repositories** (automatic; manual equivalent as root):
 
 ```bash
 sudo xbps-install -Sy void-repo-multilib void-repo-multilib-nonfree
@@ -462,16 +472,22 @@ sudo xbps-install -S          # refresh the package index
 ```
 
 `void-repo-nonfree` (for the NVIDIA driver and Steam) is usually already enabled;
-add it the same way if not.
+add it the same way if not. `deploy.sh` adds the `-nonfree` multilib twin only if
+your host already uses nonfree — it matches your posture instead of imposing one.
 
-**2. Install the 32-bit graphics stack:**
+**2. Install the 32-bit graphics stack** (automatic):
 
 ```bash
 sudo xbps-install -Sy mesa-dri-32bit libglvnd-32bit vulkan-loader-32bit
 ```
 
-**3. Install the 32-bit NVIDIA libraries matching your *installed* driver series.**
-The 32-bit libs must be the **same series** as your 64-bit driver:
+`libglvnd-32bit` and `vulkan-loader-32bit` are **not** dependencies of any driver
+package (verified), and 32-bit DXVK fails at Vulkan init without the loader — so
+`deploy.sh` installs both regardless of which GPU you have.
+
+**3. Install the 32-bit NVIDIA libraries matching your *installed* driver series**
+(automatic — `deploy.sh` derives the series from the driver package you already
+have). The 32-bit libs must be the **same series** as your 64-bit driver:
 
 | Your 64-bit driver | 32-bit package |
 |---|---|
