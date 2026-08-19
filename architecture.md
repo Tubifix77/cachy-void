@@ -304,6 +304,26 @@ Apply: `sudo udevadm control --reload && sudo udevadm trigger`.
 
 ### 3.4 Gaming userspace layer (runtime)
 
+**32-bit support is a prerequisite, not an option (decided 2026-08-19).** Void ships
+64-bit libraries only; the Steam client itself is 32-bit and most Windows titles under
+Proton are, so the gaming stage **enables Void's `multilib` repository unconditionally**
+(`void-repo-multilib`, plus `-multilib-nonfree` only if the host already uses nonfree —
+we match its posture rather than imposing one) and installs the 32-bit driver libraries
+for the detected GPU (`nvidia<series>-libs-32bit` when a proprietary driver is installed,
+else `mesa-dri-32bit` — verified name, *not* `mesa-32bit-dri`).
+
+Why unconditional, and why not a prompt: without the repo the `-32bit` components below
+do not exist as far as xbps is concerned, so they were skipped with a single easily-missed
+warning — yielding a HUD that works in 64-bit games and silently does not in 32-bit ones.
+Void's `steam` package declares **zero** 32-bit dependencies (verified), so xbps will not
+repair this later either. For a *gaming* overlay the right answer is always yes, and a
+question whose answer is always yes is just an obstacle. Being wrong is cheap: the repo is
+a stock Void package that only drops a config file, it is ledger-recorded like any package
+we install, `--uninstall` removes it (disabling the repo again), and `--no-multilib` skips
+the step entirely. This does not widen the §4.1 sudo boundary — `deploy.sh` already runs
+as root; the *updater* gains nothing.
+
+
 The third leg of the performance stool: **BORE** tunes the *scheduler* (§2), **zram**
 tunes *memory* (§3.2), and this layer tunes the *per-game runtime* — non-kernel,
 non-persistent optimisations that apply only while a game runs. It is pure
@@ -362,7 +382,7 @@ Two upstream tools plus a composition wrapper:
   sibling `wqy-zenhei`, which Void does not package, so the packaged sibling is
   adopted instead — verified 2026-08-16). All are members of CachyOS's own
   gaming dependency sets (verified 2026-08-15/16) and stock Void packages — the
-  `future-ideas.md` §6 maintenance test passes by construction.
+  `future-ideas.md` §5 maintenance test passes by construction.
 - **`cachy-game`** — a launch wrapper that composes the offloader and gamemode:
   `gamemoderun` → `prime-run` (the NVIDIA PRIME offload, §6b) → optionally
   `gamescope --` → the game. It **skips any piece that is absent**, so it is

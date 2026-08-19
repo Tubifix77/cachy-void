@@ -13,7 +13,7 @@ would be nice" is not one of those conditions. If a reopening condition *is* met
 move the row into `future-ideas.md` rather than editing the verdict here.
 
 The selection rule these verdicts are measured against lives in
-[`future-ideas.md`](future-ideas.md) §6, because it governs new proposals.
+[`future-ideas.md`](future-ideas.md) §5, because it governs new proposals.
 
 ---
 
@@ -25,7 +25,7 @@ The selection rule these verdicts are measured against lives in
 | **sched-ext / scx userspace schedulers** | Same disposition — no Void packages, and BORE *is* the project's scheduler identity | Void packages it upstream |
 | **linux-tkg / XanMod** | Rejected. `linux-cachy` forks Void's **own** kernel template plus the BORE patch; adopting a foreign kernel tree would replace the thing that makes the fork maintainable, and BORE already works | never |
 | **A `pipewire` runit service** | Never add one. PipeWire starts as a user-session/DBus service on Void; a system service would fight it | never |
-| **Alternative global allocator system-wide** (jemalloc/scudo via `LD_PRELOAD`) | Not closed — still an open question, tracked in `future-ideas.md` §5. Listed here only because it is often *assumed* rejected: the lean is reject for the base overlay, at most an opt-in per-game tweak | — (see future-ideas §5) |
+| **Alternative global allocator system-wide** (jemalloc/scudo via `LD_PRELOAD`) | Not closed — still an open question, tracked in `future-ideas.md` §4. Listed here only because it is often *assumed* rejected: the lean is reject for the base overlay, at most an opt-in per-game tweak | — (see future-ideas §4) |
 
 ## Distribution and installation
 

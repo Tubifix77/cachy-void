@@ -25,7 +25,8 @@
 # Usage:
 #   sudo ./deploy.sh [--user NAME] [--void-packages DIR] [--march ARCH]
 #                    [--jobs N] [--with-grub] [--with-schedule] [--with-branding]
-#                    [--with-networkmanager] [--hud-profile auto|full|minimal]
+#                    [--with-networkmanager] [--no-multilib]
+#                    [--hud-profile auto|full|minimal]
 #                    [--tag core|test|opt] [--simulate] [--dry-run] [--root DIR]
 #   sudo ./deploy.sh --log                 [--root DIR]
 #   sudo ./deploy.sh --uninstall           [--dry-run] [--root DIR]
@@ -65,6 +66,14 @@ readonly PKG_GAMESCOPE="gamescope"          # §3.4 display leg; opt-in via CACH
 readonly PKG_VKBASALT="vkBasalt"            # §3.4 post-processing; opt-in via CACHY_VKB=1
 readonly PKG_VKBASALT32="vkBasalt-32bit"    # 32-bit titles; multilib-gated (optional)
 readonly PKG_XZ="xz"                        # cachy-proton extracts .tar.xz releases
+# §3.4 32-bit gaming support. Void ships 64-bit libraries only; the Steam client
+# is 32-bit and most Windows games under Proton are too, so they need 32-bit
+# driver + loader libraries, which live in a SEPARATE repository you opt into.
+# void-repo-multilib is a stock Void package that merely drops a repo config
+# file, so enabling is one install and removing it disables the repo again.
+readonly PKG_MULTILIB="void-repo-multilib"
+readonly PKG_MULTILIB_NONFREE="void-repo-multilib-nonfree"
+readonly PKG_MESA32="mesa-dri-32bit"        # verified name (NOT mesa-32bit-dri)
 readonly CACHY_GAME_WRAPPER="/usr/local/bin/cachy-game"
 readonly CACHY_PROTON_HELPER="/usr/local/bin/cachy-proton"
 readonly MANGOHUD_CONF="/etc/xdg/MangoHud/MangoHud.conf"
@@ -95,6 +104,7 @@ WITH_GRUB=false
 WITH_SCHEDULE=false       # §4.9: also ENABLE the unattended cachy-void-update timer
 WITH_BRANDING=false       # branding: install the void-tactical desktop toolkit + applier
 WITH_NM=false             # network: install NetworkManager + nm-tray (laptop WiFi picker)
+WITH_MULTILIB=true        # §3.4: enable multilib + 32-bit driver libs (--no-multilib opts out)
 HUD_PROFILE="auto"        # §3.4 MangoHud config: auto|full|minimal (minimal = legacy Optimus)
 SIMULATE=false            # WSL2/sandbox: lay down files, skip init-dependent ops
 ROOT=""                   # offline mode: mounted Void tree prefix ("" = live)
@@ -151,6 +161,7 @@ parse_args() {
             --with-schedule)  WITH_SCHEDULE=true ;;
             --with-branding)  WITH_BRANDING=true ;;
             --with-networkmanager) WITH_NM=true ;;
+            --no-multilib)    WITH_MULTILIB=false ;;
             --hud-profile)    HUD_PROFILE="${2:?--hud-profile needs auto|full|minimal}"; shift ;;
             --user)           UPDATER_USER="${2:?--user needs a value}"; shift ;;
             --void-packages)  VOID_PACKAGES="${2:?--void-packages needs a value}"; shift ;;
@@ -493,7 +504,66 @@ install_schedule_service() {
 # are present. gamemode is also an allowlist target, so the updater can later
 # rebuild it -O3 and take it over; here we only guarantee it exists for the
 # wrapper. MangoHud-32bit is multilib-gated, hence optional (non-fatal if absent).
+# ensure_multilib — turn on Void's multilib repository. NOT a question.
+#
+# Anyone installing a *gaming* overlay needs 32-bit support: the Steam client
+# itself is 32-bit, and most Windows titles under Proton are. Without the repo
+# the 32-bit packages simply do not exist as far as xbps is concerned, so the
+# gaming layer's own -32bit components were skipped with one easily-missed
+# warning — a HUD that works in 64-bit games and silently does not in 32-bit
+# ones. Asking would only make the user answer a question whose right answer is
+# always yes for this project's audience (owner's call, 2026-08-19).
+#
+# Being wrong is cheap and reversible: void-repo-multilib is a stock Void package
+# that drops a repo config file, it is ledger-recorded like any package we
+# install, and --uninstall removes it (disabling the repo again). --no-multilib
+# skips the whole step for an operator who wants none of it.
+ensure_multilib() {
+    $WITH_MULTILIB || { warn "--no-multilib: skipping 32-bit gaming support (Steam and 32-bit titles need it)"; return 1; }
+    if [ -n "$ROOT" ]; then
+        warn "offline mode: cannot enable multilib — run 'xbps-install $PKG_MULTILIB' from a chroot"
+        return 1
+    fi
+    if xbps-query -- "$PKG_MULTILIB" >/dev/null 2>&1; then
+        log "multilib repository already enabled"
+        return 0
+    fi
+    log "enabling Void's multilib repository (32-bit libraries for Steam/Proton)"
+    ensure_pkg "$PKG_MULTILIB"
+    # Match the host's own nonfree posture rather than imposing one: the 32-bit
+    # NVIDIA libraries live in multilib/nonfree, but only add that if this system
+    # already uses nonfree (it must, for the proprietary driver).
+    if xbps-query -- void-repo-nonfree >/dev/null 2>&1; then
+        ensure_pkg "$PKG_MULTILIB_NONFREE" optional
+    fi
+    if ! $DRY_RUN; then
+        xbps-install -S >/dev/null 2>&1 || warn "repo sync after enabling multilib failed — 32-bit packages may still be invisible"
+    fi
+    ok "multilib enabled"
+}
+
+# install_32bit_driver_libs — the 32-bit GL/Vulkan libraries a 32-bit game needs.
+#
+# Void's `steam` package declares ZERO 32-bit dependencies (verified 2026-08-19:
+# it is a bootstrap that fetches Valve's own runtime), so xbps will not pull
+# these for you and a casual gamer would install Steam only to watch games fail.
+# Pick by the driver actually installed; stays optional so a wrong guess warns
+# instead of failing the deploy.
+install_32bit_driver_libs() {
+    local drv
+    drv="$(xbps-query -l 2>/dev/null | awk '{print $2}' | sed -E 's/-[^-]+$//'            | grep -E '^nvidia[0-9]*$' | head -1)"
+    if [ -n "$drv" ]; then
+        log "32-bit driver libraries for the installed proprietary driver ($drv)"
+        ensure_pkg "${drv}-libs-32bit" optional
+    else
+        log "32-bit driver libraries (Mesa: AMD/Intel/nouveau)"
+        ensure_pkg "$PKG_MESA32" optional
+    fi
+}
+
 install_gaming_userspace() {
+    # 32-bit support first: the -32bit components below are invisible without it.
+    ensure_multilib && install_32bit_driver_libs
     ensure_pkg "$PKG_GAMEMODE"
     # gamemoderun LD_PRELOADs libgamemodeauto.so.0 from libgamemode, which
     # nothing links — protect it (and its multilib twin) from orphan sweeps.

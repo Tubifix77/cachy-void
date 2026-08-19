@@ -9,7 +9,7 @@ What exists is documented where it belongs: the design in
 here twice.
 
 Two companions govern which ideas are worth having, and both live outside this
-list: the **selection rule** for any addition is §6 below, and everything already
+list: the **selection rule** for any addition is §5 below, and everything already
 turned down is in [`rejected-ideas.md`](rejected-ideas.md) — check it before
 proposing something, because a rejected idea stays an idea until the verdict is
 written down.
@@ -72,7 +72,7 @@ resists theming and ships its own network applet.
 **Rules for any of them:** never install a desktop, never override a user's own
 theme (opt-in, reversible), and an unrecognised session gets Tier 1 plus a plain
 message — never a half-applied look. Each Tier-2 applier is a standing
-maintenance bill (our config code, so not disqualified by §6, but not free
+maintenance bill (our config code, so not disqualified by §5, but not free
 either): two or three is a sane ceiling.
 
 ---
@@ -120,22 +120,7 @@ desktop ships its own network applet (Plasma → `plasma-nm`), prefer it over
 
 ---
 
-## 4. Install-side gaps
-
-- **Multilib + 32-bit driver prerequisites are missing from INSTALL.md.**
-  Enabling Void's multilib repo and installing 32-bit GL/Vulkan libraries is a
-  hard prerequisite for Steam/Proton, and INSTALL.md §1 lists only
-  git/xtools/base-devel. **Verify every package name on real Void before writing
-  it down** (`xbps-query -Rs`): candidates are `void-repo-multilib`, `-nonfree`,
-  `-multilib-nonfree`, plus the 32-bit libraries — and note that the
-  `<name>-32bit` convention has already been mis-cited in chat transcripts, which
-  is exactly how the `game-devices-udev` spec bug happened. This is the *install*
-  side; invariant I6 governs the build side (never cross-build i686 with
-  `x86-64-v*`).
-
----
-
-## 5. Undecided levers
+## 4. Undecided levers
 
 Each of these needs a decision rather than another mention.
 
@@ -155,7 +140,7 @@ Each of these needs a decision rather than another mention.
 
 ---
 
-## 6. Selection rule for any addition (agreed 2026-08-15)
+## 5. Selection rule for any addition (agreed 2026-08-15)
 
 **An addition must be upstream-maintained. If keeping it working falls on US —
 our own srcpkg, our own fork, our own rules file to curate — it is DISQUALIFIED,
