@@ -74,7 +74,7 @@ PY
     rm -f "$SHARE/applications/cachy-trash.desktop" "$CFG/plank/dock1/launchers/zz-trash.dockitem"
     # (restoring pcmanfm settings.conf above brings the desktop shortcut icons back on next login)
     rm -rf "$SHARE/lxqt/themes/void-tactical" "$CFG/Kvantum/void-tactical" "$HOME/.themes/void-tactical"
-    rm -f "$CFG"/autostart/{picom,plank,conky,conky-system,xcape}.desktop
+    rm -f "$CFG"/autostart/{picom,plank,conky,conky-system,xcape,pasystray}.desktop
     rm -f "$CFG"/conky/conky-system.conf
     # openbox session autostart + root menu: restore a pre-existing one, else drop ours
     # fastfetch preset: ours is marked; only remove what we wrote
@@ -743,6 +743,21 @@ fi
 mkdir -p "$CFG/picom" "$CFG/rofi" "$CFG/conky" "$CFG/autostart"
 [ -f "$ASSETS/picom.conf" ] && cp -f "$ASSETS/picom.conf" "$CFG/picom/picom.conf"
 printf '[Desktop Entry]\nType=Application\nName=picom\nExec=picom --config %s/picom/picom.conf\n' "$CFG" > "$CFG/autostart/picom.desktop"
+
+# pasystray ships /etc/xdg/autostart/pasystray.desktop, so a DESKTOP session starts
+# it automatically — and LXQt's panel already has a volume plugin, giving TWO volume
+# icons (owner-reported 2026-08-20; same shape as the old double nm-tray icon). Mask
+# the system entry per-user, the freedesktop way. The bare Openbox session is
+# unaffected: it never reads XDG autostart, and our own autostart starts pasystray
+# explicitly there — which is the only reason we install it.
+if [ -f /etc/xdg/autostart/pasystray.desktop ]; then
+    printf '[Desktop Entry]
+Type=Application
+Name=pasystray
+Hidden=true
+'         > "$CFG/autostart/pasystray.desktop"
+    ok "pasystray XDG autostart masked (LXQt panel provides volume; the WM session starts it directly)"
+fi
 cp -f "$ASSETS/rofi/config.rasi" "$CFG/rofi/config.rasi"
 # conky: fill host-specific iface + hwmon
 IFACE=$(ip route 2>/dev/null | awk '/^default/{print $5; exit}'); : "${IFACE:=eth0}"
