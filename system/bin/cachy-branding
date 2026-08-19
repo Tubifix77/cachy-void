@@ -260,31 +260,6 @@ def emit(src_glob, dirs):
 for ctx in ("status", "devices"):
     emit(A + "/%s/network-*-symbolic.svg" % ctx,
          [os.path.join(LVDST, ctx, s) for s in ("16", "22", "24")])
-# The rest of the bare-session tray: pasystray (volume), cbatticon (battery) and
-# udiskie (removable media) ask for these names. Luv itself has none of them, so
-# without this they fall through to whatever stock theme answers first — which is
-# how a BLUE disk icon and a barely-visible dark battery ended up on a dark panel
-# (owner-reported 2026-08-19). Same lift() recolouring as the network glyphs, and
-# emitted under BOTH the plain and -symbolic spellings because the applets differ.
-# NOTE the source contexts: Adwaita keeps audio-volume-* in symbolic/status, the
-# removable-media glyphs in symbolic/devices, and the battery-{good,full,caution,
-# empty}[-charging] names cbatticon actually asks for in symbolic/LEGACY — only
-# battery-level-NN lives under status. Searching status alone silently produced no
-# battery icon at all, so cbatticon fell back to a stock dark one (live find).
-for ctx, srcs, pats in (
-        ("status",  ("status", "legacy"), ("audio-volume-*", "battery-*")),
-        ("devices", ("devices",),         ("drive-removable-media*", "media-removable*"))):
-    dirs = [os.path.join(LVDST, ctx, s) for s in ("16", "22", "24")]
-    for pat in pats:
-        for src in srcs:
-            emit(A + "/%s/%s-symbolic.svg" % (src, pat), dirs)
-        for d in dirs:                       # plain spellings alias the symbolic art
-            for f in glob.glob(os.path.join(d, pat + "-symbolic.svg")):
-                plainname = os.path.basename(f).replace("-symbolic", "")
-                try:
-                    open(os.path.join(d, plainname), "w").write(open(f).read())
-                except OSError:
-                    pass
 emit("/usr/share/icons/hicolor/scalable/apps/nm-*symbolic.svg",
      [d for d in glob.glob(LVDST + "/apps/*/") if os.path.isdir(d)])
 # nm-tray's plain (non-symbolic) names -> thin brand glyphs, both name forms.
@@ -312,6 +287,35 @@ plain = {
     "network-vpn": (B + "/network-vpn.svg",
                     A + "/status/network-vpn-symbolic.svg"),
 }
+# The rest of the bare-session tray, same recipe as the network glyphs above:
+# breeze's 22px LINE-ART first (matching stroke weight), Adwaita symbolic as
+# fallback, recoloured by lift(), written under BOTH spellings. Luv itself carries
+# none of these names, so without this pasystray/cbatticon/udiskie fall through to
+# whatever stock theme answers first — which is how a blue disk icon and an
+# unreadably dark battery reached a dark panel (owner-reported 2026-08-19).
+# cbatticon asks for battery-{empty,caution,low,good,full}; breeze names its levels
+# battery-000..100, hence the explicit mapping rather than a glob.
+AS = A + "/status"
+AL = A + "/legacy"
+AD = A + "/devices"
+for _lvl, _brz in (("full", "100"), ("good", "080"), ("low", "040"),
+                   ("caution", "020"), ("empty", "000")):
+    plain["battery-" + _lvl] = (B + "/battery-%s.svg" % _brz,
+                                AL + "/battery-%s-symbolic.svg" % _lvl,
+                                AS + "/battery-level-%s-symbolic.svg" % _brz.lstrip("0"))
+    plain["battery-" + _lvl + "-charging"] = (
+        B + "/battery-%s-charging.svg" % _brz,
+        AL + "/battery-%s-charging-symbolic.svg" % _lvl)
+for _v in ("high", "medium", "low", "muted"):
+    plain["audio-volume-" + _v] = (B + "/audio-volume-%s.svg" % _v,
+                                   AS + "/audio-volume-%s-symbolic.svg" % _v)
+plain["drive-removable-media"] = (
+    "/usr/share/icons/breeze/devices/22/drive-removable-media.svg",
+    AD + "/drive-removable-media-symbolic.svg")
+plain["media-removable"] = (
+    "/usr/share/icons/breeze/devices/22/drive-removable-media-usb-pendrive.svg",
+    AD + "/media-removable-symbolic.svg")
+
 for name, cands in plain.items():
     src = next((c for c in cands if os.path.exists(c)), None)
     if src is None:
