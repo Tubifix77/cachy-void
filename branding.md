@@ -441,8 +441,17 @@ selects it by accident.
 
 `cachy-branding` therefore writes a minimal `~/.config/openbox/autostart` so the
 bare session is usable and on-brand without dragging in a whole DE: wallpaper (via
-`feh`), the Picom compositor, a **tint2 panel**, and the Conky telemetry — apps come
-from the openbox root menu or Super+Space (rofi). This file runs **only** under the
+`feh`), the Picom compositor, a **tint2 panel**, the Conky telemetry, and — when
+installed — **nm-tray** — apps come from the openbox root menu or Super+Space (rofi).
+
+**Why nm-tray must be listed explicitly:** it ships an XDG autostart entry, and a
+bare Openbox session never runs those — Void's `/etc/xdg/openbox/autostart` is
+entirely commented out (verified 2026-08-19). Under LXQt the entry fires and the
+applet appears; under bare Openbox it would not, leaving NetworkManager's daemon
+running (saved networks connect) with **no way to pick a new one** — exactly the
+hotel-WiFi case `--with-networkmanager` exists to solve. It starts after tint2,
+which provides the system tray it docks into; without that ordering the icon can
+silently fail to appear. This file runs **only** under the
 bare Openbox session; LXQt uses its own XDG autostart and ignores it, so nothing
 double-starts.
 
