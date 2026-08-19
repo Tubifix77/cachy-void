@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+# cachy-de-trial — install a second desktop environment REVERSIBLY.
+#
+# Adding a desktop to a system that already has one is the classic "I'll just
+# try it" change that turns out to be hard to undo: xbps pulls in a hundred
+# packages you did not name, the new desktop writes into your home, it may grab
+# an alternatives group, and it adds session entries the display manager then
+# offers forever. Removing "KDE" later is not one command, because nothing ever
+# recorded what "KDE" actually was on THIS machine.
+#
+# This records it. Wrap the install in a trial and every question has an answer:
+#
+#   sudo cachy-de-trial begin plasma        take the before-picture (+ btrfs snapshot)
+#   sudo xbps-install -Sy plasma-desktop    install whatever you like, in any number of steps
+#   sudo cachy-de-trial diff                exactly what changed, at any time
+#   sudo cachy-de-trial keep                it works — close the trial, keep the desktop
+#   sudo cachy-de-trial rollback            it does not — put the system back
+#
+# Rollback is deliberately CONSERVATIVE: it removes only packages that were not
+# installed before the trial, it never downgrades a package that was merely
+# updated, and it never deletes anything from your home — new config dirs are
+# MOVED into the trial's quarantine dir, so a mistake costs you a move, not data.
+#
+# Not part of the updater's §4.1 sudo grant, and never to be added to it: this is
+# a hands-on maintenance tool the user runs as root on purpose, like deploy.sh.
+set -uo pipefail
+
+STATE="/var/lib/cachy-void/de-trials"
+CURFILE="$STATE/current"
+SNAPDIR="/.cachy-snapshots"
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+
+if [ -t 1 ]; then C=$'\033[0;36m'; K=$'\033[0;32m'; W=$'\033[0;33m'; R=$'\033[0;31m'; Z=$'\033[0m'
+else C=""; K=""; W=""; R=""; Z=""; fi
+log(){ printf '%s==>%s %s\n' "$C" "$Z" "$*"; }
+ok(){  printf '%s ok%s %s\n' "$K" "$Z" "$*"; }
+warn(){ printf '%swarn%s %s\n' "$W" "$Z" "$*" >&2; }
+die(){ printf '%serr%s %s\n' "$R" "$Z" "$*" >&2; exit 1; }
+
+[ "$(id -u)" -eq 0 ] || die "run as root (it reads and changes system package state): sudo cachy-de-trial $*"
+
+# --- state readers ---------------------------------------------------------
+# xbps prints "ii pkgname-1.2.3_1  description"; the version is the last
+# '-'-separated field, and a pkgname may itself contain '-'.
+pkglist(){ xbps-query -l 2>/dev/null | awk '{print $2}' | sed 's/-[^-]*$//' | sort -u; }
+pkglist_ver(){ xbps-query -l 2>/dev/null | awk '{print $2}' | sort -u; }
+manuallist(){ xbps-query -m 2>/dev/null | sed 's/-[^-]*$//' | sort -u; }
+sessionlist(){ ls -1 /usr/share/xsessions /usr/share/wayland-sessions 2>/dev/null | grep -F .desktop | sort -u; }
+servicelist(){ ls -1 /var/service 2>/dev/null | sort -u; }
+altlist(){ xbps-alternatives -l 2>/dev/null | sort; }
+homelist(){
+    local h="$1" d
+    for d in .config .local/share; do
+        [ -d "$h/$d" ] && ls -1 "$h/$d" 2>/dev/null | sed "s|^|$d/|"
+    done | sort -u
+}
+
+trial_dir(){
+    [ -f "$CURFILE" ] || die "no open trial — start one with: cachy-de-trial begin <label>"
+    local d; d="$(cat "$CURFILE")"
+    [ -d "$d" ] || die "the trial dir recorded in $CURFILE is gone: $d"
+    printf '%s\n' "$d"
+}
+note(){ local d="$1"; shift; printf '%s  %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$d/log"; }
+
+resolve_user(){
+    local u="${1:-}"
+    [ -n "$u" ] || u="${SUDO_USER:-}"
+    [ -n "$u" ] || u="$(awk -F: '$3>=1000 && $3<65534 {print $1; exit}' /etc/passwd)"
+    [ -n "$u" ] || die "cannot determine which user's home to watch — pass --user NAME"
+    getent passwd "$u" >/dev/null || die "no such user: $u"
+    printf '%s\n' "$u"
+}
+
+# --- begin -----------------------------------------------------------------
+cmd_begin(){
+    local label="" user="" snap=true
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --user) user="${2:-}"; shift 2 ;;
+            --no-snapshot) snap=false; shift ;;
+            -*) die "unknown option: $1" ;;
+            *) label="$1"; shift ;;
+        esac
+    done
+    [ -n "$label" ] || die "usage: cachy-de-trial begin <label> [--user NAME] [--no-snapshot]"
+    case "$label" in *[!A-Za-z0-9._-]*) die "label may contain only letters, digits, . _ and -" ;; esac
+    if [ -f "$CURFILE" ]; then
+        die "a trial is already open ($(cat "$CURFILE")) — close it with 'keep' or 'rollback' first"
+    fi
+
+    user="$(resolve_user "$user")"
+    local home; home="$(getent passwd "$user" | cut -d: -f6)"
+    local dir="$STATE/$label-$TS"
+    mkdir -p "$dir" || die "cannot create $dir"
+
+    log "recording the before-picture (user: $user, home: $home)"
+    pkglist          > "$dir/pkgs.before"
+    pkglist_ver      > "$dir/pkgs-ver.before"
+    manuallist       > "$dir/manual.before"
+    sessionlist      > "$dir/sessions.before"
+    servicelist      > "$dir/services.before"
+    altlist          > "$dir/alternatives.before"
+    homelist "$home" > "$dir/home.before"
+
+    {
+        printf 'label\t%s\n' "$label"
+        printf 'started\t%s\n' "$TS"
+        printf 'user\t%s\n' "$user"
+        printf 'home\t%s\n' "$home"
+    } > "$dir/meta"
+    : > "$dir/log"
+    note "$dir" "trial opened: $label ($(wc -l < "$dir/pkgs.before") packages installed)"
+
+    # btrfs read-only snapshot of / — the same convention deploy.sh and the
+    # updater use, so all pre-change snapshots live in one place.
+    if $snap && [ "$(findmnt -no FSTYPE / 2>/dev/null)" = btrfs ] && [ -d "$SNAPDIR" ]; then
+        local dest="$SNAPDIR/de-trial-$label-$TS"
+        if btrfs subvolume snapshot -r / "$dest" >/dev/null 2>&1; then
+            printf 'snapshot\t%s\n' "$dest" >> "$dir/meta"
+            note "$dir" "btrfs snapshot: $dest"
+            ok "btrfs snapshot: $dest"
+        else
+            warn "btrfs snapshot failed — the package-level record still stands"
+        fi
+    elif $snap; then
+        warn "no btrfs snapshot (/ is $(findmnt -no FSTYPE / 2>/dev/null), or $SNAPDIR is missing)"
+    fi
+
+    printf '%s\n' "$dir" > "$CURFILE"
+    ok "trial '$label' open — record: $dir"
+    log "install what you want now; 'cachy-de-trial diff' shows the damage at any time."
+}
+
+# --- diff ------------------------------------------------------------------
+# Prints the delta and refreshes the .after files as a side effect.
+cmd_diff(){
+    local dir; dir="$(trial_dir)" || exit 1
+    local home user
+    home="$(awk -F'\t' '$1=="home"{print $2}' "$dir/meta")"
+    user="$(awk -F'\t' '$1=="user"{print $2}' "$dir/meta")"
+
+    pkglist          > "$dir/pkgs.after"
+    pkglist_ver      > "$dir/pkgs-ver.after"
+    manuallist       > "$dir/manual.after"
+    sessionlist      > "$dir/sessions.after"
+    servicelist      > "$dir/services.after"
+    altlist          > "$dir/alternatives.after"
+    homelist "$home" > "$dir/home.after"
+
+    comm -13 "$dir/pkgs.before"     "$dir/pkgs.after"     > "$dir/pkgs.added"
+    comm -23 "$dir/pkgs.before"     "$dir/pkgs.after"     > "$dir/pkgs.removed"
+    comm -12 "$dir/pkgs.added"      "$dir/manual.after"   > "$dir/pkgs.roots"
+    comm -13 "$dir/sessions.before" "$dir/sessions.after" > "$dir/sessions.added"
+    comm -13 "$dir/services.before" "$dir/services.after" > "$dir/services.added"
+    comm -13 "$dir/home.before"     "$dir/home.after"     > "$dir/home.added"
+
+    local na nr ns nv nh
+    na=$(wc -l < "$dir/pkgs.added");     nr=$(wc -l < "$dir/pkgs.removed")
+    ns=$(wc -l < "$dir/sessions.added"); nv=$(wc -l < "$dir/services.added")
+    nh=$(wc -l < "$dir/home.added")
+
+    log "trial $(awk -F'\t' '$1=="label"{print $2}' "$dir/meta") — changes since $(awk -F'\t' '$1=="started"{print $2}' "$dir/meta")"
+    printf '  packages added   : %s\n' "$na"
+    printf '  packages removed : %s\n' "$nr"
+    printf '  sessions added   : %s\n' "$ns"
+    printf '  services added   : %s\n' "$nv"
+    printf '  home entries new : %s (user %s)\n' "$nh" "$user"
+
+    if [ "$na" -gt 0 ]; then
+        printf '\n  explicitly installed (%s) — what rollback removes by name:\n' "$(wc -l < "$dir/pkgs.roots")"
+        sed 's/^/    /' "$dir/pkgs.roots"
+    fi
+    [ "$nr" -gt 0 ] && { printf '\n  REMOVED during the trial (rollback does NOT reinstall these):\n'; sed 's/^/    /' "$dir/pkgs.removed"; }
+    [ "$ns" -gt 0 ] && { printf '\n  new session entries:\n'; sed 's/^/    /' "$dir/sessions.added"; }
+    [ "$nv" -gt 0 ] && { printf '\n  new runit services:\n'; sed 's/^/    /' "$dir/services.added"; }
+    [ "$nh" -gt 0 ] && { printf '\n  new home entries (quarantined, not deleted, on rollback):\n'; sed 's/^/    /' "$dir/home.added"; }
+    if ! diff -q "$dir/alternatives.before" "$dir/alternatives.after" >/dev/null 2>&1; then
+        printf '\n  alternatives groups changed:\n'
+        diff "$dir/alternatives.before" "$dir/alternatives.after" | sed 's/^/    /'
+    fi
+    printf '\n  full record: %s\n' "$dir"
+    return 0
+}
+
+# --- keep ------------------------------------------------------------------
+cmd_keep(){
+    local drop=false
+    [ "${1:-}" = "--drop-snapshot" ] && drop=true
+    local dir; dir="$(trial_dir)" || exit 1
+    cmd_diff >/dev/null
+    note "$dir" "trial KEPT ($(wc -l < "$dir/pkgs.added") packages added)"
+    local snap; snap="$(awk -F'\t' '$1=="snapshot"{print $2}' "$dir/meta")"
+    if $drop && [ -n "$snap" ] && [ -d "$snap" ]; then
+        btrfs subvolume delete "$snap" >/dev/null 2>&1 && ok "dropped snapshot $snap"
+    fi
+    printf 'closed\tkept\n' >> "$dir/meta"
+    rm -f "$CURFILE"
+    ok "trial closed as KEPT — the record stays at $dir"
+    [ -n "$snap" ] && ! $drop && log "its snapshot is still there: $snap"
+    log "you can still undo it later:  sudo cachy-de-trial rollback --trial $dir"
+}
+
+# --- rollback --------------------------------------------------------------
+cmd_rollback(){
+    local yes=false dir=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --yes|-y) yes=true; shift ;;
+            --trial) dir="${2:-}"; shift 2 ;;
+            *) die "unknown option: $1" ;;
+        esac
+    done
+    if [ -z "$dir" ]; then dir="$(trial_dir)" || exit 1; fi
+    [ -d "$dir" ] || die "no such trial: $dir"
+    local user home
+    user="$(awk -F'\t' '$1=="user"{print $2}' "$dir/meta")"
+    home="$(awk -F'\t' '$1=="home"{print $2}' "$dir/meta")"
+
+    # Recompute against live state — the record is a witness, never the authority.
+    pkglist          > "$dir/pkgs.now"
+    manuallist       > "$dir/manual.now"
+    homelist "$home" > "$dir/home.now"
+    comm -13 "$dir/pkgs.before" "$dir/pkgs.now"  > "$dir/pkgs.added"
+    comm -12 "$dir/pkgs.added"  "$dir/manual.now" > "$dir/pkgs.roots"
+    comm -13 "$dir/home.before" "$dir/home.now"  > "$dir/home.added"
+
+    local nroots nadded
+    nroots=$(wc -l < "$dir/pkgs.roots"); nadded=$(wc -l < "$dir/pkgs.added")
+    log "rollback plan for '$(awk -F'\t' '$1=="label"{print $2}' "$dir/meta")':"
+    printf '  remove %s explicitly-installed package(s):\n' "$nroots"
+    sed 's/^/    /' "$dir/pkgs.roots"
+    printf '  then sweep up to %s package(s) that were pulled in as their dependencies\n' "$((nadded - nroots))"
+    printf '  quarantine %s new home entry/entries of %s into %s/quarantine/\n' "$(wc -l < "$dir/home.added")" "$user" "$dir"
+    printf '  packages that existed before the trial are never touched, and nothing is downgraded\n'
+
+    if ! $yes; then
+        printf '\nProceed? [y/N] '
+        local reply=""
+        read -r reply </dev/tty || reply=""
+        case "$reply" in y|Y|yes|YES) : ;; *) log "aborted — nothing changed"; return 1 ;; esac
+    fi
+
+    note "$dir" "ROLLBACK started"
+    if [ "$nroots" -gt 0 ]; then
+        # shellcheck disable=SC2046
+        xbps-remove -y $(tr '\n' ' ' < "$dir/pkgs.roots") || warn "xbps-remove reported an error — continuing to the sweep"
+    fi
+
+    # Sweep to a fixpoint, but ONLY inside the set this trial added: an added
+    # package that is now automatic-install and has no remaining reverse
+    # dependency is garbage the trial created. A global 'xbps-remove -o' would
+    # also take unrelated orphans, so it is deliberately not used here.
+    local pass=1 removed=1 batch p
+    while [ "$removed" -gt 0 ] && [ "$pass" -le 12 ]; do
+        removed=0; batch=""
+        while read -r p; do
+            [ -n "$p" ] || continue
+            xbps-query -- "$p" >/dev/null 2>&1 || continue
+            [ "$(xbps-query -p automatic-install "$p" 2>/dev/null)" = yes ] || continue
+            [ -z "$(xbps-query -X "$p" 2>/dev/null)" ] || continue
+            batch="$batch $p"
+        done < "$dir/pkgs.added"
+        if [ -n "$batch" ]; then
+            # shellcheck disable=SC2086
+            if xbps-remove -y $batch >/dev/null 2>&1; then
+                removed=$(printf '%s' "$batch" | wc -w)
+                log "sweep pass $pass: removed $removed orphaned package(s)"
+            else
+                warn "sweep pass $pass could not remove:$batch"
+                removed=0
+            fi
+        fi
+        pass=$((pass + 1))
+    done
+
+    # home: MOVE, never delete.
+    if [ -s "$dir/home.added" ]; then
+        mkdir -p "$dir/quarantine"
+        local rel
+        while read -r rel; do
+            [ -n "$rel" ] || continue
+            [ -e "$home/$rel" ] || continue
+            mkdir -p "$dir/quarantine/$(dirname "$rel")"
+            if mv "$home/$rel" "$dir/quarantine/$rel" 2>/dev/null; then
+                ok "quarantined ~/$rel"
+            else
+                warn "could not move ~/$rel"
+            fi
+        done < "$dir/home.added"
+        chown -R "$user" "$dir/quarantine" 2>/dev/null || true
+    fi
+
+    altlist > "$dir/alternatives.now"
+    if ! diff -q "$dir/alternatives.before" "$dir/alternatives.now" >/dev/null 2>&1; then
+        warn "alternatives groups still differ from the before-picture — check: xbps-alternatives -l"
+        diff "$dir/alternatives.before" "$dir/alternatives.now" | sed 's/^/    /' >&2
+    fi
+
+    pkglist > "$dir/pkgs.final"
+    local left; left=$(comm -13 "$dir/pkgs.before" "$dir/pkgs.final" | wc -l)
+    note "$dir" "ROLLBACK finished — $left trial package(s) still installed"
+    printf 'closed\trolled-back\n' >> "$dir/meta"
+    rm -f "$CURFILE"
+    if [ "$left" -eq 0 ]; then
+        ok "rollback complete — the package set matches the before-picture exactly"
+    else
+        warn "$left package(s) from the trial are still installed (something outside the trial depends on them):"
+        comm -13 "$dir/pkgs.before" "$dir/pkgs.final" | sed 's/^/    /' >&2
+    fi
+    local snap; snap="$(awk -F'\t' '$1=="snapshot"{print $2}' "$dir/meta")"
+    [ -n "$snap" ] && log "the pre-trial snapshot is still there if anything looks wrong: $snap"
+    log "log out and back in (or restart SDDM) so the session list refreshes."
+}
+
+# --- list / show -----------------------------------------------------------
+cmd_list(){
+    [ -d "$STATE" ] || { log "no trials recorded"; return 0; }
+    local d st
+    for d in "$STATE"/*/; do
+        [ -d "$d" ] || continue
+        st="$(awk -F'\t' '$1=="closed"{print $2}' "$d/meta" 2>/dev/null)"
+        [ -n "$st" ] || st="open"
+        printf '%-34s %-12s %s\n' "$(basename "$d")" "$st" \
+            "$(awk -F'\t' '$1=="snapshot"{print $2}' "$d/meta" 2>/dev/null)"
+    done
+    [ -f "$CURFILE" ] && log "open trial: $(cat "$CURFILE")"
+    return 0
+}
+cmd_show(){ local dir; dir="$(trial_dir)" || exit 1; cat "$dir/log"; }
+
+case "${1:-}" in
+    begin)    shift; cmd_begin "$@" ;;
+    diff)     shift; cmd_diff "$@" ;;
+    keep)     shift; cmd_keep "$@" ;;
+    rollback) shift; cmd_rollback "$@" ;;
+    list)     shift; cmd_list "$@" ;;
+    show)     shift; cmd_show "$@" ;;
+    note)     shift; d="$(trial_dir)" || exit 1; note "$d" "$*"; ok "noted" ;;
+    ""|-h|--help) sed -n '2,25p' "$0" | sed 's/^#\( \|$\)//' ;;
+    *) die "unknown command: $1 (try --help)" ;;
+esac

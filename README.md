@@ -22,7 +22,7 @@ The base system stays 100% upstream Void binaries. Only a short, curated overlay
 | **Gaming layer** | `cachy-game` launch wrapper (GameMode → PRIME → optional gamescope → game) with opt-in MangoHud, **gamescope** (frame limiting/FSR) and **vkBasalt** toggles, `earlyoom` guarding the aggressive zram posture, and `cachy-proton` to install Proton-CachyOS. |
 | **Maintenance & GPU** | `--clean` (orphans + package cache; **never** kernels, and it refuses a sweep containing a package the overlay built), `--gpu` (detected card, driver + pending update, module actually loaded, and a warning for any installed kernel with **no** out-of-tree module built). |
 | **btrfs rollback net** | Optional pre-deploy read-only snapshots taken right before each deploy (`[snapshot]`), on top of the always-converges recovery path. |
-| **Optional desktop look** | `void-tactical` — a low-key obsidian/green identity (Kvantum + panel + Conky telemetry + wallpaper + a branded SDDM login screen), fully reversible. The desktop *integration* covers **LXQt** and a **bare Openbox session** (which stock Openbox leaves as a black screen — the applier adds wallpaper, panel, compositor, curated menu, and the pieces a window manager has no desktop to provide: icon theme, **audio**, polkit, notifications and a full tray); everything else in this table is desktop-agnostic and runs under any session, a bare WM, or headless. |
+| **Optional desktop look** | `void-tactical` — a low-key obsidian/green identity (Kvantum + panel + Conky telemetry + wallpaper + a branded SDDM login screen), fully reversible. The desktop *integration* covers **LXQt**, **KDE Plasma** and a **bare Openbox session** (which stock Openbox leaves as a black screen — the applier adds wallpaper, panel, compositor, curated menu, and the pieces a window manager has no desktop to provide: icon theme, **audio**, polkit, notifications and a full tray); everything else in this table is desktop-agnostic and runs under any session, a bare WM, or headless. Which desktops get branded is detected, not assumed: one is branded without asking, several and you are asked which. |
 | **Void-native** | runit services (`zramen`, `cachy-health`), a narrow sudoers boundary, no systemd units or timers anywhere. |
 
 ---
@@ -111,7 +111,7 @@ Everything the installer touches is recorded in a per-change **ledger** — insp
 
 | Flag | Adds |
 |---|---|
-| `--with-branding` | Packages `kvantum papirus-icon-theme papirus-folders plank rofi conky picom python3-PyQt5` (+ optional `arc-theme font-hack ImageMagick feh tint2 setxkbmap fastfetch`), theme assets under `/usr/share/cachy-void/branding`, the `cachy-branding` applier, and the **void-tactical** SDDM login theme. The desktop look itself is applied per-user by `cachy-branding` (backed up, `--remove` restores). *(The updater window is **not** here — it installs by default; a box with no GUI would have no way to see what the updater is telling it.)* |
+| `--with-branding` | Packages `kvantum papirus-icon-theme papirus-folders plank rofi conky picom python3-PyQt5` (+ optional `arc-theme font-hack-ttf ImageMagick feh tint2 setxkbmap fastfetch`), theme assets under `/usr/share/cachy-void/branding`, the `cachy-branding` applier, and the **void-tactical** SDDM login theme. The desktop look itself is applied per-user by `cachy-branding` (backed up, `--remove` restores). *(The updater window is **not** here — it installs by default; a box with no GUI would have no way to see what the updater is telling it.)* |
 | `--with-networkmanager` | `NetworkManager` + `nm-tray` (Qt WiFi picker), enables the NM service, **disables `dhcpcd`** (they conflict) |
 | `--with-grub` | Edits `/etc/default/grub` (ledger-backed): `GRUB_DEFAULT=saved` (required for one-shot kernel boot-tests) + `usbcore.autosuspend=-1` |
 | `--with-schedule` | Enables the daily unattended-update runit service |
@@ -134,7 +134,8 @@ bootstrap.sh             Zero-touch provisioning entry point
 deploy.sh                Idempotent, reversible system installer (--with-grub/-branding/-schedule)
 system/                  Static config + runit services + gaming/branding assets:
   sysctl.d, udev, xbps.d, modprobe.d, sudoers.d, sv/   Tuning, boundaries, services
-  bin/                   cachy-game, cachy-proton, cachy-branding, cachy-updater-gui
+  bin/                   cachy-game, cachy-proton, cachy-branding(-plasma), cachy-updater-gui,
+                         cachy-de-detect, cachy-de-trial
   cachy-void/            Default updater.toml template
   branding/, sddm/       void-tactical theme assets + branded login screen
 overlay/config/          Kernel .config fragment (BORE, 1000 Hz, …)

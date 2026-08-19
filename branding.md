@@ -5,7 +5,7 @@
 > `assets/wallpapers/`), installed opt-in by `deploy.sh --with-branding` and applied
 > per-user by running `cachy-branding` (see INSTALL.md §14). First applied live on the
 > LXQt/nvidia470 testbed, 2026-07-18. Everything here stays **opt-in and DE-aware**
-> (see `architecture.md` §0 and `future-ideas.md` §1/§2): a user's existing look is
+> (see `architecture.md` §0 and §6 below): a user's existing look is
 > never overridden, and `cachy-branding --remove` restores it. Reference target is
 > **LXQt on X11**; Wayland notes are flagged for future modern-GPU targets.
 > Authoritative implementation spec remains `architecture.md` — this is the *look*.
@@ -577,14 +577,82 @@ by `--remove`). Run it manually or drop `fastfetch` into your shell rc — the
 preset deliberately doesn't auto-hook the shell; a forced greeting would be the
 opposite of downplayed.
 
+### 5.12 KDE Plasma — the applier that mostly gets out of the way
+
+The third branded environment, after LXQt and §5.9's bare Openbox session, and
+the one that proves the tier model works: **an applier's job is to cover what the
+environment does not provide.** Openbox provides nothing, so its applier ships a
+panel, a compositor, a launcher and a wallpaper setter. Plasma provides all of
+that, and provides it well — so branding Plasma is colours plus the four things a
+colour scheme cannot reach. It is the *smallest* applier in the project, and that
+is the correct outcome, not a shortfall.
+
+**What `cachy-branding-plasma` sets**
+
+| Piece | How | Why it needs saying |
+|---|---|---|
+| Colour scheme | `~/.local/share/color-schemes/VoidTactical.colors` + `plasma-apply-colorscheme` | One file recolours every Qt/KDE app at once, titlebars included (the `[WM]` group) |
+| Widget style | `kdeglobals` → `widgetStyle=kvantum` | The Kvantum skin is Tier 1 — built once by `cachy-branding` and shared; Plasma is only *pointed at* it |
+| Icons | `kdeglobals` → `Icons/Theme` = `Luv-Void` (falls back to Papirus-Dark) | Same mono set as LXQt |
+| Fonts | `kdeglobals` → Hack 10 | §3 |
+| Konsole | `VoidTactical.colorscheme` + `.profile`, set as default | Reuses the **exact ANSI values** of the qterminal scheme (§5.10), so the two terminals are provably the same terminal rather than two similar-looking ones |
+| Desktop theme | `plasma-apply-desktoptheme breeze-dark` | Keeps panel/plasmoid chrome dark; the colour scheme does the actual recolouring |
+| Wallpaper | `plasma-apply-wallpaperimage`, rendered to a screen-sized PNG first | Plasma re-rasterises an SVG every login; render once instead |
+
+**What it deliberately does not touch:** the panel layout, a dock, a compositor,
+a launcher, and `plasma-org.kde.plasma.desktop-appletsrc` in general. Plasma owns
+those roles and rewrites that file itself; editing it behind a running Plasma's
+back is both fragile and unsupported. Everything above instead goes through KDE's
+own `plasma-apply-*` / `kwriteconfig6` interfaces, which is exactly what makes the
+applier reliably reversible.
+
+**The first-login hook.** Some of the look genuinely cannot be set from outside a
+running session — the wallpaper lives in the desktop containment's config, which
+only plasmashell may write. Applying from an LXQt session would therefore leave
+the first Plasma login half-branded. So when no live session is found, the applier
+writes a one-shot `~/.config/autostart/cachy-branding-plasma-firstrun.desktop`
+that re-runs it inside Plasma and then deletes itself. It is gated
+`OnlyShowIn=KDE;`, so it can never fire anywhere else.
+
+**Two desktops on one machine: what actually collides.** Verified on the test box
+by installing Plasma beside LXQt and reading every `OnlyShowIn`/`NotShowIn` key
+rather than guessing:
+
+- **KDE does not leak into LXQt.** Every entry Plasma adds to
+  `/etc/xdg/autostart` is gated `OnlyShowIn=KDE;` — `plasmashell`, `powerdevil`,
+  `polkit-kde-agent`, `kglobalacceld`, `xembedsniproxy`, `kaccess`. Even
+  `baloo_file`, the one with a longer list, does not name LXQt. Nothing to fix.
+- **`plasma-nm` and `nm-tray` coexist by upstream design** — Void's `nm-tray`
+  entry already carries `NotShowIn=KDE;GNOME;`. This was an open question; it is
+  now answered, and the answer required no work from us.
+- **Our own entries were the actual problem.** `picom`, `plank` and both conkies
+  were written ungated, so a Plasma login would have started picom as a second
+  compositor underneath KWin and stacked Plank on top of Plasma's panel. They are
+  now all `OnlyShowIn=LXQt;`, which is the correct statement regardless of
+  Plasma: they are LXQt-session furniture. The gate also **overrides Void's own
+  ungated `/etc/xdg/autostart/picom.desktop`**, because a user-level entry with
+  the same filename replaces the system one outright. The bare Openbox session is
+  unaffected either way — it never reads XDG autostart at all (§5.9).
+
+**Rule this establishes:** every autostart entry an applier writes must name the
+session it belongs to. An ungated entry is a bug the day a second desktop appears.
+
 ---
 
 ## 6. Scope & rules
 
 - **Opt-in overlay, never forced** — ship as config files the user *chooses* to apply (or
   a future installer toggle). Void imposes nothing; neither do we.
-- **DE-aware** (future-ideas §2): detect the DE; these configs assume **LXQt / Qt / X11**.
-  On a non-matching setup, fall back to just wallpaper + palette.
+- **DE-aware, and it decides for itself.** `cachy-de-detect` is the single detector,
+  shared by `deploy.sh` at install time and `cachy-branding` at apply time so the two
+  can never drift. It reports every desktop on the machine with a tier: **2** = a real
+  applier exists (LXQt — which also covers §5.9's Openbox session — and Plasma, §5.12);
+  **1** = no applier, so the integration-free assets apply and nothing else, a supported
+  outcome rather than a failure; **0** = deliberately not a target (i3/sway/dwm are
+  listed so a user can see they were recognised and skipped on purpose).
+  One brandable desktop is branded without asking; more than one is the user's choice,
+  recorded in `/etc/cachy-void/branding-targets` and overridable with
+  `cachy-branding --de lxqt,plasma`.
 - **GRUB theming: out of scope** on the foreign-GRUB testbed (another distro owns boot).
 - **Reversible** — a Cachy-Void that leaves no scars (the deploy-ledger ethos).
 

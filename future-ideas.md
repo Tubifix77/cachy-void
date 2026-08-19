@@ -9,105 +9,36 @@ What exists is documented where it belongs: the design in
 here twice.
 
 Two companions govern which ideas are worth having, and both live outside this
-list: the **selection rule** for any addition is §5 below, and everything already
+list: the **selection rule** for any addition is §4 below, and everything already
 turned down is in [`rejected-ideas.md`](rejected-ideas.md) — check it before
 proposing something, because a rejected idea stays an idea until the verdict is
 written down.
 
 ---
 
-## 1. Desktop support beyond LXQt
+## 1. Desktop support beyond the three that exist
 
-The overlay itself is desktop-agnostic — only the optional look is not (see
-README's Highlights table). Adding a desktop means adding an *applier*, nothing
-else.
+Three environments are branded today — LXQt, the bare Openbox session, and KDE
+Plasma — and the model they established is documented in `branding.md` §5.12 and
+§6, not here. What is left is the *next* desktop, and the honest answer is that
+each one is a standing maintenance bill, so the ceiling is low.
 
-- **Tier 1 — any Qt desktop:** assets that need no integration (Kvantum theme,
-  wallpaper, terminal scheme, SDDM greeter, icon set). Already applies unchanged
-  under LXQt, Plasma or a lone Openbox.
-- **Tier 2 — one small applier per desktop**, written against that desktop's own
-  config mechanism and nothing else. **Two already exist**, both in
-  `cachy-branding` and both tested on real hardware: **LXQt** (panel, session,
-  Kvantum) and the **bare Openbox session** (branding.md §5.9) — so Plasma would
-  be the *third* environment, not the first attempt at a second.
+- **XFCE is the cheap one.** `xfconf-query` sets the wm theme and wallpaper, and
+  the dual-boot Debian on the test laptop already runs it, so it is testable
+  without installing anything new on the Void side.
+- **GTK/GNOME is the lowest priority.** It resists theming, ships its own network
+  applet, and its users are the least likely to want a Qt-shaped look.
 
-  The Openbox work is worth reading before writing another applier, because it
-  produced the transferable lesson: an applier's real job is covering *what the
-  environment does not provide*. Stock Openbox draws nothing, so a user who picks
-  that session gets a black screen and reads it as broken; it needed a wallpaper,
-  a compositor, a **tint2 panel** (without a taskbar a launched window can open
-  behind another and reads as "I clicked Terminal and nothing happened") and a
-  curated root menu, since Openbox's stock one lists ~48 apps from other desktops.
-  Plasma is the opposite case — it provides all of that itself — which is exactly
-  why its applier is smaller: colours, Kvantum bridge, wallpaper, Konsole scheme.
-
-**Next target: KDE Plasma.** CachyOS's flagship, Qt (so every Tier-1 asset
-transfers), and what most Linux gamers run. Scope: a `.colors` scheme, the
-Kvantum bridge, wallpaper, a Konsole colour scheme, and `plasma-nm` instead of
-`nm-tray`. *Skip* plank, rofi, picom and conky — Plasma owns those roles already
-(panel, KRunner, KWin compositing, widgets), so the applier is **smaller** than
-LXQt's.
-
-Verified against Void's repo (2026-08-19) — Plasma 6.7.4, current:
-
-| Package | Size | Note |
-|---|---|---|
-| `plasma-desktop` | 41 MB | the desktop |
-| `plasma-workspace` | 58 MB | ships **only** `wayland-sessions/plasma.desktop` |
-| `plasma-workspace-x11` | — | `startplasma-x11` + `xsessions/plasmax11.desktop`; pulls `kwin-x11` |
-| `plasma-nm` | 14 MB | Plasma's own network applet |
-| `konsole` | 10 MB | terminal (its scheme replaces qterminal's) |
-
-- **The trap:** Plasma 6.7 is Wayland-by-default and Void follows upstream's
-  split — plain `kwin` ships only `kwin_wayland`. Installing "Plasma" the obvious
-  way can leave SDDM offering only a Wayland session, so **`plasma-workspace-x11`
-  must be installed explicitly** where X11 is wanted. On the Optimus testbed X11
-  is the known-good path for a 470-offload setup (a Wayland compositor driven by
-  the *Intel* side is fine; 470 driving Wayland itself is not).
-- **Theming Plasma is easier than LXQt was:** KDE ships scriptable apply tools —
-  `plasma-apply-colorscheme`, `-wallpaperimage`, `-desktoptheme`,
-  `-lookandfeel`, `-cursortheme` — so an applier can set *and revert* through
-  supported interfaces instead of editing config behind the desktop's back.
-- **Making it testable:** install Plasma *alongside* LXQt on the test box —
-  desktops coexist as separate SDDM sessions, nothing is replaced, and a
-  pre-install btrfs snapshot makes it reversible. Performance is not a concern:
-  Plasma has already run fine on that laptop under Debian and Tumbleweed (8 GB
-  of RAM carries it). Without this, a Plasma applier could only ship
-  code-reviewed — the same caveat as the Void-owned-GRUB one-shot path.
-- **Open question before claiming support:** do `plasma-nm` and `nm-tray`
-  coexist cleanly when both desktops are installed? Two applets fighting over one
-  tray is a known-shape bug here.
-
-**Small open item on the Openbox session:** its tray applets (pasystray, udiskie,
-cbatticon) draw stock icons rather than the mono brand set, because `Luv-Void`
-only covers the names that were read out of nm-tray's source. Extending the
-applier's `emit()` recolouring means reading each app's icon names from *its*
-source too — cheap, but it must be verified rather than guessed.
-
-**After that:** XFCE is cheap (`xfconf` for wm theme + wallpaper, and the
-dual-boot Debian on the test laptop runs it). GTK/GNOME is lowest priority — it
-resists theming and ships its own network applet.
-
-**Rules for any of them:** never install a desktop, never override a user's own
-theme (opt-in, reversible), and an unrecognised session gets Tier 1 plus a plain
-message — never a half-applied look. Each Tier-2 applier is a standing
-maintenance bill (our config code, so not disqualified by §5, but not free
-either): two or three is a sane ceiling.
+**Rules for any of them** (unchanged, and they are what keep this from sprawling):
+never install a desktop, never override a user's own theme, and an unrecognised
+session gets the shared assets plus a plain message — never a half-applied look.
+Each Tier-2 applier is our own config code, so §4's maintenance test does not
+disqualify it, but it is not free either: three is already at the sane ceiling,
+and a fourth needs a better reason than "we could".
 
 ---
 
-## 2. Desktop detection
-
-Identify the session rather than one product: read `XDG_CURRENT_DESKTOP` first,
-corroborate with binaries on PATH (`lxqt-session`, `plasmashell`/`kwin_x11`,
-`xfce4-session`, `gnome-shell`), map to a §1 Tier-2 applier, and fall back to
-Tier 1 for anything unrecognised — a supported outcome, not a failure. Where a
-desktop ships its own network applet (Plasma → `plasma-nm`), prefer it over
-`nm-tray`: the applet has to match the session's toolkit.
-
----
-
-## 3. Updater — remaining gaps
+## 2. Updater — remaining gaps
 
 - **Staged-candidate readout.** The status pane shows the BORE pin, the
   known-good kernel and any drift, but not "candidate X is staged, awaiting its
@@ -139,7 +70,7 @@ desktop ships its own network applet (Plasma → `plasma-nm`), prefer it over
 
 ---
 
-## 4. Undecided levers
+## 3. Undecided levers
 
 Each of these needs a decision rather than another mention.
 
@@ -159,7 +90,7 @@ Each of these needs a decision rather than another mention.
 
 ---
 
-## 5. Selection rule for any addition (agreed 2026-08-15)
+## 4. Selection rule for any addition (agreed 2026-08-15)
 
 **An addition must be upstream-maintained. If keeping it working falls on US —
 our own srcpkg, our own fork, our own rules file to curate — it is DISQUALIFIED,

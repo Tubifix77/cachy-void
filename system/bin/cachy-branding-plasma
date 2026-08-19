@@ -1,0 +1,393 @@
+#!/usr/bin/env bash
+# cachy-branding-plasma — the KDE Plasma applier for the void-tactical look.
+#
+# branding.md is the design spec; this is one of its Tier-2 appliers (the others
+# are LXQt and the bare Openbox session, both in cachy-branding). Normally you do
+# not run this directly: `cachy-branding` detects the desktops on the machine and
+# calls it. Running it on its own is supported and does the same thing.
+#
+# Why this is SMALLER than the LXQt applier, on purpose: an applier's job is to
+# cover what the environment does not provide. Openbox provides nothing, so its
+# applier ships a panel, a compositor, a launcher and a wallpaper setter. Plasma
+# provides all of that itself and does it well — so branding Plasma is only
+# colours, and the four things a colour scheme cannot reach: the widget style
+# bridge (Kvantum), the icon set, the terminal, and the wallpaper. Adding a dock
+# or a second compositor here would be fighting the desktop, not branding it.
+#
+# Everything goes through KDE's own supported apply interfaces
+# (plasma-apply-colorscheme / -desktoptheme / -wallpaperimage, kwriteconfig6)
+# rather than editing config behind a running Plasma's back, which is what makes
+# it reliably reversible.
+#
+#   cachy-branding-plasma           apply
+#   cachy-branding-plasma --remove  restore the pre-branding Plasma config
+set -uo pipefail
+
+ASSETS="${CACHY_BRANDING_ASSETS:-/usr/share/cachy-void/branding}"
+CFG="$HOME/.config"; SHARE="$HOME/.local/share"
+SCHEME="VoidTactical"
+
+# --- canonical palette (branding.md §2 — this table, nowhere else) ---
+RGB_BG="27,29,30"          # --bg      obsidian
+RGB_PANEL="40,44,52"       # --panel   graphite
+RGB_FG="171,178,191"       # --fg      grey-white
+RGB_ACCENT="71,128,97"     # --accent  "the Void" green
+RGB_ALERT="138,47,50"      # --alert   oxblood
+RGB_DIM="92,99,112"        # --fg-dim  comment grey
+RGB_WARN="150,121,64"      # --warn    muted brass
+
+if [ -t 1 ]; then C=$'\033[0;36m'; K=$'\033[0;32m'; W=$'\033[0;33m'; Z=$'\033[0m'
+else C=""; K=""; W=""; Z=""; fi
+log(){ printf '%s==>%s %s\n' "$C" "$Z" "$*"; }
+ok(){  printf '%s ok%s %s\n' "$K" "$Z" "$*"; }
+warn(){ printf '%swarn%s %s\n' "$W" "$Z" "$*" >&2; }
+bak(){ [ -e "$1" ] && [ ! -e "$1.pre-cachy.bak" ] && cp -a "$1" "$1.pre-cachy.bak"; }
+
+[ "$(id -u)" -ne 0 ] || { warn "run as your normal user, not root (Plasma config is per-user)"; exit 1; }
+command -v kwriteconfig6 >/dev/null 2>&1 || { warn "KDE Plasma (kwriteconfig6) not found — nothing to do"; exit 1; }
+
+# --- remove ----------------------------------------------------------------
+if [ "${1:-}" = "--remove" ]; then
+    log "restoring pre-branding Plasma config from backups"
+    for f in "$CFG/kdeglobals" "$CFG/kwinrc" "$CFG/konsolerc" "$CFG/plasmarc" "$CFG/kcminputrc"; do
+        [ -e "$f.pre-cachy.bak" ] && mv -f "$f.pre-cachy.bak" "$f" && ok "restored $f"
+    done
+    rm -f "$SHARE/color-schemes/$SCHEME.colors"
+    rm -f "$SHARE/konsole/$SCHEME.colorscheme" "$SHARE/konsole/$SCHEME.profile"
+    rm -f "$CFG/autostart/cachy-branding-plasma-firstrun.desktop"
+    ok "removed — log out and back in for Plasma to reload."
+    exit 0
+fi
+
+# Pick up a running Plasma's session bus when invoked over SSH, so the live
+# apply tools actually reach the session instead of silently doing nothing.
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+    SP=$(pgrep -u "$USER" -x plasmashell | head -1)
+    if [ -n "$SP" ]; then
+        while IFS= read -r -d '' kv; do
+            case "$kv" in DBUS_SESSION_BUS_ADDRESS=*|DISPLAY=*|XAUTHORITY=*|WAYLAND_DISPLAY=*|XDG_RUNTIME_DIR=*) export "$kv" ;; esac
+        done < "/proc/$SP/environ"
+    fi
+fi
+LIVE=false; pgrep -u "$USER" -x plasmashell >/dev/null 2>&1 && LIVE=true
+
+mkdir -p "$SHARE/color-schemes" "$SHARE/konsole" "$CFG"
+
+# --- 1. colour scheme ------------------------------------------------------
+# A KDE .colors file is the single asset that recolours every Qt/KDE app at once,
+# including the titlebars (the [WM] group). Same palette the Kvantum skin uses.
+log "colour scheme -> $SCHEME"
+cat > "$SHARE/color-schemes/$SCHEME.colors" <<EOF
+[General]
+ColorScheme=$SCHEME
+Name=Void Tactical
+shadeSortColumn=true
+
+[KDE]
+contrast=4
+
+[Colors:Window]
+BackgroundNormal=$RGB_PANEL
+BackgroundAlternate=$RGB_BG
+ForegroundNormal=$RGB_FG
+ForegroundInactive=$RGB_DIM
+ForegroundActive=$RGB_ACCENT
+ForegroundLink=$RGB_ACCENT
+ForegroundVisited=$RGB_DIM
+ForegroundNegative=$RGB_ALERT
+ForegroundNeutral=$RGB_WARN
+ForegroundPositive=$RGB_ACCENT
+DecorationFocus=$RGB_ACCENT
+DecorationHover=$RGB_ACCENT
+
+[Colors:View]
+BackgroundNormal=$RGB_BG
+BackgroundAlternate=$RGB_PANEL
+ForegroundNormal=$RGB_FG
+ForegroundInactive=$RGB_DIM
+ForegroundActive=$RGB_ACCENT
+ForegroundLink=$RGB_ACCENT
+ForegroundVisited=$RGB_DIM
+ForegroundNegative=$RGB_ALERT
+ForegroundNeutral=$RGB_WARN
+ForegroundPositive=$RGB_ACCENT
+DecorationFocus=$RGB_ACCENT
+DecorationHover=$RGB_ACCENT
+
+[Colors:Button]
+BackgroundNormal=$RGB_PANEL
+BackgroundAlternate=$RGB_BG
+ForegroundNormal=$RGB_FG
+ForegroundInactive=$RGB_DIM
+ForegroundActive=$RGB_ACCENT
+ForegroundLink=$RGB_ACCENT
+ForegroundVisited=$RGB_DIM
+ForegroundNegative=$RGB_ALERT
+ForegroundNeutral=$RGB_WARN
+ForegroundPositive=$RGB_ACCENT
+DecorationFocus=$RGB_ACCENT
+DecorationHover=$RGB_ACCENT
+
+[Colors:Selection]
+BackgroundNormal=$RGB_ACCENT
+BackgroundAlternate=$RGB_ACCENT
+ForegroundNormal=$RGB_BG
+ForegroundInactive=$RGB_BG
+ForegroundActive=$RGB_BG
+ForegroundLink=$RGB_BG
+ForegroundVisited=$RGB_BG
+ForegroundNegative=$RGB_ALERT
+ForegroundNeutral=$RGB_WARN
+ForegroundPositive=$RGB_BG
+DecorationFocus=$RGB_ACCENT
+DecorationHover=$RGB_ACCENT
+
+[Colors:Tooltip]
+BackgroundNormal=$RGB_PANEL
+BackgroundAlternate=$RGB_BG
+ForegroundNormal=$RGB_FG
+ForegroundInactive=$RGB_DIM
+ForegroundActive=$RGB_ACCENT
+ForegroundLink=$RGB_ACCENT
+ForegroundVisited=$RGB_DIM
+ForegroundNegative=$RGB_ALERT
+ForegroundNeutral=$RGB_WARN
+ForegroundPositive=$RGB_ACCENT
+DecorationFocus=$RGB_ACCENT
+DecorationHover=$RGB_ACCENT
+
+[Colors:Complementary]
+BackgroundNormal=$RGB_BG
+BackgroundAlternate=$RGB_PANEL
+ForegroundNormal=$RGB_FG
+ForegroundInactive=$RGB_DIM
+ForegroundActive=$RGB_ACCENT
+ForegroundLink=$RGB_ACCENT
+ForegroundVisited=$RGB_DIM
+ForegroundNegative=$RGB_ALERT
+ForegroundNeutral=$RGB_WARN
+ForegroundPositive=$RGB_ACCENT
+DecorationFocus=$RGB_ACCENT
+DecorationHover=$RGB_ACCENT
+
+[Colors:Header]
+BackgroundNormal=$RGB_BG
+BackgroundAlternate=$RGB_PANEL
+ForegroundNormal=$RGB_FG
+ForegroundInactive=$RGB_DIM
+ForegroundActive=$RGB_ACCENT
+ForegroundLink=$RGB_ACCENT
+ForegroundVisited=$RGB_DIM
+ForegroundNegative=$RGB_ALERT
+ForegroundNeutral=$RGB_WARN
+ForegroundPositive=$RGB_ACCENT
+DecorationFocus=$RGB_ACCENT
+DecorationHover=$RGB_ACCENT
+
+[WM]
+activeBackground=$RGB_BG
+activeForeground=$RGB_FG
+activeBlend=$RGB_ACCENT
+inactiveBackground=$RGB_PANEL
+inactiveForeground=$RGB_DIM
+inactiveBlend=$RGB_DIM
+
+[ColorEffects:Inactive]
+ChangeSelectionColor=true
+Color=$RGB_DIM
+ColorAmount=0.025
+ColorEffect=2
+ContrastAmount=0.1
+ContrastEffect=2
+Enable=true
+IntensityAmount=0
+IntensityEffect=0
+
+[ColorEffects:Disabled]
+Color=$RGB_DIM
+ColorAmount=0
+ColorEffect=0
+ContrastAmount=0.65
+ContrastEffect=1
+IntensityAmount=0.1
+IntensityEffect=0
+EOF
+
+bak "$CFG/kdeglobals"; bak "$CFG/kwinrc"; bak "$CFG/konsolerc"; bak "$CFG/plasmarc"
+
+# plasma-apply-colorscheme both merges the scheme into kdeglobals AND tells a
+# running session to reload it. Without a session it can refuse, so fall back to
+# merging the file ourselves — a bare "ColorScheme=" key recolours nothing.
+if plasma-apply-colorscheme "$SCHEME" >/dev/null 2>&1; then
+    ok "colour scheme applied via plasma-apply-colorscheme"
+else
+    python3 - "$SHARE/color-schemes/$SCHEME.colors" "$CFG/kdeglobals" <<'PY'
+import configparser, sys
+src, dst = sys.argv[1], sys.argv[2]
+r = configparser.RawConfigParser(strict=False); r.optionxform = str; r.read(src)
+w = configparser.RawConfigParser(strict=False); w.optionxform = str
+try: w.read(dst)
+except Exception: pass
+for s in r.sections():
+    if not w.has_section(s): w.add_section(s)
+    for k, v in r.items(s): w.set(s, k, v)
+if not w.has_section("General"): w.add_section("General")
+w.set("General", "ColorScheme", "VoidTactical")
+with open(dst, "w") as fh: w.write(fh, space_around_delimiters=False)
+PY
+    ok "colour scheme merged into kdeglobals (no live session to notify)"
+fi
+
+# --- 2. widget style: the Kvantum bridge -----------------------------------
+# The Kvantum skin is Tier-1 (cachy-branding builds it once and every Qt desktop
+# shares it), so here we only point Plasma at it.
+if [ -d "$CFG/Kvantum/void-tactical" ]; then
+    kwriteconfig6 --file kvantum.kvconfig --group General --key theme void-tactical 2>/dev/null
+    [ -f "$CFG/Kvantum/kvantum.kvconfig" ] || printf '[General]\ntheme=void-tactical\n' > "$CFG/Kvantum/kvantum.kvconfig"
+    kwriteconfig6 --file kdeglobals --group KDE --key widgetStyle kvantum
+    ok "widget style -> kvantum (void-tactical)"
+else
+    warn "Kvantum void-tactical theme not found — run cachy-branding first; using Breeze widgets"
+fi
+
+# --- 3. icons + fonts ------------------------------------------------------
+ICON_THEME=Papirus-Dark
+[ -d "$SHARE/icons/Luv-Void" ] && ICON_THEME=Luv-Void
+kwriteconfig6 --file kdeglobals --group Icons --key Theme "$ICON_THEME"
+for key in font menuFont toolBarFont smallestReadableFont; do
+    kwriteconfig6 --file kdeglobals --group General --key "$key" "Hack,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+done
+kwriteconfig6 --file kdeglobals --group General --key fixed "Hack,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+kwriteconfig6 --file kdeglobals --group WM --key activeFont "Hack,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+ok "icons -> $ICON_THEME, fonts -> Hack 10"
+
+# --- 4. Konsole ------------------------------------------------------------
+# Same ANSI values as the qterminal scheme, so the two terminals are provably
+# the same terminal (branding.md §5.10) rather than two similar-looking ones.
+log "Konsole skin (void-tactical + Hack)"
+cat > "$SHARE/konsole/$SCHEME.colorscheme" <<EOF
+[General]
+Description=Void Tactical
+Opacity=1
+Wallpaper=
+
+[Background]
+Color=$RGB_BG
+[BackgroundIntense]
+Color=$RGB_BG
+[BackgroundFaint]
+Color=$RGB_BG
+[Foreground]
+Color=$RGB_FG
+[ForegroundIntense]
+Color=255,255,255
+[ForegroundFaint]
+Color=$RGB_DIM
+[Color0]
+Color=$RGB_PANEL
+[Color0Intense]
+Color=$RGB_DIM
+[Color1]
+Color=224,108,117
+[Color1Intense]
+Color=224,108,117
+[Color2]
+Color=106,157,132
+[Color2Intense]
+Color=127,174,149
+[Color3]
+Color=229,192,123
+[Color3Intense]
+Color=229,192,123
+[Color4]
+Color=97,175,239
+[Color4Intense]
+Color=97,175,239
+[Color5]
+Color=198,120,221
+[Color5Intense]
+Color=198,120,221
+[Color6]
+Color=86,182,194
+[Color6Intense]
+Color=86,182,194
+[Color7]
+Color=$RGB_FG
+[Color7Intense]
+Color=255,255,255
+EOF
+cat > "$SHARE/konsole/$SCHEME.profile" <<EOF
+[Appearance]
+ColorScheme=$SCHEME
+Font=Hack,10,-1,5,400,0,0,0,0,0
+
+[General]
+Name=$SCHEME
+Parent=FALLBACK/
+
+[Scrolling]
+HistoryMode=2
+EOF
+kwriteconfig6 --file konsolerc --group "Desktop Entry" --key DefaultProfile "$SCHEME.profile"
+ok "Konsole -> $SCHEME profile (matches qterminal exactly)"
+
+# --- 5. desktop theme + wallpaper ------------------------------------------
+# breeze-dark is the closest stock Plasma theme to the palette; the colour scheme
+# above does the actual recolouring, so this only keeps panel/plasmoid chrome dark.
+if plasma-apply-desktoptheme breeze-dark >/dev/null 2>&1; then
+    ok "desktop theme -> breeze-dark"
+else
+    kwriteconfig6 --file plasmarc --group Theme --key name breeze-dark
+    ok "desktop theme -> breeze-dark (written to plasmarc)"
+fi
+kwriteconfig6 --file kdeglobals --group General --key ColorSchemeHint Dark 2>/dev/null
+
+WALL=""
+for w in "$ASSETS/wallpapers/void-cachy-hex.svg" "$ASSETS/wallpapers/void-cachy-flow.svg" \
+         "$ASSETS/wallpapers/cachy-void-official.svg"; do
+    [ -f "$w" ] && { WALL="$w"; break; }
+done
+if [ -n "$WALL" ]; then
+    # Plasma's wallpaper plugin is happier with a raster at screen size than with
+    # an SVG it has to rasterise every login; render once if ImageMagick is here.
+    PNG="$SHARE/cachy-void/wallpaper-plasma.png"
+    if command -v magick >/dev/null 2>&1 || command -v convert >/dev/null 2>&1; then
+        mkdir -p "$(dirname "$PNG")"
+        GEO=$(xrandr 2>/dev/null | awk '/\*/ {print $1; exit}'); [ -n "$GEO" ] || GEO=1920x1080
+        if command -v magick >/dev/null 2>&1; then
+            magick -background "#1b1d1e" "$WALL" -resize "$GEO^" -gravity center -extent "$GEO" "$PNG" 2>/dev/null && WALL="$PNG"
+        else
+            convert -background "#1b1d1e" "$WALL" -resize "$GEO^" -gravity center -extent "$GEO" "$PNG" 2>/dev/null && WALL="$PNG"
+        fi
+    fi
+    if plasma-apply-wallpaperimage "$WALL" >/dev/null 2>&1; then
+        ok "wallpaper -> $(basename "$WALL")"
+    else
+        warn "could not set the wallpaper live (no running Plasma?) — pick it in System Settings: $WALL"
+    fi
+fi
+
+# Some of the look simply cannot be set from outside a running Plasma: the
+# wallpaper lives in the desktop containment's config, which plasmashell owns and
+# rewrites, so writing it behind Plasma's back is both fragile and unsupported.
+# Rather than leave the first Plasma login half-branded, arm a one-shot autostart
+# that re-runs this applier INSIDE the session and then deletes itself. It is
+# gated OnlyShowIn=KDE, so it can never fire in LXQt or anywhere else.
+HOOK="$CFG/autostart/cachy-branding-plasma-firstrun.desktop"
+if $LIVE; then
+    rm -f "$HOOK"
+    ok "applied to the running Plasma session."
+    log "some apps only repaint on restart; a log out/in guarantees the full look."
+else
+    mkdir -p "$CFG/autostart"
+    {
+        printf '[Desktop Entry]\n'
+        printf 'Type=Application\n'
+        printf 'Name=Cachy-Void branding (first Plasma login)\n'
+        printf 'Exec=sh -c "cachy-branding-plasma; rm -f %s"\n' "$HOOK"
+        printf 'OnlyShowIn=KDE;\n'
+        printf 'X-GNOME-Autostart-enabled=true\n'
+    } > "$HOOK"
+    ok "applied — log in to the Plasma session to see it."
+    log "the wallpaper and any live-only bits finish applying at your first Plasma login."
+fi

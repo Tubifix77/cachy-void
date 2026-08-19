@@ -684,10 +684,38 @@ last/pinned choice rather than a fixed menu index; set your preferred default wi
 
 ## 14. Desktop Branding — the `void-tactical` look (opt-in)
 
-Cachy-Void ships an **optional** low-key desktop identity for **LXQt on X11** (the
-design spec is [`branding.md`](branding.md)): matte obsidian + one green accent, a
-schematic wallpaper, a thin top bar, a flat Plank dock, Rofi, Conky telemetry, and
-Picom shadows. It is opt-in and fully reversible — a Cachy-Void that leaves no scars.
+Cachy-Void ships an **optional** low-key desktop identity (the design spec is
+[`branding.md`](branding.md)): matte obsidian + one green accent, a schematic
+wallpaper, a thin top bar, a flat Plank dock, Rofi, Conky telemetry, and Picom
+shadows. It is opt-in and fully reversible — a Cachy-Void that leaves no scars.
+
+**It brands the desktops you actually have.** `cachy-de-detect` reports every
+desktop on the machine and what can be done for it:
+
+```bash
+cachy-de-detect --summary
+```
+
+```
+  lxqt       LXQt                   branded by the 'lxqt' applier — RUNNING NOW
+  plasma     KDE Plasma             branded by the 'plasma' applier
+  openbox    Openbox (bare session) branded by the 'lxqt' applier
+```
+
+If exactly one desktop can be branded, `deploy.sh` brands it and does not ask. If
+there is more than one it asks which — and a non-interactive install picks the
+session that is running rather than guessing. The answer is recorded in
+`/etc/cachy-void/branding-targets`; override it at any time with
+`--brand-de lxqt,plasma` (also `all` / `none`) at install time, or per run:
+
+```bash
+cachy-branding --de plasma
+```
+
+A desktop with no applier of its own is **not** a failure: it still gets every
+integration-free asset (Kvantum skin, icons, wallpaper, terminal scheme, login
+screen). Standalone window managers (i3, sway, dwm) are recognised and skipped on
+purpose — see [`rejected-ideas.md`](rejected-ideas.md).
 
 **1. Install the toolkit** (as root — packages + assets + the applier):
 
@@ -748,6 +776,93 @@ desktop provides invisibly — `cachy-branding` writes an autostart that launche
 `deploy.sh --with-branding` installs these (all optional — a missing one costs its
 icon, never the session). Nothing here runs under LXQt, which has its own panel
 plugins and XDG autostart.
+
+---
+
+### 14.2 KDE Plasma
+
+Plasma is branded by `cachy-branding-plasma`, which `cachy-branding` calls for you
+when `plasma` is one of your targets. It sets the colour scheme (one `.colors`
+file recolours every Qt/KDE app including titlebars), points Plasma at the same
+Kvantum skin and Luv-Void icons LXQt uses, gives Konsole the *exact* palette
+qterminal has, and sets a screen-sized wallpaper render.
+
+It deliberately leaves the panel, dock, compositor and launcher alone — Plasma
+provides those itself and does it well, which is why this applier is the smallest
+in the project (`branding.md` §5.12).
+
+**One thing needs a Plasma session to finish.** The wallpaper lives in a config
+only `plasmashell` may write, so if you apply the branding from another session
+(say, from LXQt), the applier leaves a one-shot autostart entry that re-runs
+itself at your first Plasma login and then deletes itself. You do not have to do
+anything; the first login just finishes the job. To apply it by hand instead:
+
+```bash
+cachy-branding-plasma
+```
+
+Reverting is `cachy-branding --remove` (which reverts every branded desktop), or
+`cachy-branding-plasma --remove` for Plasma alone.
+
+---
+
+### 14.3 Trying another desktop without committing (`cachy-de-trial`)
+
+Installing a second desktop is easy; *removing* it later is not, because nothing
+records what "KDE" actually was on your machine — `xbps` pulls in packages you
+never named, the desktop writes into your home, and it adds session entries your
+login screen then offers forever.
+
+`cachy-de-trial` records it, so the experiment stays an experiment:
+
+```bash
+sudo cachy-de-trial begin plasma
+sudo xbps-install -Sy plasma-desktop plasma-workspace-x11 plasma-nm konsole
+sudo cachy-de-trial diff
+```
+
+`begin` takes the before-picture (every installed package, the manually-installed
+set, session entries, runit services, alternatives, and your home's config dirs)
+and, on btrfs, a read-only snapshot alongside the ones `deploy.sh` and the updater
+take. `diff` then tells you exactly what changed at any point:
+
+```
+  packages added   : 163
+  packages removed : 0
+  sessions added   : 2
+  services added   : 0
+  home entries new : 0 (user boas)
+
+  explicitly installed (4) — what rollback removes by name:
+    konsole
+    plasma-desktop
+    plasma-nm
+    plasma-workspace-x11
+```
+
+Then decide:
+
+```bash
+sudo cachy-de-trial keep        # it works — close the trial, keep the desktop
+sudo cachy-de-trial rollback    # it does not — put the system back
+```
+
+**Rollback is deliberately conservative.** It removes the packages you explicitly
+installed, then sweeps up their leftover dependencies **only from within the set
+this trial added** — a plain `xbps-remove -o` could take unrelated orphans, so it
+is not used. Anything that existed before the trial is never touched, nothing is
+downgraded, and nothing in your home is deleted: new config dirs are *moved* into
+the trial's `quarantine/` directory, so a mistake costs you a `mv`, not data. It
+recomputes everything from live package state rather than trusting the record, and
+it prints the full plan before asking for confirmation (`--yes` to skip).
+
+`keep` closes the trial but keeps the record — `sudo cachy-de-trial rollback
+--trial <dir>` still works weeks later. `sudo cachy-de-trial list` shows every
+trial and whether it is open, kept, or rolled back.
+
+Note this tool is **not** part of the updater's narrow sudo grant (§4.1 of
+`architecture.md`) and must never be added to it: it is a hands-on maintenance
+tool you run as root deliberately, exactly like `deploy.sh`.
 
 ---
 

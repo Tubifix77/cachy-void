@@ -26,21 +26,64 @@ log(){ printf '%s==>%s %s\n' "$C" "$Z" "$*"; }
 ok(){ printf '%s ok%s %s\n' "$K" "$Z" "$*"; }
 warn(){ printf '%swarn%s %s\n' "$W" "$Z" "$*" >&2; }
 bak(){ [ -e "$1" ] && [ ! -e "$1.pre-cachy.bak" ] && cp -a "$1" "$1.pre-cachy.bak"; }
+# spawn CMD [ARGS...] — start a desktop daemon fully detached from this script.
+# Two things have to be true or the script never returns, which is how this was
+# found: `cachy-branding | tail` sat there forever with all its work already done.
+#   1. The redirection must land on the SUBSHELL, not just the last command. In
+#      `command -v x && setsid x >/dev/null &` the `&` backgrounds the whole
+#      AND-list, and that subshell inherits our stdout — so a pipe reader never
+#      sees EOF, no matter what the inner command redirects.
+#   2. setsid --fork guarantees an intermediate process that exits at once, so
+#      the daemon is reparented to init instead of staying our child and holding
+#      the script in wait().
+spawn(){ command -v "$1" >/dev/null 2>&1 || return 0; setsid --fork "$@" >/dev/null 2>&1 </dev/null; }
+_words(){ printf '%s' "$*"; }   # normalise a whitespace-separated list
 
 [ "$(id -u)" -ne 0 ] || { warn "run as your normal user, not root (LXQt config is per-user)"; exit 1; }
 [ -d "$ASSETS" ] || { warn "branding assets not found at $ASSETS (deploy.sh installs them)"; exit 1; }
 
 # --- args: --remove, and the opt-in shell choice --shell bash|zsh ---
 SHELL_CHOICE=""
+DE_ARG=""
 _prev=""
 for _arg in "$@"; do
     [ "$_prev" = "--shell" ] && { SHELL_CHOICE="$_arg"; _prev=""; continue; }
+    [ "$_prev" = "--de" ] && { DE_ARG="$_arg"; _prev=""; continue; }
     _prev="$_arg"
 done
 case "$SHELL_CHOICE" in ""|bash|zsh) : ;; *) warn "--shell must be 'bash' or 'zsh'"; exit 1 ;; esac
 
+# --- which desktop(s) to brand --------------------------------------------
+# The detector is shared with deploy.sh (cachy-de-detect --appliers), so the
+# install-time choice and the apply-time behaviour can never drift apart.
+# Resolution order, most explicit first:
+#   1. --de lxqt,plasma                    an explicit choice, right now
+#   2. /etc/cachy-void/branding-targets    what was chosen at install time
+#   3. cachy-de-detect --appliers          whatever is actually on the machine
+# No detector at all means an older install: assume LXQt, which is exactly what
+# this script did before appliers became selectable.
+TARGETS=""
+if [ -n "$DE_ARG" ]; then
+    TARGETS="$(printf '%s' "$DE_ARG" | tr ',' ' ')"
+elif [ -s /etc/cachy-void/branding-targets ]; then
+    TARGETS="$(grep -vE '^[[:space:]]*(#|$)' /etc/cachy-void/branding-targets | tr '\n' ' ')"
+elif command -v cachy-de-detect >/dev/null 2>&1; then
+    TARGETS="$(cachy-de-detect --appliers 2>/dev/null | tr '\n' ' ')"
+fi
+TARGETS="$(_words $TARGETS)"               # collapse blanks / trim the ends
+[ -n "$TARGETS" ] || TARGETS="lxqt"
+DO_LXQT=false; DO_PLASMA=false
+for _t in $TARGETS; do
+    case "$_t" in
+        lxqt|openbox) DO_LXQT=true ;;
+        plasma)       DO_PLASMA=true ;;
+        *) warn "unknown branding target '$_t' - ignored" ;;
+    esac
+done
+
 if [ "${1:-}" = "--remove" ]; then
     log "restoring pre-branding config from backups"
+    command -v cachy-branding-plasma >/dev/null 2>&1 && cachy-branding-plasma --remove
     for f in "$CFG"/lxqt/lxqt.conf "$CFG"/lxqt/session.conf "$CFG"/lxqt/panel.conf \
              "$CFG"/Kvantum/kvantum.kvconfig "$CFG"/openbox/rc.xml \
              "$CFG"/lxqt/lxqt-powermanagement.conf "$CFG"/gtk-3.0/settings.ini \
@@ -89,7 +132,7 @@ PY
     done
     command -v papirus-folders >/dev/null 2>&1 && sudo papirus-folders -C blue -t Papirus-Dark 2>/dev/null
     pkill -x picom 2>/dev/null; pkill -x plank 2>/dev/null; pkill -x conky 2>/dev/null; pkill -x xcape 2>/dev/null; pkill -x tint2 2>/dev/null
-    pkill -f lxqt-powermanagement 2>/dev/null; command -v lxqt-powermanagement >/dev/null 2>&1 && setsid lxqt-powermanagement >/dev/null 2>&1 &
+    pkill -f lxqt-powermanagement 2>/dev/null; spawn lxqt-powermanagement
     ok "removed — log out/in for a full reset."
     exit 0
 fi
@@ -142,6 +185,7 @@ PY
     ok "Kvantum -> void-tactical"
 else warn "KvArcDark not installed (kvantum pkg) — skipping Kvantum skin"; fi
 
+if $DO_LXQT; then
 # ============================================================ LXQt panel theme
 log "LXQt panel theme (void-tactical, blue->green)"
 LXSRC=/usr/share/lxqt/themes/kvantum
@@ -194,6 +238,7 @@ QSS
     ok "LXQt theme -> void-tactical (handle dots removed)"
 else warn "LXQt 'kvantum' theme not present — panel keeps current theme"; fi
 
+fi
 # ============================================================ icon theme (Luv-Void — mono)
 # Build "Luv-Void": the Luv icon theme (deploy.sh fetches it to $ASSETS/luv) with
 # every colour desaturated to its luminance grey. Done at the SVG level (not a
@@ -344,6 +389,7 @@ PY
 fi
 ok "icon theme = $ICON_THEME"
 
+if $DO_LXQT; then
 # ============================================================ LXQt appearance (lxqt.conf / session.conf)
 log "LXQt appearance (Kvantum style, $ICON_THEME, Hack, palette)"
 mkdir -p "$CFG/lxqt"; LX="$CFG/lxqt/lxqt.conf"; bak "$LX"
@@ -560,6 +606,7 @@ OBE="$CFG/openbox/environment"; bak "$OBE"
 } > "$OBE"
 ok "openbox session -> dark Qt (Kvantum) for qterminal/pcmanfm-qt/updater"
 
+fi
 # ============================================================ qterminal skin
 # Point qterminal at the void-tactical color scheme + Hack. The scheme FILE ships to
 # the system qtermwidget dir via deploy.sh --with-branding (qterminal only reads the
@@ -628,6 +675,7 @@ printf '[Desktop Entry]\nType=Application\nName=Trash\nComment=Open the trash\nE
 command -v pcmanfm-qt >/dev/null 2>&1 && pcmanfm-qt --set-wallpaper="$WPV" --wallpaper-mode=stretch 2>/dev/null
 ok "wallpaper set; desktop icons cleared (Plank is the launcher)"
 
+if $DO_LXQT; then
 # ============================================================ panel: top bar
 # Surgical: keep the user's existing (working) panel.conf and only nudge
 # position/size/plugin-list — do NOT rebuild [panel1]/[mainmenu] from scratch.
@@ -728,7 +776,7 @@ if command -v plank >/dev/null 2>&1; then
     # TV output is fully negotiated leaves it stranded near the old (laptop
     # panel) screen center until next restart. A short delay lets X/xrandr
     # settle on the real output first.
-    printf '[Desktop Entry]\nType=Application\nName=plank\nExec=sh -c "sleep 8 && exec plank"\n' > "$CFG/autostart/plank.desktop"
+    printf '[Desktop Entry]\nType=Application\nName=plank\nExec=sh -c "sleep 8 && exec plank"\nOnlyShowIn=LXQt;\n' > "$CFG/autostart/plank.desktop"
     ok "Plank configured"
 fi
 
@@ -739,10 +787,18 @@ fi
 # Plank dock already. Writing to ~/Desktop is the user's space, not ours.
 # --remove still deletes a launcher left by an older version (see the block above).
 
+# Every autostart entry we write is gated OnlyShowIn=LXQt; on purpose. These are
+# LXQt-session furniture, and without the gate they leak into ANY desktop the user
+# later installs beside LXQt — verified live when Plasma was added to the test box:
+# picom would have run as a second compositor underneath KWin, and Plank would have
+# stacked a dock on top of Plasma's own panel. The gate also OVERRIDES Void's own
+# ungated /etc/xdg/autostart/picom.desktop, because a user-level entry with the same
+# filename replaces the system one outright. The bare Openbox session is unaffected
+# either way: it never reads XDG autostart at all (see its own autostart above).
 # ============================================================ Picom / Rofi / Conky configs
 mkdir -p "$CFG/picom" "$CFG/rofi" "$CFG/conky" "$CFG/autostart"
 [ -f "$ASSETS/picom.conf" ] && cp -f "$ASSETS/picom.conf" "$CFG/picom/picom.conf"
-printf '[Desktop Entry]\nType=Application\nName=picom\nExec=picom --config %s/picom/picom.conf\n' "$CFG" > "$CFG/autostart/picom.desktop"
+printf '[Desktop Entry]\nType=Application\nName=picom\nExec=picom --config %s/picom/picom.conf\nOnlyShowIn=LXQt;\n' "$CFG" > "$CFG/autostart/picom.desktop"
 
 # pasystray ships /etc/xdg/autostart/pasystray.desktop, so a DESKTOP session starts
 # it automatically — and LXQt's panel already has a volume plugin, giving TWO volume
@@ -810,7 +866,7 @@ sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.i
 # delayed autostart: same TV-detection race as Plank — gap_x/gap_y anchoring
 # (top_right) gets computed against whatever screen geometry is live when
 # conky starts, so it drifts if that's the wrong output.
-printf '[Desktop Entry]\nType=Application\nName=conky\nExec=sh -c "sleep 8 && exec env LC_CTYPE=C.UTF-8 conky -c %s/conky/conky.conf"\n' "$CFG" > "$CFG/autostart/conky.desktop"
+printf '[Desktop Entry]\nType=Application\nName=conky\nExec=sh -c "sleep 8 && exec env LC_CTYPE=C.UTF-8 conky -c %s/conky/conky.conf"\nOnlyShowIn=LXQt;\n' "$CFG" > "$CFG/autostart/conky.desktop"
 
 # --- left "SYSTEM" identity panel (the "what it IS" spec-sheet) --------------
 # A second, static Conky anchored middle-left, to balance the two right-side
@@ -934,7 +990,7 @@ PY
 # DEGREE SIGN — ran without it and rendered 'Â°C' (owner-reported 2026-08-19).
 # Neither panel has locale-sensitive numbers, so pinning LC_CTYPE is no-downside
 # (unlike the telemetry Conky, whose decimal formatting we leave to the session locale).
-printf '[Desktop Entry]\nType=Application\nName=conky-system\nExec=sh -c "sleep 8 && exec env LC_CTYPE=C.UTF-8 conky -c %s/conky/conky-system.conf"\n' "$CFG" > "$CFG/autostart/conky-system.desktop"
+printf '[Desktop Entry]\nType=Application\nName=conky-system\nExec=sh -c "sleep 8 && exec env LC_CTYPE=C.UTF-8 conky -c %s/conky/conky-system.conf"\nOnlyShowIn=LXQt;\n' "$CFG" > "$CFG/autostart/conky-system.desktop"
 # hide lxqt-powermanagement's tray icon — its built-in charge indicator is a
 # code-drawn green ring (not themeable) and the theme/battery icon types render
 # blank on this stack; battery status lives in Conky instead (BAT_LINE above).
@@ -969,7 +1025,7 @@ n=(max(ids)+1) if ids else 1
 open(p,'w').write(t.rstrip('\n')+'\n\n[Super_L.%d]\nComment=Show/hide main menu\nEnabled=true\npath=%s\n'%(n,path))
 print('bound Super_L ->',path)
 PY
-command -v lxqt-globalkeysd >/dev/null 2>&1 && setsid lxqt-globalkeysd >/dev/null 2>&1 &
+spawn lxqt-globalkeysd
 pkill -9 -x lxqt-panel 2>/dev/null; sleep 2   # lxqt-session respawns exactly one (reads new config)
 command -v openbox >/dev/null 2>&1 && openbox --reconfigure 2>/dev/null
 # reload the desktop so it picks up the new icon theme + the cleared shortcuts.
@@ -979,24 +1035,25 @@ command -v openbox >/dev/null 2>&1 && openbox --reconfigure 2>/dev/null
 # definitive apply — the closing message says so.)
 if pgrep -x pcmanfm-qt >/dev/null 2>&1; then
     pkill -9 -x pcmanfm-qt 2>/dev/null; sleep 2
-    pgrep -x pcmanfm-qt >/dev/null 2>&1 || setsid pcmanfm-qt --desktop --profile=lxqt >/dev/null 2>&1 &
+    pgrep -x pcmanfm-qt >/dev/null 2>&1 || spawn pcmanfm-qt --desktop --profile=lxqt
 fi
 for a in picom plank conky; do
     command -v "$a" >/dev/null 2>&1 || continue
     pkill -x "$a" 2>/dev/null; sleep 1
     case "$a" in
-        picom) setsid picom --config "$CFG/picom/picom.conf" >/dev/null 2>&1 & ;;
-        plank) setsid plank >/dev/null 2>&1 & ;;
-        conky) setsid env LC_CTYPE=C.UTF-8 conky -c "$CFG/conky/conky.conf" >/dev/null 2>&1 &
-               [ -f "$CFG/conky/conky-system.conf" ] && setsid env LC_CTYPE=C.UTF-8 conky -c "$CFG/conky/conky-system.conf" >/dev/null 2>&1 & ;;
+        picom) spawn picom --config "$CFG/picom/picom.conf" ;;
+        plank) spawn plank ;;
+        conky) spawn env LC_CTYPE=C.UTF-8 conky -c "$CFG/conky/conky.conf"
+               [ -f "$CFG/conky/conky-system.conf" ] && spawn env LC_CTYPE=C.UTF-8 conky -c "$CFG/conky/conky-system.conf" ;;
     esac
 done
 # restart power management so showIcon=false takes effect (drops the tray icon)
 if pgrep -f lxqt-powermanagement >/dev/null 2>&1; then
     pkill -f lxqt-powermanagement 2>/dev/null; sleep 1
-    command -v lxqt-powermanagement >/dev/null 2>&1 && setsid lxqt-powermanagement >/dev/null 2>&1 &
+    spawn lxqt-powermanagement
 fi
 
+fi
 # ============================================================ shell (OPT-IN, --shell)
 # The terminal SKIN above is unconditional (pure appearance). Changing the shell is a
 # bigger, personal decision, so it only happens if asked. Two branded flavours, same
@@ -1051,10 +1108,19 @@ ZRC
     fi
 fi
 
-cat <<EOF
+# ============================================================ KDE Plasma applier
+# Tier-2 appliers are separate executables so that adding one cannot regress the
+# desktops that already work. Plasma's lives in cachy-branding-plasma.
+if $DO_PLASMA; then
+    if command -v cachy-branding-plasma >/dev/null 2>&1; then
+        log "handing over to the Plasma applier"
+        cachy-branding-plasma || warn "the Plasma applier reported a problem"
+    else
+        warn "plasma is a branding target but cachy-branding-plasma is not installed"
+    fi
+fi
 
-${K}Cachy-Void desktop applied.${Z}
-  * Log out / back in once for every app to pick up the Kvantum style + env.
-  * Menu:      tap Super (Windows key)      Launcher: Super+Space (Rofi)
-  * Revert:    cachy-branding --remove      (then log out/in)
-EOF
+printf '\n%sCachy-Void desktop applied.%s  (branded: %s)\n' "$K" "$Z" "$TARGETS"
+printf '  * Log out / back in once for every app to pick up the Kvantum style + env.\n'
+$DO_LXQT && printf '  * Menu:      tap Super (Windows key)      Launcher: Super+Space (Rofi)\n'
+printf '  * Revert:    cachy-branding --remove      (then log out/in)\n'

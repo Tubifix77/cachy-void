@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# cachy-de-detect — which desktop environments are on this machine, which one is
+# running, and which of them Cachy-Void can brand.
+#
+# One detector, two callers, so they can never disagree: deploy.sh asks it at
+# install time (as root, possibly from a bare TTY with no session at all) to
+# decide what to offer, and cachy-branding asks it at apply time (as the user,
+# inside a session) to decide what to write. Both read the same table below.
+#
+# What "supported" means here (branding.md §6):
+#   tier 2  a real applier exists — the look is written through that desktop's
+#           own config mechanism
+#   tier 1  no applier: the desktop still gets every integration-free asset
+#           (Kvantum skin, icons, wallpaper, terminal scheme, SDDM greeter).
+#           A supported outcome, not a failure.
+#   tier 0  deliberately not a branding target. Standalone window managers
+#           (i3, sway, dwm) are listed so the user can see they were recognised
+#           and skipped on purpose, not missed.
+#
+# The bare Openbox session is a special case with a reason: it is branded by the
+# LXQt applier, because on Void LXQt *is* Openbox plus a panel, so the assets are
+# already there (branding.md §5.9). It therefore maps to applier "lxqt", and the
+# choice a user is offered is over APPLIERS, not desktops — otherwise they would
+# be asked twice about one piece of work.
+#
+# Usage:
+#   cachy-de-detect              TSV: id, label, applier, tier, state, evidence
+#   cachy-de-detect --appliers   unique applier ids worth running (current first)
+#   cachy-de-detect --current    id of the running session (exit 1 if unknown)
+#   cachy-de-detect --summary    one human-readable line per desktop
+#   cachy-de-detect --applier-of ID
+#
+# Testability: CACHY_DE_ROOT prefixes every filesystem probe and CACHY_DE_PATH
+# replaces $PATH for binary probes, so the whole matrix can be exercised against
+# a fake tree without a desktop installed.
+set -uo pipefail
+
+ROOT="${CACHY_DE_ROOT:-}"
+BINPATH="${CACHY_DE_PATH:-$PATH}"
+
+# id | label | applier | tier | binaries | session .desktop files | XDG_CURRENT_DESKTOP names
+TABLE='
+lxqt|LXQt|lxqt|2|lxqt-session|lxqt.desktop|LXQt
+plasma|KDE Plasma|plasma|2|plasmashell,startplasma-x11,startplasma-wayland|plasma.desktop,plasmax11.desktop,plasmawayland.desktop|KDE,plasma
+openbox|Openbox (bare session)|lxqt|2|openbox|openbox.desktop|Openbox,OPENBOX
+xfce|Xfce|-|1|xfce4-session|xfce.desktop|XFCE
+gnome|GNOME|-|1|gnome-shell|gnome.desktop,gnome-xorg.desktop|GNOME
+mate|MATE|-|1|mate-session|mate.desktop|MATE
+cinnamon|Cinnamon|-|1|cinnamon-session|cinnamon.desktop|X-Cinnamon,Cinnamon
+budgie|Budgie|-|1|budgie-desktop|budgie-desktop.desktop|Budgie
+deepin|Deepin|-|1|startdde|deepin.desktop|Deepin
+i3|i3 (window manager)|-|0|i3|i3.desktop|i3
+sway|Sway (window manager)|-|0|sway|sway.desktop|sway
+dwm|dwm (window manager)|-|0|dwm|dwm.desktop|dwm
+'
+
+have_bin(){ # $1 = binary name — honours CACHY_DE_PATH and CACHY_DE_ROOT
+    local b="$1" d
+    local IFS=:
+    for d in $BINPATH; do
+        [ -n "$d" ] || continue
+        [ -x "$ROOT$d/$b" ] && { printf '%s\n' "$d/$b"; return 0; }
+    done
+    return 1
+}
+
+have_session(){ # $1 = comma-separated .desktop names
+    local names="$1" n d
+    local IFS=,
+    for n in $names; do
+        for d in /usr/share/xsessions /usr/share/wayland-sessions /usr/local/share/xsessions; do
+            [ -f "$ROOT$d/$n" ] && { printf '%s\n' "$d/$n"; return 0; }
+        done
+    done
+    return 1
+}
+
+# current_id — what is running right now. XDG_CURRENT_DESKTOP is authoritative
+# when set (the session sets it); otherwise fall back to a process probe, which
+# is what makes this work when deploy.sh is run with sudo from a terminal that
+# scrubbed the environment.
+current_id(){
+    local row id xdg bins b
+    xdg="${XDG_CURRENT_DESKTOP:-}"
+    if [ -n "$xdg" ]; then
+        printf '%s\n' "$TABLE" | while IFS='|' read -r id label applier tier bins sess names; do
+            [ -n "$id" ] || continue
+            local n
+            local IFS=,
+            for n in $names; do
+                case ":$xdg:" in *":$n:"*) printf '%s\n' "$id"; return 0 ;; esac
+                # XDG_CURRENT_DESKTOP is colon-separated and case-varies in the wild
+                printf '%s' "$xdg" | tr ':' '\n' | grep -qix -- "$n" && { printf '%s\n' "$id"; return 0; }
+            done
+        done | head -1 | grep . && return 0
+    fi
+    # process probe, restricted to this user's processes
+    printf '%s\n' "$TABLE" | while IFS='|' read -r id label applier tier bins sess names; do
+        [ -n "$id" ] || continue
+        local IFS=,
+        for b in $bins; do
+            pgrep -u "${SUDO_USER:-$(id -un)}" -x "$b" >/dev/null 2>&1 && { printf '%s\n' "$id"; return 0; }
+        done
+    done | head -1 | grep . && return 0
+    return 1
+}
+
+detect(){ # TSV to stdout
+    local cur; cur="$(current_id 2>/dev/null)" || cur=""
+    local id label applier tier bins sess names ev state b n
+    printf '%s\n' "$TABLE" | while IFS='|' read -r id label applier tier bins sess names; do
+        [ -n "$id" ] || continue
+        ev=""
+        local IFS=,
+        for b in $bins; do
+            ev="$(have_bin "$b")" && break
+        done
+        unset IFS
+        if [ -z "$ev" ]; then
+            ev="$(have_session "$sess")" || ev=""
+            [ -n "$ev" ] && ev="session:$ev"
+        else
+            ev="bin:$ev"
+        fi
+        [ -n "$ev" ] || continue
+        if [ "$id" = "$cur" ]; then state=current; else state=installed; fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$label" "$applier" "$tier" "$state" "$ev"
+    done
+}
+
+# appliers — the unique, runnable appliers for what is installed, current
+# session first. This is the list a human should be asked to choose from.
+appliers(){
+    local tsv; tsv="$(detect)"
+    {
+        printf '%s\n' "$tsv" | awk -F'\t' '$4=="2" && $5=="current" {print $3}'
+        printf '%s\n' "$tsv" | awk -F'\t' '$4=="2" {print $3}'
+    } | awk 'NF && !seen[$0]++'
+}
+
+case "${1:-}" in
+    ""|--tsv)   detect ;;
+    --appliers) appliers ;;
+    --current)  current_id || exit 1 ;;
+    --applier-of)
+        [ -n "${2:-}" ] || { echo "usage: cachy-de-detect --applier-of ID" >&2; exit 2; }
+        printf '%s\n' "$TABLE" | awk -F'|' -v want="$2" '$1==want {print $3; found=1} END {exit !found}'
+        ;;
+    --summary)
+        detect | while IFS=$'\t' read -r id label applier tier state ev; do
+            case "$tier" in
+                2) note="branded by the '$applier' applier" ;;
+                1) note="shared assets only (no applier yet)" ;;
+                *) note="not a branding target (window manager)" ;;
+            esac
+            [ "$state" = current ] && note="$note — RUNNING NOW"
+            printf '  %-10s %-22s %s\n' "$id" "$label" "$note"
+        done
+        ;;
+    -h|--help) sed -n '2,34p' "$0" | sed 's/^#\( \|$\)//' ;;
+    *) echo "cachy-de-detect: unknown option: $1" >&2; exit 2 ;;
+esac

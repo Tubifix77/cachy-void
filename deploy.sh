@@ -25,7 +25,7 @@
 # Usage:
 #   sudo ./deploy.sh [--user NAME] [--void-packages DIR] [--march ARCH]
 #                    [--jobs N] [--with-grub] [--with-schedule] [--with-branding]
-#                    [--with-networkmanager] [--no-multilib]
+#                    [--with-networkmanager] [--no-multilib] [--brand-de LIST]
 #                    [--hud-profile auto|full|minimal]
 #                    [--tag core|test|opt] [--simulate] [--dry-run] [--root DIR]
 #   sudo ./deploy.sh --log                 [--root DIR]
@@ -99,6 +99,10 @@ readonly PKG_NETWORK="NetworkManager nm-tray"
 readonly CACHY_UPDATER_GUI="/usr/local/bin/cachy-updater-gui"
 readonly BRANDING_ASSETS="/usr/share/cachy-void/branding"
 readonly CACHY_BRANDING_BIN="/usr/local/bin/cachy-branding"
+readonly CACHY_BRANDING_PLASMA="/usr/local/bin/cachy-branding-plasma"
+readonly CACHY_DE_DETECT="/usr/local/bin/cachy-de-detect"
+readonly CACHY_DE_TRIAL="/usr/local/bin/cachy-de-trial"
+readonly BRANDING_TARGETS="/etc/cachy-void/branding-targets"
 
 # Fixed install location for the mirrored Python engine (§6/§8.9).
 readonly CACHY_ENGINE="/usr/libexec/cachy-void-updater"
@@ -115,6 +119,7 @@ DRY_RUN=false
 WITH_GRUB=false
 WITH_SCHEDULE=false       # §4.9: also ENABLE the unattended cachy-void-update timer
 WITH_BRANDING=false       # branding: install the void-tactical desktop toolkit + applier
+BRAND_DE=""               # branding: which desktops to brand (empty = detect, ask if >1)
 WITH_NM=false             # network: install NetworkManager + nm-tray (laptop WiFi picker)
 WITH_MULTILIB=true        # §3.4: enable multilib + 32-bit driver libs (--no-multilib opts out)
 HUD_PROFILE="auto"        # §3.4 MangoHud config: auto|full|minimal (minimal = legacy Optimus)
@@ -172,6 +177,7 @@ parse_args() {
             --with-grub)      WITH_GRUB=true ;;
             --with-schedule)  WITH_SCHEDULE=true ;;
             --with-branding)  WITH_BRANDING=true ;;
+            --brand-de)       BRAND_DE="${2:?--brand-de needs lxqt|plasma|all|none (comma-separated)}"; shift ;;
             --with-networkmanager) WITH_NM=true ;;
             --no-multilib)    WITH_MULTILIB=false ;;
             --hud-profile)    HUD_PROFILE="${2:?--hud-profile needs auto|full|minimal}"; shift ;;
@@ -657,6 +663,105 @@ install_gaming_userspace() {
     log "gaming layer ready — launch: cachy-game %command% | Proton-CachyOS: run 'cachy-proton' (per-user)"
 }
 
+# select_branding_targets — decide WHICH desktops get branded, and record it.
+#
+# The rule (branding.md §6): brand the desktop that is actually here. If the
+# machine has exactly one desktop we can brand, that is not a decision worth
+# interrupting an install for — just brand it. If it has more than one, the
+# choice belongs to the user, so ask; and if nobody is there to ask (a piped or
+# scripted install), fall back to the session that is currently running rather
+# than guessing, and say out loud what was chosen.
+#
+# Detection is delegated to cachy-de-detect — the SAME detector cachy-branding
+# uses at apply time, so an install-time choice and an apply-time behaviour can
+# never drift apart. We call the copy in our own source tree, because the
+# installed one does not exist yet on a first run. CACHY_DE_ROOT makes it probe
+# the target root under --root, so an offline install detects the target
+# machine's desktops and not this one's.
+_words() { printf '%s' "$*"; }   # normalise a whitespace-separated list
+
+select_branding_targets() {
+    local detect="$SYS_DIR/bin/cachy-de-detect"
+    local avail="" n=0
+    if [ -x "$detect" ]; then
+        avail="$(CACHY_DE_ROOT="$ROOT" "$detect" --appliers 2>/dev/null | tr '\n' ' ')"
+    fi
+    avail="$(_words $avail)"
+    n=$(printf '%s' "$avail" | wc -w)
+
+    if [ -n "$BRAND_DE" ]; then
+        case "$BRAND_DE" in
+            none) BRAND_DE=""; log "branding targets: none (--brand-de none) — shared assets only" ;;
+            all)  BRAND_DE="$avail"; log "branding targets: $BRAND_DE (--brand-de all)" ;;
+            *)    BRAND_DE="$(_words $(printf '%s' "$BRAND_DE" | tr ',' ' '))"
+                  log "branding targets: $BRAND_DE (--brand-de)" ;;
+        esac
+        return 0
+    fi
+
+    if [ "$n" -eq 0 ]; then
+        BRAND_DE=""
+        warn "no desktop with a dedicated applier was found on this system."
+        warn "  The shared assets (Kvantum skin, icons, wallpaper, terminal scheme, login"
+        warn "  screen) still install and work anywhere; only the per-desktop integration"
+        warn "  is skipped. Pass --brand-de lxqt if you are installing a desktop later."
+        return 0
+    fi
+    if [ "$n" -eq 1 ]; then
+        BRAND_DE="$avail"
+        log "one brandable desktop found ($BRAND_DE) — branding it, no question asked"
+        return 0
+    fi
+
+    # more than one: the choice is the user's
+    log "this machine has more than one desktop Cachy-Void can brand:"
+    [ -x "$detect" ] && CACHY_DE_ROOT="$ROOT" "$detect" --summary 2>/dev/null
+    local cur=""
+    [ -x "$detect" ] && cur="$(CACHY_DE_ROOT="$ROOT" "$detect" --applier-of "$(CACHY_DE_ROOT="$ROOT" "$detect" --current 2>/dev/null)" 2>/dev/null)"
+    if [ ! -t 0 ]; then
+        if [ -n "$cur" ]; then
+            BRAND_DE="$cur"
+            warn "non-interactive install: branding the RUNNING session only ($BRAND_DE)."
+        else
+            BRAND_DE="$avail"
+            warn "non-interactive install and no running session: branding all of them ($BRAND_DE)."
+        fi
+        warn "  Change it any time with: cachy-branding --de <list>   (or re-run with --brand-de)"
+        return 0
+    fi
+    local def="${cur:-$avail}"
+    printf '\n  Which should get the void-tactical look?\n'
+    printf '    - a space-separated list from: %s\n' "$avail"
+    printf '    - "all" for every one of them, "none" for shared assets only\n'
+    printf '  [default: %s] > ' "$def"
+    local reply=""
+    read -r reply </dev/tty || reply=""
+    case "$reply" in
+        "")     BRAND_DE="$def" ;;
+        all)    BRAND_DE="$avail" ;;
+        none)   BRAND_DE="" ;;
+        *)      BRAND_DE="$(_words $(printf '%s' "$reply" | tr ',' ' '))" ;;
+    esac
+    log "branding targets: ${BRAND_DE:-none}"
+}
+
+# write_branding_targets — persist the choice where cachy-branding reads it, so a
+# user who just runs `cachy-branding` later gets the same answer without having
+# to remember a flag. Ledger-tracked, so --uninstall takes it away again.
+write_branding_targets() {
+    local tmp; tmp="$(mktemp)"
+    {
+        printf '# Which desktop appliers cachy-branding should run on this machine.\n'
+        printf '# Written by deploy.sh; one applier id per line. Override at any time with\n'
+        printf '#   cachy-branding --de lxqt,plasma\n'
+        printf '# Valid ids come from: cachy-de-detect --appliers\n'
+        local t
+        for t in $BRAND_DE; do printf '%s\n' "$t"; done
+    } > "$tmp"
+    install_file "$tmp" "$BRANDING_TARGETS" 0644 root root
+    rm -f -- "$tmp"
+}
+
 # install_branding — the opt-in void-tactical LXQt desktop (branding.md). Installs
 # the toolkit packages + mirrors the theme assets + the per-user `cachy-branding`
 # applier. The look itself is applied by the USER running `cachy-branding` (LXQt
@@ -665,7 +770,7 @@ install_branding() {
     local p
     for p in $PKG_BRANDING; do ensure_pkg "$p"; done
     ensure_pkg arc-theme optional        # GTK-app coherence
-    ensure_pkg font-hack optional        # the engineered mono
+    ensure_pkg font-hack-ttf optional    # the engineered mono (Void ships it as font-hack-TTF)
     ensure_pkg ImageMagick optional      # renders the login wallpaper + flat panel
     ensure_pkg feh optional              # wallpaper setter for the bare-openbox session
     ensure_pkg tint2 optional            # panel/taskbar for the bare-openbox session
@@ -698,6 +803,8 @@ install_branding() {
     ensure_pkg "$PKG_XSETTINGSD" optional
     for _t in $PKG_WM_TRAY; do ensure_pkg "$_t" optional; done
     install_file "$SYS_DIR/bin/cachy-branding" "$CACHY_BRANDING_BIN" 0755 root root
+    install_file "$SYS_DIR/bin/cachy-branding-plasma" "$CACHY_BRANDING_PLASMA" 0755 root root
+    write_branding_targets
     install_greeter        # SDDM login screen (system-level; needs root, done here)
     log "branding toolkit installed — apply the look by running (as your user): cachy-branding"
 }
@@ -709,6 +816,15 @@ install_branding() {
 # at all, so "the updater shows you a button" was simply false there. PyQt5 is
 # ensured as OPTIONAL: on a headless/minimal box the script still lands but stays
 # inert, and the CLI is unaffected.
+# install_de_tools — CORE, like the updater GUI. cachy-de-detect is what makes
+# branding land on the right desktop, and cachy-de-trial is what makes trying a
+# second desktop a reversible experiment instead of a one-way door. Both are
+# dependency-free shell scripts, so there is no cost to always having them.
+install_de_tools() {
+    install_file "$SYS_DIR/bin/cachy-de-detect" "$CACHY_DE_DETECT" 0755 root root
+    install_file "$SYS_DIR/bin/cachy-de-trial"  "$CACHY_DE_TRIAL"  0755 root root
+}
+
 install_updater_gui() {
     ensure_pkg python3-PyQt5 optional
     install_file "$SYS_DIR/bin/cachy-updater-gui" "$CACHY_UPDATER_GUI" 0755 root root
@@ -1241,9 +1357,11 @@ do_install() {
     install_gaming_userspace
 
     install_updater_gui
+    install_de_tools
 
     if $WITH_BRANDING; then
         log "[+] void-tactical desktop branding (opt-in, --with-branding)"
+        select_branding_targets
         install_branding
     fi
 
@@ -1294,6 +1412,11 @@ Next steps / notes:
     daily cachy-void-update timer (edit /etc/sv/cachy-void-update/conf for the time).
   * Pre-deploy snapshots (§9.5) auto-arm on btrfs. If you convert to btrfs LATER,
     re-run deploy.sh once so it creates the $SNAP_DIR_DEFAULT subvol.
+  * Desktops on this box: run  cachy-de-detect --summary  to see what was found and
+    which of them the branding applies to (recorded in $BRANDING_TARGETS).
+  * Trying a second desktop? Wrap it so it stays reversible:
+      sudo cachy-de-trial begin plasma && sudo xbps-install -Sy plasma-desktop ...
+      sudo cachy-de-trial diff   (what changed)    sudo cachy-de-trial rollback
   * Desktop branding (void-tactical LXQt) is opt-in: re-run with --with-branding to
     install the toolkit, then apply the look as your user:  cachy-branding
     (revert with: cachy-branding --remove).
