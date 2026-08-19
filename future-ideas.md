@@ -8,9 +8,11 @@ What exists is documented where it belongs: the design in
 [`branding.md`](branding.md), and the history in `git log`. Nothing is recorded
 here twice.
 
-Two things that are *not* ideas stay at the bottom, because they govern which
-ideas are worth having: the **selection rule** (§6) and the **closed decisions**
-(§7). Check both before proposing anything.
+Two companions govern which ideas are worth having, and both live outside this
+list: the **selection rule** for any addition is §6 below, and everything already
+turned down is in [`rejected-ideas.md`](rejected-ideas.md) — check it before
+proposing something, because a rejected idea stays an idea until the verdict is
+written down.
 
 ---
 
@@ -159,24 +161,5 @@ design; the kernel is the only bill worth paying. (Our own *config* appliers,
 like §1's Tier-2 work, are not packages and are not disqualified — but they are
 not free either.)
 
----
-
-## 7. Closed — do not re-propose
-
-Each of these was decided, not deferred. The listed condition is the *only* thing
-that reopens it.
-
-| Idea | Verdict | Reopens if |
-|---|---|---|
-| **ananicy-cpp** (automatic nice/ioprio rules) | Ruled out permanently — not in Void's repos, so adopting it means maintaining a srcpkg *and* a rules file forever (§6) | Void packages it upstream (`xbps-query -Rs ananicy` returns a hit) |
-| **sched-ext / scx userspace** | Same disposition — no Void packages, and BORE is the identity | Void packages it |
-| **`mitigations=off`** | Rejected — invariant I7 | never |
-| **linux-tkg / XanMod** | Rejected — we fork Void's *own* kernel template; BORE already works | never |
-| **Standalone distro / binary repo / ISO installer** | Rejected — the overlay rides upstream Void so it doesn't rot, and `get.sh` already reduced installing to one pasted line | never |
-| **A locked-in desktop (Plasma or otherwise)** | Rejected — the original arguments were Wayland-era KWin features argued from hardware this project doesn't have; desktops are detected and optional (§1) | never |
-| **Auto-purging old kernels** | Rejected — a kernel that boots healthy today can still fail later, and a rebuild costs hours. Leftovers are *reported* with size, role and the exact command instead | never |
-| **A "purge kernels" button** | Rejected — it would widen the sudo grant to save typing one command a couple of times a year | never |
-| **`grub-mkconfig` in the updater** | Rejected and unnecessary — Void's own `grub` package regenerates the config via `/etc/kernel.d/{post-install,post-remove}/50-grub` | never |
-| **An accurate compilation progress percentage** | Rejected — unknowable for an `xbps-src` or 18-hour kernel build, and a bar that lies is worse than none. The window shows a pulse, elapsed time and the stage in words | never |
-| **A `pipewire` runit service** | Never add one — PipeWire starts as a user-session/DBus service on Void | never |
-| **Remote-fetched `bore.lock` / minisign** | Rejected — fetching the expected hash alongside the artifact collapses the trust model | never |
+Ideas this rule has already disqualified — and every other rejection — are
+recorded with their verdicts in [`rejected-ideas.md`](rejected-ideas.md).

@@ -125,6 +125,8 @@ The kernel (`linux-cachy`) and the compiled overlay live in **your** `void-packa
 architecture.md          Authoritative design spec (single source of truth)
 INSTALL.md               Installation & provisioning manual
 branding.md              The void-tactical desktop look (optional)
+future-ideas.md          Ideas not yet built (+ the selection rule for new ones)
+rejected-ideas.md        Decisions against, with what would reopen each
 get.sh                   One-line installer bootstrap (fetch -> clone -> bootstrap.sh)
 bootstrap.sh             Zero-touch provisioning entry point
 deploy.sh                Idempotent, reversible system installer (--with-grub/-branding/-schedule)
