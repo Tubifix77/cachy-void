@@ -455,6 +455,21 @@ _br="";   for b in firefox chromium; do command -v "$b" >/dev/null 2>&1 && { _br
 } > "$OBM"
 ok "openbox root menu -> curated (rofi + essentials; stale stock menu bypassed)"
 
+# Flag the side effect, because it is genuinely surprising: LXQt uses openbox as
+# its window manager, so the 'Openbox' entry in the login screen is a BYPRODUCT of
+# installing LXQt rather than a desktop anyone chose. Branding therefore also lands
+# on that session — which is the point (stock openbox draws nothing, so picking it
+# gives a black screen), but a user who rides their own standalone openbox setup
+# deserves to be told rather than to discover it. bak() has already preserved any
+# pre-existing files, and --remove puts them back.
+if [ -e "$CFG/openbox/autostart.pre-cachy.bak" ] || [ -e "$CFG/openbox/menu.xml.pre-cachy.bak" ]; then
+    warn "you had your own Openbox session config — autostart/menu.xml were replaced."
+    warn "  originals kept as *.pre-cachy.bak in ~/.config/openbox; 'cachy-branding --remove' restores them"
+else
+    log "note: LXQt uses openbox as its WM, so this also brands the standalone 'Openbox'"
+    log "      session listed at login (it would otherwise be a bare black screen)"
+fi
+
 # Dark Qt for the bare Openbox session. LXQt exports these via its session.conf;
 # openbox does NOT, so Qt apps (qterminal, pcmanfm-qt, the updater GUI) render in a
 # LIGHT default style there. openbox-session sources ~/.config/openbox/environment

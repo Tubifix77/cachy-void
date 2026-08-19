@@ -434,6 +434,16 @@ its built-in greeter — login is never at risk.
 ### 5.9 The bare "Openbox" session — a minimal branded fallback
 
 LXQt uses openbox as its WM, so the greeter also lists a bare **Openbox** session.
+
+> **It is a byproduct, not a chosen desktop.** Nobody installs LXQt in order to get
+> an Openbox session — it appears because LXQt's window manager also registers its
+> own session entry. That is why branding it is in scope at all: the same
+> `~/.config/openbox/rc.xml` that gives LXQt its titlebars is the standalone
+> session's config, so the two cannot be separated. `cachy-branding` therefore says
+> so out loud: a plain note when it fills an empty config, and a **warning** naming
+> the `*.pre-cachy.bak` files when it replaced an Openbox setup the user already
+> had. Anyone who actually rides standalone openbox learns it from the applier
+> rather than by discovering their root menu changed.
 Picked on its own, stock openbox draws *nothing* — no panel, no wallpaper — so it
 shows a **black screen**. That is normal openbox behaviour, not a crash (openbox
 runs; right-click gives its root menu), but it reads as "broken" to anyone who
