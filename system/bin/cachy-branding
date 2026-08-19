@@ -417,7 +417,7 @@ _kbd="$(setxkbmap -query 2>/dev/null | awk '/^layout/{print $2}')"
     # so the systray it docks into already exists, else the icon never appears.
     command -v nm-tray >/dev/null 2>&1 && printf '(sleep 3; nm-tray) &\n'
     [ -f "$CFG/conky/conky.conf" ] && \
-        printf '(sleep 2; conky -c "$HOME/.config/conky/conky.conf") &\n'
+        printf '(sleep 2; env LC_CTYPE=C.UTF-8 conky -c "$HOME/.config/conky/conky.conf") &\n'
     [ -f "$CFG/conky/conky-system.conf" ] && \
         printf '(sleep 2; env LC_CTYPE=C.UTF-8 conky -c "$HOME/.config/conky/conky-system.conf") &\n'
 } > "$OBA"
@@ -704,7 +704,7 @@ sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.i
 # delayed autostart: same TV-detection race as Plank — gap_x/gap_y anchoring
 # (top_right) gets computed against whatever screen geometry is live when
 # conky starts, so it drifts if that's the wrong output.
-printf '[Desktop Entry]\nType=Application\nName=conky\nExec=sh -c "sleep 8 && exec conky -c %s/conky/conky.conf"\n' "$CFG" > "$CFG/autostart/conky.desktop"
+printf '[Desktop Entry]\nType=Application\nName=conky\nExec=sh -c "sleep 8 && exec env LC_CTYPE=C.UTF-8 conky -c %s/conky/conky.conf"\n' "$CFG" > "$CFG/autostart/conky.desktop"
 
 # --- left "SYSTEM" identity panel (the "what it IS" spec-sheet) --------------
 # A second, static Conky anchored middle-left, to balance the two right-side
@@ -822,8 +822,11 @@ with open(dest, "w", encoding="utf-8") as f:
     f.write(t.replace("@SYSTEM_TEXT@", "\n".join(out)))
 PY
 # Force a UTF-8 ctype on launch: the panel's ─ / × / · glyphs render as mojibake if
-# conky decodes the (UTF-8) config under a non-UTF-8 LC_CTYPE. The panel has no
-# locale-sensitive numbers, so pinning LC_CTYPE=C.UTF-8 is a no-downside guarantee
+# conky decodes the (UTF-8) config under a non-UTF-8 LC_CTYPE. Pinned for BOTH
+# instances now: the guard originally covered only conky-system, which contains no
+# non-ASCII at all, while conky.conf — the one whose temperature readouts carry a
+# DEGREE SIGN — ran without it and rendered 'Â°C' (owner-reported 2026-08-19).
+# Neither panel has locale-sensitive numbers, so pinning LC_CTYPE is no-downside
 # (unlike the telemetry Conky, whose decimal formatting we leave to the session locale).
 printf '[Desktop Entry]\nType=Application\nName=conky-system\nExec=sh -c "sleep 8 && exec env LC_CTYPE=C.UTF-8 conky -c %s/conky/conky-system.conf"\n' "$CFG" > "$CFG/autostart/conky-system.desktop"
 # hide lxqt-powermanagement's tray icon — its built-in charge indicator is a
@@ -878,7 +881,7 @@ for a in picom plank conky; do
     case "$a" in
         picom) setsid picom --config "$CFG/picom/picom.conf" >/dev/null 2>&1 & ;;
         plank) setsid plank >/dev/null 2>&1 & ;;
-        conky) setsid conky -c "$CFG/conky/conky.conf" >/dev/null 2>&1 &
+        conky) setsid env LC_CTYPE=C.UTF-8 conky -c "$CFG/conky/conky.conf" >/dev/null 2>&1 &
                [ -f "$CFG/conky/conky-system.conf" ] && setsid env LC_CTYPE=C.UTF-8 conky -c "$CFG/conky/conky-system.conf" >/dev/null 2>&1 & ;;
     esac
 done

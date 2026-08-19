@@ -850,9 +850,23 @@ install_greeter() {
         [ -f "$T/images/rectangle_overlay.png" ] && magick -size 4x4 xc:none "$T/images/rectangle_overlay.png"
     fi
     # recolour the blue accent → brand green; darken the top session/layout bar
+    #
+    # The bar's TEXT needs colouring too, and this is easy to miss: elarun's
+    # "Session"/"Layout" labels declare no `color`, so they fall back to BLACK —
+    # invisible once we darken the bar behind them (live find, 2026-08-19). The
+    # dropdowns are worse than invisible: SddmComponents' ComboBox defaults are a
+    # white box with black text and a blue focus ring, i.e. bright stock widgets
+    # sitting on a dark branded bar. Both get the palette (branding.md §2).
+    #
+    # Every patch below is applied to a FRESH fork (the cp -rf above re-copies the
+    # pristine base each run), so re-running deploy.sh cannot double-apply them.
     [ -f "$T/Main.qml" ] && {
         sed -i 's/#0b678c/#478061/Ig' "$T/Main.qml"
         sed -i 's/width: parent.width; height: 40/width: parent.width; height: 40; color: "#1b1d1e"; opacity: 0.85/' "$T/Main.qml"
+        # the two bar labels: --fg instead of an implicit black
+        sed -i -E 's/^([[:space:]]*)text: textConstants\.(session|layout)$/\1text: textConstants.\2\n\1color: "#abb2bf"/' "$T/Main.qml"
+        # the two dropdowns: panel background, --fg text, accent focus/hover
+        sed -i -E 's/^([[:space:]]*)id: (session|layoutBox)$/\1id: \2\n\1color: "#282c34"\n\1textColor: "#abb2bf"\n\1borderColor: "#3a4050"\n\1menuColor: "#282c34"\n\1focusColor: "#478061"\n\1hoverColor: "#478061"/' "$T/Main.qml"
     }
     [ -f "$T/metadata.desktop" ] && sed -i 's/^Name=.*/Name=Void Tactical/' "$T/metadata.desktop"
 
