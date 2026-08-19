@@ -260,6 +260,24 @@ def emit(src_glob, dirs):
 for ctx in ("status", "devices"):
     emit(A + "/%s/network-*-symbolic.svg" % ctx,
          [os.path.join(LVDST, ctx, s) for s in ("16", "22", "24")])
+# The rest of the bare-session tray: pasystray (volume), cbatticon (battery) and
+# udiskie (removable media) ask for these names. Luv itself has none of them, so
+# without this they fall through to whatever stock theme answers first — which is
+# how a BLUE disk icon and a barely-visible dark battery ended up on a dark panel
+# (owner-reported 2026-08-19). Same lift() recolouring as the network glyphs, and
+# emitted under BOTH the plain and -symbolic spellings because the applets differ.
+for ctx, pats in (("status", ("audio-volume-*", "battery-*")),
+                  ("devices", ("drive-removable-media*", "media-removable*"))):
+    dirs = [os.path.join(LVDST, ctx, s) for s in ("16", "22", "24")]
+    for pat in pats:
+        emit(A + "/%s/%s-symbolic.svg" % (ctx, pat), dirs)
+        for d in dirs:                       # plain spellings alias the symbolic art
+            for f in glob.glob(os.path.join(d, pat + "-symbolic.svg")):
+                plainname = os.path.basename(f).replace("-symbolic", "")
+                try:
+                    open(os.path.join(d, plainname), "w").write(open(f).read())
+                except OSError:
+                    pass
 emit("/usr/share/icons/hicolor/scalable/apps/nm-*symbolic.svg",
      [d for d in glob.glob(LVDST + "/apps/*/") if os.path.isdir(d)])
 # nm-tray's plain (non-symbolic) names -> thin brand glyphs, both name forms.
@@ -431,6 +449,18 @@ _kbd="$(setxkbmap -query 2>/dev/null | awk '/^layout/{print $2}')"
     # running (saved networks connect) but NO way to pick a new one: precisely
     # the hotel-WiFi case --with-networkmanager exists for. Started after tint2
     # so the systray it docks into already exists, else the icon never appears.
+    # SESSION SERVICES a desktop provides invisibly and a bare WM does not. All of
+    # these normally start from /etc/xdg/autostart, which openbox never reads:
+    #   * pipewire  — WITHOUT IT THE SESSION HAS NO AUDIO AT ALL (verified: pactl
+    #     said 'Connection refused', and pasystray showed its cannot-reach-server
+    #     icon). Starting 'pipewire' alone is enough — it brings wireplumber up,
+    #     exactly as the XDG entry LXQt uses does (Exec=pipewire, nothing more).
+    #   * a polkit agent — without one, any GUI privilege prompt fails silently,
+    #     e.g. udiskie mounting a disk that needs authorisation.
+    #   * a notification daemon — without one, app notifications go nowhere.
+    command -v pipewire >/dev/null 2>&1 && printf 'pipewire &\n'
+    command -v lxqt-policykit-agent >/dev/null 2>&1 && printf '(sleep 2; lxqt-policykit-agent) &\n'
+    command -v lxqt-notificationd  >/dev/null 2>&1 && printf '(sleep 2; lxqt-notificationd) &\n'
     command -v nm-tray >/dev/null 2>&1 && printf '(sleep 3; nm-tray) &\n'
     # The rest of the tray a laptop actually needs. LXQt provides these as panel
     # plugins; a WM has none, so we start the standalone equivalents — same idea as
@@ -440,7 +470,7 @@ _kbd="$(setxkbmap -query 2>/dev/null | awk '/^layout/{print $2}')"
     # battery icon only where there IS a battery (this is a laptop overlay, but the
     # same session runs on desktops).
     ls /sys/class/power_supply/BAT* >/dev/null 2>&1 && command -v cbatticon >/dev/null 2>&1 && \
-        printf '(sleep 3; cbatticon) &\n'
+        printf '(sleep 3; cbatticon -i symbolic) &\n'
     [ -f "$CFG/conky/conky.conf" ] && \
         printf '(sleep 2; env LC_CTYPE=C.UTF-8 conky -c "$HOME/.config/conky/conky.conf") &\n'
     [ -f "$CFG/conky/conky-system.conf" ] && \
