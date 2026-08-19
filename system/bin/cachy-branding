@@ -641,17 +641,12 @@ if command -v plank >/dev/null 2>&1; then
     ok "Plank configured"
 fi
 
-# ============================================================ updater launcher on the desktop
-if [ -f /usr/share/applications/cachy-updater.desktop ]; then
-    DESK=$(xdg-user-dir DESKTOP 2>/dev/null); [ -d "$DESK" ] || DESK="$HOME/Desktop"
-    if [ -d "$DESK" ]; then
-        cp -f /usr/share/applications/cachy-updater.desktop "$DESK/cachy-updater.desktop"
-        chmod +x "$DESK/cachy-updater.desktop"
-        # pcmanfm-qt honours the trusted flag → launches without the "untrusted" prompt
-        command -v gio >/dev/null 2>&1 && gio set "$DESK/cachy-updater.desktop" metadata::trusted true 2>/dev/null
-        ok "updater launcher on the desktop ($DESK)"
-    fi
-fi
+# ============================================================ desktop stays empty
+# The updater used to be copied to ~/Desktop as a launcher. Removed 2026-08-19:
+# a re-run of this applier dropped an icon onto a desktop the user keeps clean,
+# and nothing about the program needs it — it is in the application menu and the
+# Plank dock already. Writing to ~/Desktop is the user's space, not ours.
+# --remove still deletes a launcher left by an older version (see the block above).
 
 # ============================================================ Picom / Rofi / Conky configs
 mkdir -p "$CFG/picom" "$CFG/rofi" "$CFG/conky" "$CFG/autostart"
