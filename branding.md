@@ -481,6 +481,24 @@ click target, which is worse than an absent one. Verified live 2026-08-19: with
 icon/GTK themes it just chose, and `deploy.sh --with-branding` installs the
 package (optional — its absence costs only icons).
 
+**The rest of the tray.** LXQt gets volume, mount and sensors as *panel plugins*;
+a window manager has no plugin system, so the equivalents are standalone tray
+apps. The same reasoning that justifies the taskbar applies: the bar exists, so it
+should carry what the session otherwise lacks. `cachy-branding` starts, each only
+if installed — **pasystray** (volume; scroll to change, click opens `pavucontrol`),
+**udiskie -t** (removable media, with auto-mount), and **cbatticon** (battery,
+started only where `/sys/class/power_supply/BAT*` exists, so a desktop gets no
+battery icon). Roughly 700 KB for the three; `deploy.sh --with-branding` installs
+them optionally, and they are never started under LXQt, whose panel already has
+them.
+
+> **Known cosmetic gap:** these applets currently draw their *stock* icons, not
+> the mono brand ones — a live check found an off-brand blue among the tray
+> pixels. `Luv-Void` covers the names nm-tray requests because those were read out
+> of its source; extending the same `emit()` recolouring to volume/battery/media
+> requires reading each app's icon names the same way rather than guessing them
+> (the `game-devices-udev` lesson). Functional first, mono second.
+
 **Why nm-tray must be listed explicitly:** it ships an XDG autostart entry, and a
 bare Openbox session never runs those — Void's `/etc/xdg/openbox/autostart` is
 entirely commented out (verified 2026-08-19). Under LXQt the entry fires and the

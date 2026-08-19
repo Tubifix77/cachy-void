@@ -432,6 +432,15 @@ _kbd="$(setxkbmap -query 2>/dev/null | awk '/^layout/{print $2}')"
     # the hotel-WiFi case --with-networkmanager exists for. Started after tint2
     # so the systray it docks into already exists, else the icon never appears.
     command -v nm-tray >/dev/null 2>&1 && printf '(sleep 3; nm-tray) &\n'
+    # The rest of the tray a laptop actually needs. LXQt provides these as panel
+    # plugins; a WM has none, so we start the standalone equivalents — same idea as
+    # the taskbar: the bar exists, so it should carry what the session lacks.
+    command -v pasystray >/dev/null 2>&1 && printf '(sleep 3; pasystray) &\n'
+    command -v udiskie   >/dev/null 2>&1 && printf '(sleep 3; udiskie -t) &\n'
+    # battery icon only where there IS a battery (this is a laptop overlay, but the
+    # same session runs on desktops).
+    ls /sys/class/power_supply/BAT* >/dev/null 2>&1 && command -v cbatticon >/dev/null 2>&1 && \
+        printf '(sleep 3; cbatticon) &\n'
     [ -f "$CFG/conky/conky.conf" ] && \
         printf '(sleep 2; env LC_CTYPE=C.UTF-8 conky -c "$HOME/.config/conky/conky.conf") &\n'
     [ -f "$CFG/conky/conky-system.conf" ] && \

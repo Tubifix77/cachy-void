@@ -86,6 +86,12 @@ readonly PKG_BRANDING="kvantum papirus-icon-theme papirus-folders plank rofi con
 # desktop provides one; without it Qt/GTK apps there resolve no icon theme and
 # tray applets render blank (verified live). Optional — absence only costs icons.
 readonly PKG_XSETTINGSD="xsettingsd"
+# Tray applets for the BARE Openbox session. LXQt gets these as panel plugins
+# (volume/mount/sensors); a WM has no plugins, so the equivalents are standalone
+# tray apps. Tiny (~700 KB the three of them) and started only by the openbox
+# autostart, never under LXQt. pavucontrol is the click-through mixer pasystray
+# opens. All optional: absence costs an icon, never the session.
+readonly PKG_WM_TRAY="pasystray udiskie cbatticon pavucontrol"
 # §network: opt-in laptop WiFi picker (--with-networkmanager). nm-tray is the
 # Qt/LXQt-native applet whose icon themes properly (nm-applet is GNOME's and renders
 # its own dark, un-themeable icon — never install that one).
@@ -690,6 +696,7 @@ install_branding() {
         done
     fi
     ensure_pkg "$PKG_XSETTINGSD" optional
+    for _t in $PKG_WM_TRAY; do ensure_pkg "$_t" optional; done
     install_file "$SYS_DIR/bin/cachy-branding" "$CACHY_BRANDING_BIN" 0755 root root
     install_greeter        # SDDM login screen (system-level; needs root, done here)
     log "branding toolkit installed — apply the look by running (as your user): cachy-branding"

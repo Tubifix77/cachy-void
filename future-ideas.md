@@ -78,6 +78,12 @@ Verified against Void's repo (2026-08-19) — Plasma 6.7.4, current:
   coexist cleanly when both desktops are installed? Two applets fighting over one
   tray is a known-shape bug here.
 
+**Small open item on the Openbox session:** its tray applets (pasystray, udiskie,
+cbatticon) draw stock icons rather than the mono brand set, because `Luv-Void`
+only covers the names that were read out of nm-tray's source. Extending the
+applier's `emit()` recolouring means reading each app's icon names from *its*
+source too — cheap, but it must be verified rather than guessed.
+
 **After that:** XFCE is cheap (`xfconf` for wm theme + wallpaper, and the
 dual-boot Debian on the test laptop runs it). GTK/GNOME is lowest priority — it
 resists theming and ships its own network applet.
