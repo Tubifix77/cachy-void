@@ -316,12 +316,16 @@ for _lvl, _brz in (("full", "100"), ("good", "080"), ("low", "040"),
 for _v in ("high", "medium", "low", "muted"):
     plain["audio-volume-" + _v] = (B + "/audio-volume-%s.svg" % _v,
                                    AS + "/audio-volume-%s-symbolic.svg" % _v)
-plain["drive-removable-media"] = (
-    "/usr/share/icons/breeze/devices/22/drive-removable-media.svg",
-    AD + "/drive-removable-media-symbolic.svg")
-plain["media-removable"] = (
-    "/usr/share/icons/breeze/devices/22/drive-removable-media-usb-pendrive.svg",
-    AD + "/media-removable-symbolic.svg")
+# udiskie tries these four names IN THIS ORDER (its tray.py _icon_names), so
+# branding only the last one is useless: Luv ships its own desaturated
+# drive-removable-media-usb-pendrive, which wins first and renders stock grey
+# (measured #4D4D4D on the panel). Brand all four with the same glyph.
+_BD = "/usr/share/icons/breeze/devices/22"
+for _n in ("drive-removable-media-usb-panel", "drive-removable-media-usb-pendrive",
+           "drive-removable-media-usb", "drive-removable-media", "media-removable"):
+    plain[_n] = (_BD + "/drive-removable-media-usb-pendrive.svg",
+                 _BD + "/drive-removable-media.svg",
+                 AD + "/drive-removable-media-symbolic.svg")
 
 for name, cands in plain.items():
     src = next((c for c in cands if os.path.exists(c)), None)
@@ -487,7 +491,7 @@ _kbd="$(setxkbmap -query 2>/dev/null | awk '/^layout/{print $2}')"
     # battery icon only where there IS a battery (this is a laptop overlay, but the
     # same session runs on desktops).
     ls /sys/class/power_supply/BAT* >/dev/null 2>&1 && command -v cbatticon >/dev/null 2>&1 && \
-        printf '(sleep 3; cbatticon -i symbolic) &\n'
+        printf '(sleep 3; cbatticon) &\n'
     [ -f "$CFG/conky/conky.conf" ] && \
         printf '(sleep 2; env LC_CTYPE=C.UTF-8 conky -c "$HOME/.config/conky/conky.conf") &\n'
     [ -f "$CFG/conky/conky-system.conf" ] && \
