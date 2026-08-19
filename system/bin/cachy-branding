@@ -266,11 +266,18 @@ for ctx in ("status", "devices"):
 # how a BLUE disk icon and a barely-visible dark battery ended up on a dark panel
 # (owner-reported 2026-08-19). Same lift() recolouring as the network glyphs, and
 # emitted under BOTH the plain and -symbolic spellings because the applets differ.
-for ctx, pats in (("status", ("audio-volume-*", "battery-*")),
-                  ("devices", ("drive-removable-media*", "media-removable*"))):
+# NOTE the source contexts: Adwaita keeps audio-volume-* in symbolic/status, the
+# removable-media glyphs in symbolic/devices, and the battery-{good,full,caution,
+# empty}[-charging] names cbatticon actually asks for in symbolic/LEGACY — only
+# battery-level-NN lives under status. Searching status alone silently produced no
+# battery icon at all, so cbatticon fell back to a stock dark one (live find).
+for ctx, srcs, pats in (
+        ("status",  ("status", "legacy"), ("audio-volume-*", "battery-*")),
+        ("devices", ("devices",),         ("drive-removable-media*", "media-removable*"))):
     dirs = [os.path.join(LVDST, ctx, s) for s in ("16", "22", "24")]
     for pat in pats:
-        emit(A + "/%s/%s-symbolic.svg" % (ctx, pat), dirs)
+        for src in srcs:
+            emit(A + "/%s/%s-symbolic.svg" % (src, pat), dirs)
         for d in dirs:                       # plain spellings alias the symbolic art
             for f in glob.glob(os.path.join(d, pat + "-symbolic.svg")):
                 plainname = os.path.basename(f).replace("-symbolic", "")
