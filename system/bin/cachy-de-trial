@@ -15,6 +15,7 @@
 #   sudo cachy-de-trial diff                exactly what changed, at any time
 #   sudo cachy-de-trial keep                it works — close the trial, keep the desktop
 #   sudo cachy-de-trial rollback            it does not — put the system back
+#                       (add --keep-home to leave $HOME alone)
 #
 # Rollback is deliberately CONSERVATIVE: it removes only packages that were not
 # installed before the trial, it never downgrades a package that was merely
@@ -203,10 +204,11 @@ cmd_keep(){
 
 # --- rollback --------------------------------------------------------------
 cmd_rollback(){
-    local yes=false dir=""
+    local yes=false dir="" keep_home=false
     while [ $# -gt 0 ]; do
         case "$1" in
             --yes|-y) yes=true; shift ;;
+            --keep-home) keep_home=true; shift ;;
             --trial) dir="${2:-}"; shift 2 ;;
             *) die "unknown option: $1" ;;
         esac
@@ -231,7 +233,14 @@ cmd_rollback(){
     printf '  remove %s explicitly-installed package(s):\n' "$nroots"
     sed 's/^/    /' "$dir/pkgs.roots"
     printf '  then sweep up to %s package(s) that were pulled in as their dependencies\n' "$((nadded - nroots))"
-    printf '  quarantine %s new home entry/entries of %s into %s/quarantine/\n' "$(wc -l < "$dir/home.added")" "$user" "$dir"
+    if $keep_home; then
+        printf '  leave %s home entry/entries alone (--keep-home)\n' "$(wc -l < "$dir/home.added")"
+    else
+        printf '  quarantine %s new home entry/entries of %s into %s/quarantine/:\n' "$(wc -l < "$dir/home.added")" "$user" "$dir"
+        sed 's|^|    ~/|' "$dir/home.added"
+        printf '  NOTE: that is everything new in the home dir since the trial opened, so it\n'
+        printf '        includes anything ELSE you did meanwhile. Use --keep-home to skip it.\n'
+    fi
     printf '  packages that existed before the trial are never touched, and nothing is downgraded\n'
 
     if ! $yes; then
@@ -275,7 +284,9 @@ cmd_rollback(){
     done
 
     # home: MOVE, never delete.
-    if [ -s "$dir/home.added" ]; then
+    if $keep_home; then
+        log "home directory left untouched (--keep-home)"
+    elif [ -s "$dir/home.added" ]; then
         mkdir -p "$dir/quarantine"
         local rel
         while read -r rel; do

@@ -856,6 +856,16 @@ the trial's `quarantine/` directory, so a mistake costs you a `mv`, not data. It
 recomputes everything from live package state rather than trusting the record, and
 it prints the full plan before asking for confirmation (`--yes` to skip).
 
+**One caveat worth knowing.** "New home entries" means everything that appeared
+in `~/.config` and `~/.local/share` since the trial opened — so if you did other
+things during the window (applied the branding, for instance), those land in the
+list too. The rollback plan prints them by name before asking, and
+`--keep-home` skips the home step entirely:
+
+```bash
+sudo cachy-de-trial rollback --keep-home
+```
+
 `keep` closes the trial but keeps the record — `sudo cachy-de-trial rollback
 --trial <dir>` still works weeks later. `sudo cachy-de-trial list` shows every
 trial and whether it is open, kept, or rolled back.

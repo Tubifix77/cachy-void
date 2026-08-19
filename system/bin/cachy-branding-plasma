@@ -55,6 +55,8 @@ if [ "${1:-}" = "--remove" ]; then
     rm -f "$SHARE/color-schemes/$SCHEME.colors"
     rm -f "$SHARE/konsole/$SCHEME.colorscheme" "$SHARE/konsole/$SCHEME.profile"
     rm -f "$CFG/autostart/cachy-branding-plasma-firstrun.desktop"
+    [ -e "$CFG/Kvantum/kvantum.kvconfig.pre-cachy.bak" ] && \
+        mv -f "$CFG/Kvantum/kvantum.kvconfig.pre-cachy.bak" "$CFG/Kvantum/kvantum.kvconfig"
     ok "removed — log out and back in for Plasma to reload."
     exit 0
 fi
@@ -242,8 +244,19 @@ fi
 # The Kvantum skin is Tier-1 (cachy-branding builds it once and every Qt desktop
 # shares it), so here we only point Plasma at it.
 if [ -d "$CFG/Kvantum/void-tactical" ]; then
-    kwriteconfig6 --file kvantum.kvconfig --group General --key theme void-tactical 2>/dev/null
-    [ -f "$CFG/Kvantum/kvantum.kvconfig" ] || printf '[General]\ntheme=void-tactical\n' > "$CFG/Kvantum/kvantum.kvconfig"
+    # Kvantum reads ~/.config/Kvantum/kvantum.kvconfig — NOT ~/.config/kvantum.kvconfig,
+    # which is where `kwriteconfig6 --file kvantum.kvconfig` would put it. Edit the
+    # real file directly, the same way cachy-branding does for LXQt.
+    KV="$CFG/Kvantum/kvantum.kvconfig"
+    mkdir -p "$CFG/Kvantum"
+    if [ -f "$KV" ]; then
+        bak "$KV"
+        if grep -q '^theme=' "$KV"; then sed -i 's/^theme=.*/theme=void-tactical/' "$KV"
+        else sed -i '/^\[General\]/a theme=void-tactical' "$KV"; fi
+        grep -q '^\[General\]' "$KV" || printf '[General]\ntheme=void-tactical\n' > "$KV"
+    else
+        printf '[General]\ntheme=void-tactical\n' > "$KV"
+    fi
     kwriteconfig6 --file kdeglobals --group KDE --key widgetStyle kvantum
     ok "widget style -> kvantum (void-tactical)"
 else
