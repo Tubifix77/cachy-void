@@ -233,11 +233,11 @@ PY
         done
     fi
 
-    # The brand-glyph overlay below is deliberately OUTSIDE the build-once guard.
-    # Desaturating all of Luv is slow, so it happens only when the theme is absent —
-    # but that used to skip the tray glyphs too, so any machine that already had the
-    # theme could never receive new ones (owner hit exactly this: new volume/battery
-    # mappings had no effect on re-runs). Emitting ~30 small files is cheap; always do it.
+    # The brand-glyph overlay below sits OUTSIDE the build-once guard on purpose.
+    # Desaturating all of Luv is slow, so that happens only when the theme is absent —
+    # but keeping the glyph emission inside it meant any machine that already had the
+    # theme could never receive a new or corrected tray glyph. Emitting ~30 small
+    # files is cheap; it runs every apply so icon fixes reach existing installs.
     # Network tray icons must be LIGHT on the obsidian panel, and match the thin
     # symbolic weight of the other tray glyphs. Three sources:
     #  - themed network-*-symbolic (Adwaita, fill #2e3436) — for apps using those names
@@ -248,7 +248,7 @@ PY
     #    verified. Luv's own "network-wired" is a FILLED badge that desaturates to a
     #    bright neutral grey (whiter + heavier than the other tray icons), so those
     #    names are overridden with thin Adwaita glyphs recoloured to the brand FG.
-    python3 - "$LVDST" "#$FG" <<'PY'
+        python3 - "$LVDST" "#$FG" <<'PY'
 import glob, os, re, sys
 LVDST, FG = sys.argv[1], sys.argv[2]
 A = "/usr/share/icons/Adwaita/symbolic"
@@ -259,14 +259,14 @@ def lift(t):
     return re.sub(r'#[0-9a-fA-F]{6}', lambda m: FG if lum(m.group(0)) < 140 else m.group(0), t)
 def emit(src_glob, dirs):
     for d in dirs:
-    os.makedirs(d, exist_ok=True)
+        os.makedirs(d, exist_ok=True)
     for f in glob.glob(src_glob):
-    out = lift(open(f).read())
-    for d in dirs:
-        open(os.path.join(d, os.path.basename(f)), "w").write(out)
+        out = lift(open(f).read())
+        for d in dirs:
+            open(os.path.join(d, os.path.basename(f)), "w").write(out)
 for ctx in ("status", "devices"):
     emit(A + "/%s/network-*-symbolic.svg" % ctx,
-     [os.path.join(LVDST, ctx, s) for s in ("16", "22", "24")])
+         [os.path.join(LVDST, ctx, s) for s in ("16", "22", "24")])
 emit("/usr/share/icons/hicolor/scalable/apps/nm-*symbolic.svg",
      [d for d in glob.glob(LVDST + "/apps/*/") if os.path.isdir(d)])
 # nm-tray's plain (non-symbolic) names -> thin brand glyphs, both name forms.
@@ -276,23 +276,23 @@ emit("/usr/share/icons/hicolor/scalable/apps/nm-*symbolic.svg",
 B = "/usr/share/icons/breeze/status/22"
 plain = {
     "network-wired": (B + "/network-wired-activated.svg",
-                  A + "/devices/network-wired-symbolic.svg"),
+                      A + "/devices/network-wired-symbolic.svg"),
     "network-wireless": (B + "/network-wireless-100.svg",
-                     A + "/devices/network-wireless-symbolic.svg"),
+                         A + "/devices/network-wireless-symbolic.svg"),
     "network-wireless-signal-excellent": (B + "/network-wireless-100.svg",
-                                      A + "/status/network-wireless-signal-excellent-symbolic.svg"),
+                                          A + "/status/network-wireless-signal-excellent-symbolic.svg"),
     "network-wireless-signal-good": (B + "/network-wireless-80.svg",
-                                 A + "/status/network-wireless-signal-good-symbolic.svg"),
+                                     A + "/status/network-wireless-signal-good-symbolic.svg"),
     "network-wireless-signal-ok": (B + "/network-wireless-60.svg",
-                               A + "/status/network-wireless-signal-ok-symbolic.svg"),
+                                   A + "/status/network-wireless-signal-ok-symbolic.svg"),
     "network-wireless-signal-weak": (B + "/network-wireless-40.svg",
-                                 A + "/status/network-wireless-signal-weak-symbolic.svg"),
+                                     A + "/status/network-wireless-signal-weak-symbolic.svg"),
     "network-wireless-signal-none": (B + "/network-wireless-0.svg",
-                                 A + "/status/network-wireless-signal-none-symbolic.svg"),
+                                     A + "/status/network-wireless-signal-none-symbolic.svg"),
     "network-offline": (B + "/network-offline.svg",
-                    A + "/status/network-offline-symbolic.svg"),
+                        A + "/status/network-offline-symbolic.svg"),
     "network-vpn": (B + "/network-vpn.svg",
-                A + "/status/network-vpn-symbolic.svg"),
+                    A + "/status/network-vpn-symbolic.svg"),
 }
 # The rest of the bare-session tray, same recipe as the network glyphs above:
 # breeze's 22px LINE-ART first (matching stroke weight), Adwaita symbolic as
@@ -306,16 +306,16 @@ AS = A + "/status"
 AL = A + "/legacy"
 AD = A + "/devices"
 for _lvl, _brz in (("full", "100"), ("good", "080"), ("low", "040"),
-               ("caution", "020"), ("empty", "000")):
+                   ("caution", "020"), ("empty", "000")):
     plain["battery-" + _lvl] = (B + "/battery-%s.svg" % _brz,
-                            AL + "/battery-%s-symbolic.svg" % _lvl,
-                            AS + "/battery-level-%s-symbolic.svg" % _brz.lstrip("0"))
+                                AL + "/battery-%s-symbolic.svg" % _lvl,
+                                AS + "/battery-level-%s-symbolic.svg" % _brz.lstrip("0"))
     plain["battery-" + _lvl + "-charging"] = (
-    B + "/battery-%s-charging.svg" % _brz,
-    AL + "/battery-%s-charging-symbolic.svg" % _lvl)
+        B + "/battery-%s-charging.svg" % _brz,
+        AL + "/battery-%s-charging-symbolic.svg" % _lvl)
 for _v in ("high", "medium", "low", "muted"):
     plain["audio-volume-" + _v] = (B + "/audio-volume-%s.svg" % _v,
-                               AS + "/audio-volume-%s-symbolic.svg" % _v)
+                                   AS + "/audio-volume-%s-symbolic.svg" % _v)
 plain["drive-removable-media"] = (
     "/usr/share/icons/breeze/devices/22/drive-removable-media.svg",
     AD + "/drive-removable-media-symbolic.svg")
@@ -326,14 +326,14 @@ plain["media-removable"] = (
 for name, cands in plain.items():
     src = next((c for c in cands if os.path.exists(c)), None)
     if src is None:
-    continue
+        continue
     body = lift(open(src).read())
     for ctx in ("devices", "status"):
-    for sz in ("16", "22", "24", "32"):
-        d = os.path.join(LVDST, ctx, sz)
-        os.makedirs(d, exist_ok=True)
-        open(os.path.join(d, name + ".svg"), "w").write(body)
-        open(os.path.join(d, name + "-symbolic.svg"), "w").write(body)
+        for sz in ("16", "22", "24", "32"):
+            d = os.path.join(LVDST, ctx, sz)
+            os.makedirs(d, exist_ok=True)
+            open(os.path.join(d, name + ".svg"), "w").write(body)
+            open(os.path.join(d, name + "-symbolic.svg"), "w").write(body)
 PY
     command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -f "$LVDST" 2>/dev/null
     [ -f "$LVDST/index.theme" ] && ICON_THEME="Luv-Void"
