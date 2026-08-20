@@ -484,77 +484,61 @@ ok "Konsole -> $SCHEME profile (matches qterminal exactly)"
 # colour scheme, and any asset it does not ship falls back to the `default` theme
 # (breeze-dark itself is only three files, which is what proves this works).
 DT="$SHARE/plasma/desktoptheme/void-tactical"
-DT_SRC=""
-for _c in /usr/share/plasma/desktoptheme/default/widgets/panel-background.svgz \
-          /usr/share/plasma/desktoptheme/breeze-dark/widgets/panel-background.svgz; do
-    [ -f "$_c" ] && { DT_SRC="$_c"; break; }
-done
 DT_OK=false
-if [ -n "$DT_SRC" ] && command -v python3 >/dev/null 2>&1; then
-    mkdir -p "$DT/widgets"
-    {
-        printf '{\n'
-        printf '    "KPlugin": {\n'
-        printf '        "Id": "void-tactical",\n'
-        printf '        "Name": "Void Tactical",\n'
-        printf '        "Description": "Cachy-Void: obsidian panel with a graphite frame",\n'
-        printf '        "Authors": [{ "Name": "Cachy-Void" }],\n'
-        printf '        "License": "MIT",\n'
-        printf '        "Version": "1.0",\n'
-        printf '        "EnabledByDefault": true\n'
-        printf '    },\n'
-        printf '    "X-Plasma-API": "5.0"\n'
-        printf '}\n'
-    } > "$DT/metadata.json"
-    if zcat "$DT_SRC" 2>/dev/null > "$DT/widgets/.panel-src.svg" && python3 - \
-            "$DT/widgets/.panel-src.svg" "$DT/widgets/panel-background.svg" <<'PY'
-import re, sys
-import xml.etree.ElementTree as ET
-src, dst = sys.argv[1], sys.argv[2]
-SVG = "http://www.w3.org/2000/svg"
-ET.register_namespace("", SVG)
-tree = ET.parse(src); root = tree.getroot()
-parent = {c: p for pp in [root] for p in pp.iter() for c in p}
+mkdir -p "$DT/widgets"
+{
+    printf '{\n'
+    printf '    "KPlugin": {\n'
+    printf '        "Id": "void-tactical",\n'
+    printf '        "Name": "Void Tactical",\n'
+    printf '        "Description": "Cachy-Void: obsidian panel with a 1px graphite frame",\n'
+    printf '        "Authors": [{ "Name": "Cachy-Void" }],\n'
+    printf '        "License": "MIT",\n'
+    printf '        "Version": "1.0",\n'
+    printf '        "EnabledByDefault": true\n'
+    printf '    },\n'
+    printf '    "X-Plasma-API": "5.0"\n'
+    printf '}\n'
+} > "$DT/metadata.json"
 
-def semantic_id(el):
-    cur = el
-    while cur is not None:
-        i = cur.get("id", "")
-        if i and not re.match(r"^(rect|path|g|use|circle|ellipse)\d+$", i):
-            return i
-        cur = parent.get(cur)
-    return ""
-
-n_fill = n_border = 0
-for el in root.iter():
-    if el.get("class") != "ColorScheme-Background":
-        continue
-    sid = semantic_id(el)
-    if "shadow" in sid or sid.startswith("mask"):
-        continue                                  # alpha art: leave alone
-    if sid.endswith("center"):
-        el.set("class", "CachyVoid-Fill"); n_fill += 1
-    else:
-        el.set("class", "CachyVoid-Border"); n_border += 1
-if not n_fill or not n_border:
-    sys.exit(1)                                   # unrecognised SVG: do not ship it
-for st in root.iter("{%s}style" % SVG):
-    if st.get("id") == "current-color-scheme":
-        st.text = (".CachyVoid-Fill{color:#1b1d1e;stop-color:#1b1d1e;}"
-                   ".CachyVoid-Border{color:#282c34;stop-color:#282c34;}")
-        # renamed on purpose: Plasma rewrites a stylesheet called
-        # current-color-scheme at paint time, which would undo the whole point.
-        st.set("id", "cachy-void-color-scheme")
-tree.write(dst, encoding="utf-8", xml_declaration=True)
-PY
-    then
-        rm -f "$DT/widgets/.panel-src.svg"
-        DT_OK=true
-    else
-        warn "could not fork the panel SVG - falling back to breeze-dark"
-        rm -rf "$DT"
-    fi
-fi
+# A Plasma FrameSvg is assembled from NAMED parts, and the border thickness is
+# simply the SIZE of the edge parts. That is the whole trick here.
+#
+# The first attempt re-classed the stock SVG's edge parts to graphite, which was
+# correct about WHICH parts form the border and wrong about their size: Plasma
+# draws those edges as broad gradient bands, so recolouring them produced a thick
+# slab instead of Plank's hairline. Authoring the parts at 1px gives the exact
+# line width, and the parts are tiny enough that writing the file beats forking it.
+#
+# Geometry, matching LXQt Plank's dock.theme (read, not eyeballed):
+#   LineWidth 1, OuterStrokeColor 40,44,52 (--panel), fill 27,29,30 (--bg).
+# The hint-*-margin parts set the CONTENT inset independently of the line, so the
+# icons do not sit flush against it.
+{
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+    printf '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">\n'
+    printf '  <!-- Cachy-Void panel frame: 1px graphite line, obsidian fill. -->\n'
+    # corners: 1x1 graphite
+    printf '  <rect id="topleft"     x="0"  y="0"  width="1" height="1" fill="#282c34"/>\n'
+    printf '  <rect id="topright"    x="4"  y="0"  width="1" height="1" fill="#282c34"/>\n'
+    printf '  <rect id="bottomleft"  x="0"  y="4"  width="1" height="1" fill="#282c34"/>\n'
+    printf '  <rect id="bottomright" x="4"  y="4"  width="1" height="1" fill="#282c34"/>\n'
+    # edges: 1px thick, stretched by Plasma along their run
+    printf '  <rect id="top"         x="2"  y="0"  width="1" height="1" fill="#282c34"/>\n'
+    printf '  <rect id="bottom"      x="2"  y="4"  width="1" height="1" fill="#282c34"/>\n'
+    printf '  <rect id="left"        x="0"  y="2"  width="1" height="1" fill="#282c34"/>\n'
+    printf '  <rect id="right"       x="4"  y="2"  width="1" height="1" fill="#282c34"/>\n'
+    # fill
+    printf '  <rect id="center"      x="2"  y="2"  width="1" height="1" fill="#1b1d1e"/>\n'
+    # content inset: 4px all round, independent of the 1px line
+    printf '  <rect id="hint-top-margin"    x="8"  y="0" width="1" height="4" fill="none"/>\n'
+    printf '  <rect id="hint-bottom-margin" x="10" y="0" width="1" height="4" fill="none"/>\n'
+    printf '  <rect id="hint-left-margin"   x="12" y="0" width="4" height="1" fill="none"/>\n'
+    printf '  <rect id="hint-right-margin"  x="12" y="2" width="4" height="1" fill="none"/>\n'
+    printf '</svg>\n'
+} > "$DT/widgets/panel-background.svg"
+rm -f "$DT/widgets/panel-background.svgz"
+[ -s "$DT/widgets/panel-background.svg" ] && DT_OK=true
 
 if $DT_OK && plasma-apply-desktoptheme void-tactical >/dev/null 2>&1; then
     ok "desktop theme -> void-tactical (obsidian fill, graphite 1px frame, like Plank)"
