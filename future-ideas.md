@@ -29,6 +29,14 @@ each one is a standing maintenance bill, so the ceiling is low.
 - **GTK/GNOME is the lowest priority.** It resists theming, ships its own network
   applet, and its users are the least likely to want a Qt-shaped look.
 
+**What a new applier costs now is much less than it did**, which is the one thing
+that has changed here: the dispatcher, the `--desktop` override, the `--dry-run`
+report and `updater/tests/dispatch-isolation.sh` already exist, so a fourth desktop
+means writing `apply_xfce()` and adding one row to the detector's table — the
+plumbing, the choice at install time and the offline tests come for free. An applier
+can be developed and its file output verified in the WSL sandbox with no desktop
+installed at all; only the final look needs a login.
+
 **Rules for any of them** (unchanged, and they are what keep this from sprawling):
 never install a desktop, never override a user's own theme, and an unrecognised
 session gets the shared assets plus a plain message — never a half-applied look.

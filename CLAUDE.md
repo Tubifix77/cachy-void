@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Done — installed, live, and in continuous daily use** (this was the vacation
 machine). The distro overlay, branding, runit services, and the Python updater engine
 (`updater/engine/`: xbps, grub, snapshot, trust, journal, health, health_daemon) are all
-built and covered by a real test suite (`updater/tests/`, 10 files). `architecture.md`
+built and covered by a real test suite (`updater/tests/`, 14 files + a shell harness). `architecture.md`
 remains the authoritative spec for anything new; if anything disagrees with it, the spec
 wins.
 
@@ -36,6 +36,24 @@ fallbacks), and verified live: STAGED → CONFIRMING → battery green → **PRO
 **Still genuinely untested:** the Void-owned-GRUB one-shot boot-test + auto-rollback
 (§8.6 oneshot choreography — this box's GRUB is Debian's, so it runs the external
 class; the oneshot path remains code-reviewed + mock-tested only).
+
+## Desktop Branding Is Dispatched, Not Assumed
+
+`cachy-de-detect` is the single detector, called by `deploy.sh` at install time and
+by `cachy-branding` at apply time so the two cannot drift. One brandable desktop is
+branded silently; several and the user is asked; the answer is recorded in
+`/etc/cachy-void/branding-targets`. `cachy-branding` is split into `apply_shared`
+(Tier 1), `apply_openbox_session`, `apply_lxqt` and `apply_shell`, with Plasma in
+its own `cachy-branding-plasma`; the dispatcher runs the shared half always and the
+appliers only for resolved targets. `--desktop|--de lxqt,plasma|auto` overrides,
+and `--dry-run` reports what would be applied and *why* without writing anything
+(it is allowed as root precisely so it works in a container).
+
+**Test it without hardware** — three layers, only one of which needs a machine:
+the decision (`test_de_detect.py`, `test_branding_dispatch.py`, `--dry-run`), the
+files written (`updater/tests/dispatch-isolation.sh`, real appliers into disjoint
+`HOME`s), and the look (a real login; nothing offline substitutes). The isolation
+harness runs in the Void WSL sandbox given a non-root user and `kf6-kconfig`.
 
 ## What This Project Is
 
