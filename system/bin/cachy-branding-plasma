@@ -71,7 +71,7 @@ command -v kwriteconfig6 >/dev/null 2>&1 || { warn "KDE Plasma (kwriteconfig6) n
 # --- remove ----------------------------------------------------------------
 if [ "${1:-}" = "--remove" ]; then
     log "restoring pre-branding Plasma config from backups"
-    for f in "$CFG/kdeglobals" "$CFG/kwinrc" "$CFG/konsolerc" "$CFG/plasmarc" "$CFG/kcminputrc"; do
+    for f in "$CFG/kdeglobals" "$CFG/kwinrc" "$CFG/konsolerc" "$CFG/plasmarc" "$CFG/kcminputrc" "$CFG/kscreenlockerrc"; do
         unbak "$f"
     done
     rm -f "$SHARE/color-schemes/$SCHEME.colors"
@@ -547,6 +547,24 @@ for (var i = 0; i < ps.length; i++) {
     fi
 else
     log "panel layout is applied inside the session; the first-login hook below does it"
+fi
+
+# --- 6b. the LOCK screen ---------------------------------------------------
+# Not the same thing as the SDDM greeter, which is where this went wrong: SDDM is
+# only seen on a cold boot, while a machine that sleeps and locks shows
+# kscreenlocker_greet instead — stock Breeze, entirely unbranded, and reported as
+# "no branding on the login". Give it the desktop's wallpaper through its own
+# supported config so the two agree.
+# Use the STABLE render, not the versioned copy: the versioned ones are pruned on
+# the next apply, and the lock screen would then point at a deleted file. Only
+# plasmashell needs the cache-busting path; the locker starts fresh every time.
+LOCKWALL="$WALL"
+[ -f "${PNG:-}" ] && LOCKWALL="$PNG"
+if [ -n "${LOCKWALL:-}" ]; then
+    bak "$CFG/kscreenlockerrc"
+    kwriteconfig6 --file kscreenlockerrc --group Greeter --key WallpaperPlugin org.kde.image
+    kwriteconfig6 --file kscreenlockerrc --group Greeter --group Wallpaper                   --group org.kde.image --group General --key Image "$LOCKWALL"
+    ok "lock screen -> the same wallpaper as the desktop"
 fi
 
 # --- 7. Conky telemetry ----------------------------------------------------
