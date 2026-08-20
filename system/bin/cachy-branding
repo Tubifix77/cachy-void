@@ -157,6 +157,25 @@ SP=$(pgrep -u "$USER" -x lxqt-session | head -1)
 if [ -n "$SP" ]; then while IFS= read -r -d '' kv; do export "$kv"; done < "/proc/$SP/environ"; fi
 case "${XDG_CURRENT_DESKTOP:-}" in *LXQt*) : ;; *) warn "not an LXQt session — this look targets LXQt/X11; applying config anyway" ;; esac
 
+
+# ============================================================ appliers
+# Split into shared assets plus one function per desktop (step 2 of the DE
+# branding plan). Nothing here is new: the bodies are the same code that used to
+# run top-to-bottom behind `if $DO_LXQT` guards. The point is that the dispatcher
+# at the bottom now has something to dispatch TO, so a desktop that is not on the
+# box simply never has its applier called.
+
+# apply_shared - Tier 1: everything that needs no desktop integration and is
+# therefore shared by LXQt, the bare Openbox session and Plasma alike.
+# It runs FIRST and unconditionally, because the per-desktop appliers read what
+# it sets (ICON_THEME, the rendered wallpaper paths, the Kvantum theme).
+apply_shared() {
+    # Which GTK theme everything points at. Shared, not LXQt's: the LXQt
+    # appearance step writes it into gtk settings and gsettings, and the bare
+    # Openbox session needs the same name for xsettingsd. It used to be assigned
+    # inside the LXQt section and merely HAPPENED to run first - splitting the
+    # file surfaced that with `set -u` the moment the order changed.
+    GTK_THEME="Adwaita-dark"; [ -d /usr/share/themes/Arc-Dark ] && GTK_THEME="Arc-Dark"
 # ============================================================ Kvantum widget skin
 log "Kvantum widget skin (void-tactical)"
 KVSRC=/usr/share/Kvantum/KvArcDark
@@ -200,69 +219,6 @@ PY
     ok "Kvantum -> void-tactical"
 else warn "KvArcDark not installed (kvantum pkg) — skipping Kvantum skin"; fi
 
-if $DO_LXQT; then
-# ============================================================ LXQt panel theme
-log "LXQt panel theme (void-tactical, blue->green)"
-LXSRC=/usr/share/lxqt/themes/kvantum
-if [ -d "$LXSRC" ]; then
-    D="$SHARE/lxqt/themes/void-tactical"; rm -rf "$D"; mkdir -p "$D"; cp -rf "$LXSRC"/. "$D"/
-    find "$D" -type f \( -name '*.qss' -o -name '*.svg' \) -print0 | xargs -0 sed -i -E \
-     -e 's/#55aaff/#6a9d84/Ig' -e 's/#80c0ff/#7fae95/Ig' -e 's/#81c0ff/#7fae95/Ig' \
-     -e 's/#4da6ff/#5a9678/Ig' -e 's/#488cc8/#4f8a6b/Ig' -e 's/#4584be/#4f8a6b/Ig' \
-     -e 's/#4d8fd2/#558f70/Ig' -e 's/#3a72a0/#3f7259/Ig' -e 's/#3a5f84/#3a6b52/Ig' \
-     -e 's/#436d98/#45775c/Ig' -e 's/#2878c8/#478061/Ig' -e 's/#246cb4/#3f7259/Ig' \
-     -e 's/#006edc/#4a8666/Ig' -e 's/#0064c8/#478061/Ig' -e 's/#005ab4/#3f7259/Ig' \
-     -e 's/#0050a0/#3a6b52/Ig' -e 's/#375778/#2e4d3f/Ig' -e 's/#385a7c/#2e4d3f/Ig' \
-     -e 's/#345372/#2c4a3c/Ig' -e 's/#2e4964/#282c34/Ig' -e 's/#001e3c/#16211b/Ig' \
-     -e 's/#001428/#121a15/Ig'
-    # underplay the panel background gradient. The base theme fades the bar to
-    # near-black (rgba(0,0,0,72%)) at its bottom edge, which reads as a hard dark
-    # band sitting on the obsidian wallpaper. Take that bottom stop down to just a
-    # tad darker than the wallpaper (~rgb(27,29,30)) instead, so the bar melts into
-    # the desktop — the crisp light-grey top edge is kept. The rgba string is unique
-    # to the four #BackgroundWidget rules, so this targeted replace is safe.
-    find "$D" -type f -name '*.qss' -print0 | xargs -0 sed -i \
-        's/rgba(0, 0, 0, 72%)/rgba(22, 24, 25, 90%)/g'
-    # 1px graphite frame on the bar, the same hairline the Plasma dock and Plank
-    # draw (OuterStrokeColor 40,44,52 in Plank's dock.theme). Appended rather than
-    # substituted: nothing in the base theme sets a border on #BackgroundWidget, so
-    # there is no conflicting declaration to fight, and a later rule wins anyway.
-    printf '
-/* Cachy-Void: 1px graphite frame, matching Plank and the Plasma dock */
-LXQtPanel #BackgroundWidget { border: 1px solid #282c34; }
-'         >> "$D/lxqt-panel.qss"
-
-    # kill the plugin move-handle "dots" (the taskbar/tray grip). The theme draws
-    # them via Plugin[NeedsHandle="true"] + plugin-handle-*.svg; lockPanel is meant
-    # to hide them but doesn't in LXQt 2.4, so null the image (last-wins override,
-    # matching the per-position selectors' specificity) and reclaim their margin.
-    if [ -f "$D/lxqt-panel.qss" ]; then
-        cat >> "$D/lxqt-panel.qss" <<'QSS'
-
-/* cachy-void: remove the plugin move-handle dots (clean, locked-looking panel).
-   Must be `background: none` (shorthand) — `background-image: none` alone does
-   NOT clear it in Qt QSS. */
-LXQtPanel[position="Bottom"] Plugin[NeedsHandle="true"],
-LXQtPanel[position="Top"] Plugin[NeedsHandle="true"],
-LXQtPanel[position="Left"] Plugin[NeedsHandle="true"],
-LXQtPanel[position="Right"] Plugin[NeedsHandle="true"] {
-    background: none;
-    margin: 0;
-    padding: 0;
-}
-
-/* cachy-void: clock font = Hack, to match Conky's telemetry */
-#WorldClockContent { font-family: "Hack"; }
-
-/* cachy-void: flat active taskbar button (kills the base theme's metallic gradient) */
-#TaskBar QToolButton:on { background-color: #2e4d3f; border: 1px solid #478061; }
-#TaskBar QToolButton:hover:on { background-color: #3a6b52; border: 1px solid #478061; }
-QSS
-    fi
-    ok "LXQt theme -> void-tactical (handle dots removed)"
-else warn "LXQt 'kvantum' theme not present — panel keeps current theme"; fi
-
-fi
 # ============================================================ icon theme (Luv-Void — mono)
 # Build "Luv-Void": the Luv icon theme (deploy.sh fetches it to $ASSETS/luv) with
 # every colour desaturated to its luminance grey. Done at the SVG level (not a
@@ -426,64 +382,81 @@ PY
 fi
 ok "icon theme = $ICON_THEME"
 
-if $DO_LXQT; then
-# ============================================================ LXQt appearance (lxqt.conf / session.conf)
-log "LXQt appearance (Kvantum style, $ICON_THEME, Hack, palette)"
-mkdir -p "$CFG/lxqt"; LX="$CFG/lxqt/lxqt.conf"; bak "$LX"
-python3 - "$LX" "$BG" "$PANEL" "$FG" "$ACCENT" "$DIM" "$ICON_THEME" <<'PY'
-import sys,configparser,os
-p,BG,PANEL,FG,ACCENT,DIM,ICON=sys.argv[1:8]
-c=configparser.RawConfigParser(); c.optionxform=str
-if os.path.exists(p): c.read(p)
-def s(sec,k,v):
-    if not c.has_section(sec): c.add_section(sec)
-    c.set(sec,k,v)
-s('General','__userfile__','true'); s('General','icon_theme',ICON); s('General','theme','void-tactical')
-s('Qt','style','kvantum'); s('Qt','font_family','Hack'); s('Qt','font_point_size','10')
-for k,v in {'base_color':'#'+BG,'window_color':'#'+BG,'text_color':'#'+FG,'window_text_color':'#'+FG,
-            'highlight_color':'#'+ACCENT,'highlighted_text_color':'#'+BG,'link_color':'#'+ACCENT,
-            'link_visited_color':'#'+DIM,'tooltip_base_color':'#000000','tooltip_text_color':'#'+FG}.items():
-    s('Palette',k,v)
-with open(p,'w') as f: c.write(f,space_around_delimiters=False)
-PY
-SC="$CFG/lxqt/session.conf"; bak "$SC"
-grep -q '^QT_STYLE_OVERRIDE=' "$SC" 2>/dev/null || { grep -q '^\[Environment\]' "$SC" 2>/dev/null || printf '\n[Environment]\n' >> "$SC"; printf 'QT_STYLE_OVERRIDE=kvantum\n' >> "$SC"; }
-# GTK apps + Plank use their OWN theme keys (NOT lxqt.conf) — point them at ours.
-# Widget theme: Arc-Dark (pairs with our KvArcDark-based Kvantum) so GTK apps like
-# Firefox get dark chrome; +prefer-dark so Firefox's "auto" theme picks dark. Falls
-# back to Adwaita-dark. (GTK reads its theme at startup — restart GTK apps to apply.)
-GTK_THEME="Adwaita-dark"; [ -d /usr/share/themes/Arc-Dark ] && GTK_THEME="Arc-Dark"
-mkdir -p "$CFG/gtk-3.0"; GT="$CFG/gtk-3.0/settings.ini"; bak "$GT"
-[ -s "$GT" ] || printf '[Settings]\n' > "$GT"
-setgtk(){ grep -q "^$1=" "$GT" && sed -i "s|^$1=.*|$1=$2|" "$GT" || sed -i "/^\[Settings\]/a $1=$2" "$GT"; }
-setgtk gtk-icon-theme-name "$ICON_THEME"
-setgtk gtk-theme-name "$GTK_THEME"
-setgtk gtk-application-prefer-dark-theme true
-if command -v gsettings >/dev/null 2>&1; then
-    gsettings set org.gnome.desktop.interface icon-theme "$ICON_THEME" 2>/dev/null
-    gsettings set org.gnome.desktop.interface gtk-theme "$GTK_THEME" 2>/dev/null
-    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null
-fi
-# Plank's running-indicator dot is NOT a themeable dock.theme key — libplank derives
-# it from the GTK theme's `iconview.view` background colour (Arc-Dark ships blue-grey,
-# so the dot renders blue). Override that one colour in the user gtk.css to tint the
-# dot brand green. pcmanfm-qt is Qt (unaffected); GTK apps don't paint chrome from
-# iconview.view, so the blast radius is just Plank's dot. Marked block = --remove-able.
-GC="$CFG/gtk-3.0/gtk.css"
-python3 - "$GC" "$ACCENT" <<'PY'
-import os,re,sys
-p,accent=sys.argv[1],sys.argv[2]
-t=open(p).read() if os.path.exists(p) else ""
-t=re.sub(r"\n*/\* >>> cachy-void >>> \*/.*?/\* <<< cachy-void <<< \*/\n*","\n",t,flags=re.S)
-block=("/* >>> cachy-void >>> */\n"
-       "/* Plank derives its running-indicator dot from iconview.view's background;\n"
-       "   tint it brand green (dock.theme has no key for this). */\n"
-       f"iconview.view {{ background-color: #{accent}; }}\n"
-       "/* <<< cachy-void <<< */\n")
-open(p,"w").write((t.rstrip()+"\n\n" if t.strip() else "")+block)
-PY
-ok "lxqt.conf + session.conf + GTK theme ($GTK_THEME) + icon theme + Plank dot"
+# ============================================================ qterminal skin
+# Point qterminal at the void-tactical color scheme + Hack. The scheme FILE ships to
+# the system qtermwidget dir via deploy.sh --with-branding (qterminal only reads the
+# system dir). Shell is a separate, opt-in choice (--shell); this is pure appearance.
+log "qterminal skin (void-tactical + Hack)"
+QT="$CFG/qterminal.org/qterminal.ini"; mkdir -p "$CFG/qterminal.org"; bak "$QT"
+[ -s "$QT" ] || printf '[General]\n' > "$QT"
+grep -q '^\[General\]' "$QT" || sed -i '1i [General]' "$QT"
+setqt(){ grep -q "^$1=" "$QT" && sed -i "s|^$1=.*|$1=$2|" "$QT" || sed -i "/^\[General\]/a $1=$2" "$QT"; }
+setqt colorScheme void-tactical
+setqt fontFamily Hack
+ok "qterminal -> void-tactical + Hack"
 
+# fastfetch preset — the shell's greeting in the same discipline as the conky
+# panels (honest facts, grey + one green accent). Installed only if fastfetch is
+# present (deploy.sh installs it as an optional branding package) and never
+# clobbers a config the user already wrote.
+if command -v fastfetch >/dev/null 2>&1 && [ -f "$ASSETS/fastfetch/config.jsonc" ]; then
+    FFC="$CFG/fastfetch/config.jsonc"
+    if [ ! -e "$FFC" ] || grep -q 'void-tactical fastfetch preset' "$FFC" 2>/dev/null; then
+        mkdir -p "$CFG/fastfetch"
+        cp -f "$ASSETS/fastfetch/config.jsonc" "$FFC"
+        ok "fastfetch -> void-tactical preset"
+    else
+        warn "fastfetch: existing user config left untouched"
+    fi
+fi
+
+# ============================================================ Papirus grey folders (only on the Papirus fallback)
+if [ "$ICON_THEME" = "Papirus-Dark" ] && command -v papirus-folders >/dev/null 2>&1; then
+    log "folder colour: grey"; sudo papirus-folders -C grey -t Papirus-Dark >/dev/null 2>&1 && ok "folders grey" || warn "papirus-folders needs sudo — folders unchanged"
+fi
+
+# ============================================================ wallpaper
+log "wallpaper (cachy-void-official)"
+WP="$SHARE/cachy-void/cachy-void-official.png"; mkdir -p "$SHARE/cachy-void"
+# always (re)render from the SVG — a stale PNG must not survive an asset update
+if [ -f "$ASSETS/wallpapers/cachy-void-official.svg" ]; then
+    if command -v rsvg-convert >/dev/null 2>&1; then rsvg-convert -w 1920 -h 1080 "$ASSETS/wallpapers/cachy-void-official.svg" -o "$WP"
+    else magick -background none "$ASSETS/wallpapers/cachy-void-official.svg" -resize 1920x1080 "$WP" 2>/dev/null; fi
+fi
+# pcmanfm-qt caches the decoded wallpaper by PATH — a same-name content change is
+# ignored (needs a desktop restart). Point it at a fresh versioned copy each apply
+# so the path changes and it reloads live; prune older versions.
+WPV="$SHARE/cachy-void/cachy-void-official-$(date +%s).png"
+cp -f "$WP" "$WPV" 2>/dev/null && find "$SHARE/cachy-void" -maxdepth 1 -name 'cachy-void-official-*.png' ! -name "$(basename "$WPV")" -delete 2>/dev/null
+[ -f "$WPV" ] || WPV="$WP"
+PS="$CFG/pcmanfm-qt/lxqt/settings.conf"
+if [ -f "$PS" ]; then
+    bak "$PS"
+    sed -i -E "s#^Wallpaper=.*#Wallpaper=$WPV#; s#^WallpaperMode=.*#WallpaperMode=stretch#" "$PS"
+    # clean desktop (played-down §5.7): NO desktop icons — the file manager (Plank)
+    # is the single entry point; home/computer/network/trash are reached inside it.
+    # DesktopShortcuts= empty removes the special icons; HideItems MUST stay false
+    # (HideItems=true blanks the wallpaper too). pcmanfm materializes the shortcuts
+    # as ~/Desktop/*.desktop files AND rewrites DesktopShortcuts back to defaults on
+    # a graceful exit — so apply-live kills it with -9 (no write-back) and this edit
+    # lands for the next clean start (a re-login applies it definitively).
+    grep -q '^DesktopShortcuts=' "$PS" && sed -i 's/^DesktopShortcuts=.*/DesktopShortcuts=/' "$PS" || sed -i '/^\[Desktop\]/a DesktopShortcuts=' "$PS"
+    grep -q '^HideItems=' "$PS" && sed -i 's/^HideItems=.*/HideItems=false/' "$PS" || sed -i '/^\[Desktop\]/a HideItems=false' "$PS"
+fi
+rm -f "$HOME"/Desktop/{computer,network,trash-can,user-home,steam}.desktop 2>/dev/null
+# keep trash reachable: a Trash launcher (mono icon) — pinned to Plank below
+mkdir -p "$SHARE/applications"
+printf '[Desktop Entry]\nType=Application\nName=Trash\nComment=Open the trash\nExec=pcmanfm-qt trash:///\nIcon=user-trash\nTerminal=false\nCategories=System;\n' > "$SHARE/applications/cachy-trash.desktop"
+command -v pcmanfm-qt >/dev/null 2>&1 && pcmanfm-qt --set-wallpaper="$WPV" --wallpaper-mode=stretch 2>/dev/null
+ok "wallpaper set; desktop icons cleared (Plank is the launcher)"
+
+}
+
+# apply_openbox_session - the bare Openbox session AND the openbox titlebars that
+# LXQt also uses (LXQt runs openbox as its window manager). Called before
+# apply_lxqt on purpose: the LXQt body ends by running `openbox --reconfigure`,
+# which must come after rc.xml is rewritten here.
+apply_openbox_session() {
 # ============================================================ openbox titlebars
 log "openbox titlebars (void-tactical)"
 OT="$HOME/.themes/void-tactical/openbox-3"; mkdir -p "$OT"; cp -f "$ASSETS/openbox/void-tactical/themerc" "$OT/themerc"
@@ -643,76 +616,128 @@ OBE="$CFG/openbox/environment"; bak "$OBE"
 } > "$OBE"
 ok "openbox session -> dark Qt (Kvantum) for qterminal/pcmanfm-qt/updater"
 
-fi
-# ============================================================ qterminal skin
-# Point qterminal at the void-tactical color scheme + Hack. The scheme FILE ships to
-# the system qtermwidget dir via deploy.sh --with-branding (qterminal only reads the
-# system dir). Shell is a separate, opt-in choice (--shell); this is pure appearance.
-log "qterminal skin (void-tactical + Hack)"
-QT="$CFG/qterminal.org/qterminal.ini"; mkdir -p "$CFG/qterminal.org"; bak "$QT"
-[ -s "$QT" ] || printf '[General]\n' > "$QT"
-grep -q '^\[General\]' "$QT" || sed -i '1i [General]' "$QT"
-setqt(){ grep -q "^$1=" "$QT" && sed -i "s|^$1=.*|$1=$2|" "$QT" || sed -i "/^\[General\]/a $1=$2" "$QT"; }
-setqt colorScheme void-tactical
-setqt fontFamily Hack
-ok "qterminal -> void-tactical + Hack"
+}
 
-# fastfetch preset — the shell's greeting in the same discipline as the conky
-# panels (honest facts, grey + one green accent). Installed only if fastfetch is
-# present (deploy.sh installs it as an optional branding package) and never
-# clobbers a config the user already wrote.
-if command -v fastfetch >/dev/null 2>&1 && [ -f "$ASSETS/fastfetch/config.jsonc" ]; then
-    FFC="$CFG/fastfetch/config.jsonc"
-    if [ ! -e "$FFC" ] || grep -q 'void-tactical fastfetch preset' "$FFC" 2>/dev/null; then
-        mkdir -p "$CFG/fastfetch"
-        cp -f "$ASSETS/fastfetch/config.jsonc" "$FFC"
-        ok "fastfetch -> void-tactical preset"
-    else
-        warn "fastfetch: existing user config left untouched"
+# apply_lxqt - the LXQt session itself: its panel theme, its appearance config,
+# the top bar, Plank, the clean desktop, picom/rofi/conky, and the live restart.
+apply_lxqt() {
+# ============================================================ LXQt panel theme
+log "LXQt panel theme (void-tactical, blue->green)"
+LXSRC=/usr/share/lxqt/themes/kvantum
+if [ -d "$LXSRC" ]; then
+    D="$SHARE/lxqt/themes/void-tactical"; rm -rf "$D"; mkdir -p "$D"; cp -rf "$LXSRC"/. "$D"/
+    find "$D" -type f \( -name '*.qss' -o -name '*.svg' \) -print0 | xargs -0 sed -i -E \
+     -e 's/#55aaff/#6a9d84/Ig' -e 's/#80c0ff/#7fae95/Ig' -e 's/#81c0ff/#7fae95/Ig' \
+     -e 's/#4da6ff/#5a9678/Ig' -e 's/#488cc8/#4f8a6b/Ig' -e 's/#4584be/#4f8a6b/Ig' \
+     -e 's/#4d8fd2/#558f70/Ig' -e 's/#3a72a0/#3f7259/Ig' -e 's/#3a5f84/#3a6b52/Ig' \
+     -e 's/#436d98/#45775c/Ig' -e 's/#2878c8/#478061/Ig' -e 's/#246cb4/#3f7259/Ig' \
+     -e 's/#006edc/#4a8666/Ig' -e 's/#0064c8/#478061/Ig' -e 's/#005ab4/#3f7259/Ig' \
+     -e 's/#0050a0/#3a6b52/Ig' -e 's/#375778/#2e4d3f/Ig' -e 's/#385a7c/#2e4d3f/Ig' \
+     -e 's/#345372/#2c4a3c/Ig' -e 's/#2e4964/#282c34/Ig' -e 's/#001e3c/#16211b/Ig' \
+     -e 's/#001428/#121a15/Ig'
+    # underplay the panel background gradient. The base theme fades the bar to
+    # near-black (rgba(0,0,0,72%)) at its bottom edge, which reads as a hard dark
+    # band sitting on the obsidian wallpaper. Take that bottom stop down to just a
+    # tad darker than the wallpaper (~rgb(27,29,30)) instead, so the bar melts into
+    # the desktop — the crisp light-grey top edge is kept. The rgba string is unique
+    # to the four #BackgroundWidget rules, so this targeted replace is safe.
+    find "$D" -type f -name '*.qss' -print0 | xargs -0 sed -i \
+        's/rgba(0, 0, 0, 72%)/rgba(22, 24, 25, 90%)/g'
+    # 1px graphite frame on the bar, the same hairline the Plasma dock and Plank
+    # draw (OuterStrokeColor 40,44,52 in Plank's dock.theme). Appended rather than
+    # substituted: nothing in the base theme sets a border on #BackgroundWidget, so
+    # there is no conflicting declaration to fight, and a later rule wins anyway.
+    printf '
+/* Cachy-Void: 1px graphite frame, matching Plank and the Plasma dock */
+LXQtPanel #BackgroundWidget { border: 1px solid #282c34; }
+'         >> "$D/lxqt-panel.qss"
+
+    # kill the plugin move-handle "dots" (the taskbar/tray grip). The theme draws
+    # them via Plugin[NeedsHandle="true"] + plugin-handle-*.svg; lockPanel is meant
+    # to hide them but doesn't in LXQt 2.4, so null the image (last-wins override,
+    # matching the per-position selectors' specificity) and reclaim their margin.
+    if [ -f "$D/lxqt-panel.qss" ]; then
+        cat >> "$D/lxqt-panel.qss" <<'QSS'
+
+/* cachy-void: remove the plugin move-handle dots (clean, locked-looking panel).
+   Must be `background: none` (shorthand) — `background-image: none` alone does
+   NOT clear it in Qt QSS. */
+LXQtPanel[position="Bottom"] Plugin[NeedsHandle="true"],
+LXQtPanel[position="Top"] Plugin[NeedsHandle="true"],
+LXQtPanel[position="Left"] Plugin[NeedsHandle="true"],
+LXQtPanel[position="Right"] Plugin[NeedsHandle="true"] {
+    background: none;
+    margin: 0;
+    padding: 0;
+}
+
+/* cachy-void: clock font = Hack, to match Conky's telemetry */
+#WorldClockContent { font-family: "Hack"; }
+
+/* cachy-void: flat active taskbar button (kills the base theme's metallic gradient) */
+#TaskBar QToolButton:on { background-color: #2e4d3f; border: 1px solid #478061; }
+#TaskBar QToolButton:hover:on { background-color: #3a6b52; border: 1px solid #478061; }
+QSS
     fi
-fi
+    ok "LXQt theme -> void-tactical (handle dots removed)"
+else warn "LXQt 'kvantum' theme not present — panel keeps current theme"; fi
 
-# ============================================================ Papirus grey folders (only on the Papirus fallback)
-if [ "$ICON_THEME" = "Papirus-Dark" ] && command -v papirus-folders >/dev/null 2>&1; then
-    log "folder colour: grey"; sudo papirus-folders -C grey -t Papirus-Dark >/dev/null 2>&1 && ok "folders grey" || warn "papirus-folders needs sudo — folders unchanged"
+# ============================================================ LXQt appearance (lxqt.conf / session.conf)
+log "LXQt appearance (Kvantum style, $ICON_THEME, Hack, palette)"
+mkdir -p "$CFG/lxqt"; LX="$CFG/lxqt/lxqt.conf"; bak "$LX"
+python3 - "$LX" "$BG" "$PANEL" "$FG" "$ACCENT" "$DIM" "$ICON_THEME" <<'PY'
+import sys,configparser,os
+p,BG,PANEL,FG,ACCENT,DIM,ICON=sys.argv[1:8]
+c=configparser.RawConfigParser(); c.optionxform=str
+if os.path.exists(p): c.read(p)
+def s(sec,k,v):
+    if not c.has_section(sec): c.add_section(sec)
+    c.set(sec,k,v)
+s('General','__userfile__','true'); s('General','icon_theme',ICON); s('General','theme','void-tactical')
+s('Qt','style','kvantum'); s('Qt','font_family','Hack'); s('Qt','font_point_size','10')
+for k,v in {'base_color':'#'+BG,'window_color':'#'+BG,'text_color':'#'+FG,'window_text_color':'#'+FG,
+            'highlight_color':'#'+ACCENT,'highlighted_text_color':'#'+BG,'link_color':'#'+ACCENT,
+            'link_visited_color':'#'+DIM,'tooltip_base_color':'#000000','tooltip_text_color':'#'+FG}.items():
+    s('Palette',k,v)
+with open(p,'w') as f: c.write(f,space_around_delimiters=False)
+PY
+SC="$CFG/lxqt/session.conf"; bak "$SC"
+grep -q '^QT_STYLE_OVERRIDE=' "$SC" 2>/dev/null || { grep -q '^\[Environment\]' "$SC" 2>/dev/null || printf '\n[Environment]\n' >> "$SC"; printf 'QT_STYLE_OVERRIDE=kvantum\n' >> "$SC"; }
+# GTK apps + Plank use their OWN theme keys (NOT lxqt.conf) — point them at ours.
+# Widget theme: Arc-Dark (pairs with our KvArcDark-based Kvantum) so GTK apps like
+# Firefox get dark chrome; +prefer-dark so Firefox's "auto" theme picks dark. Falls
+# back to Adwaita-dark. (GTK reads its theme at startup — restart GTK apps to apply.)
+mkdir -p "$CFG/gtk-3.0"; GT="$CFG/gtk-3.0/settings.ini"; bak "$GT"
+[ -s "$GT" ] || printf '[Settings]\n' > "$GT"
+setgtk(){ grep -q "^$1=" "$GT" && sed -i "s|^$1=.*|$1=$2|" "$GT" || sed -i "/^\[Settings\]/a $1=$2" "$GT"; }
+setgtk gtk-icon-theme-name "$ICON_THEME"
+setgtk gtk-theme-name "$GTK_THEME"
+setgtk gtk-application-prefer-dark-theme true
+if command -v gsettings >/dev/null 2>&1; then
+    gsettings set org.gnome.desktop.interface icon-theme "$ICON_THEME" 2>/dev/null
+    gsettings set org.gnome.desktop.interface gtk-theme "$GTK_THEME" 2>/dev/null
+    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null
 fi
+# Plank's running-indicator dot is NOT a themeable dock.theme key — libplank derives
+# it from the GTK theme's `iconview.view` background colour (Arc-Dark ships blue-grey,
+# so the dot renders blue). Override that one colour in the user gtk.css to tint the
+# dot brand green. pcmanfm-qt is Qt (unaffected); GTK apps don't paint chrome from
+# iconview.view, so the blast radius is just Plank's dot. Marked block = --remove-able.
+GC="$CFG/gtk-3.0/gtk.css"
+python3 - "$GC" "$ACCENT" <<'PY'
+import os,re,sys
+p,accent=sys.argv[1],sys.argv[2]
+t=open(p).read() if os.path.exists(p) else ""
+t=re.sub(r"\n*/\* >>> cachy-void >>> \*/.*?/\* <<< cachy-void <<< \*/\n*","\n",t,flags=re.S)
+block=("/* >>> cachy-void >>> */\n"
+       "/* Plank derives its running-indicator dot from iconview.view's background;\n"
+       "   tint it brand green (dock.theme has no key for this). */\n"
+       f"iconview.view {{ background-color: #{accent}; }}\n"
+       "/* <<< cachy-void <<< */\n")
+open(p,"w").write((t.rstrip()+"\n\n" if t.strip() else "")+block)
+PY
+ok "lxqt.conf + session.conf + GTK theme ($GTK_THEME) + icon theme + Plank dot"
 
-# ============================================================ wallpaper
-log "wallpaper (cachy-void-official)"
-WP="$SHARE/cachy-void/cachy-void-official.png"; mkdir -p "$SHARE/cachy-void"
-# always (re)render from the SVG — a stale PNG must not survive an asset update
-if [ -f "$ASSETS/wallpapers/cachy-void-official.svg" ]; then
-    if command -v rsvg-convert >/dev/null 2>&1; then rsvg-convert -w 1920 -h 1080 "$ASSETS/wallpapers/cachy-void-official.svg" -o "$WP"
-    else magick -background none "$ASSETS/wallpapers/cachy-void-official.svg" -resize 1920x1080 "$WP" 2>/dev/null; fi
-fi
-# pcmanfm-qt caches the decoded wallpaper by PATH — a same-name content change is
-# ignored (needs a desktop restart). Point it at a fresh versioned copy each apply
-# so the path changes and it reloads live; prune older versions.
-WPV="$SHARE/cachy-void/cachy-void-official-$(date +%s).png"
-cp -f "$WP" "$WPV" 2>/dev/null && find "$SHARE/cachy-void" -maxdepth 1 -name 'cachy-void-official-*.png' ! -name "$(basename "$WPV")" -delete 2>/dev/null
-[ -f "$WPV" ] || WPV="$WP"
-PS="$CFG/pcmanfm-qt/lxqt/settings.conf"
-if [ -f "$PS" ]; then
-    bak "$PS"
-    sed -i -E "s#^Wallpaper=.*#Wallpaper=$WPV#; s#^WallpaperMode=.*#WallpaperMode=stretch#" "$PS"
-    # clean desktop (played-down §5.7): NO desktop icons — the file manager (Plank)
-    # is the single entry point; home/computer/network/trash are reached inside it.
-    # DesktopShortcuts= empty removes the special icons; HideItems MUST stay false
-    # (HideItems=true blanks the wallpaper too). pcmanfm materializes the shortcuts
-    # as ~/Desktop/*.desktop files AND rewrites DesktopShortcuts back to defaults on
-    # a graceful exit — so apply-live kills it with -9 (no write-back) and this edit
-    # lands for the next clean start (a re-login applies it definitively).
-    grep -q '^DesktopShortcuts=' "$PS" && sed -i 's/^DesktopShortcuts=.*/DesktopShortcuts=/' "$PS" || sed -i '/^\[Desktop\]/a DesktopShortcuts=' "$PS"
-    grep -q '^HideItems=' "$PS" && sed -i 's/^HideItems=.*/HideItems=false/' "$PS" || sed -i '/^\[Desktop\]/a HideItems=false' "$PS"
-fi
-rm -f "$HOME"/Desktop/{computer,network,trash-can,user-home,steam}.desktop 2>/dev/null
-# keep trash reachable: a Trash launcher (mono icon) — pinned to Plank below
-mkdir -p "$SHARE/applications"
-printf '[Desktop Entry]\nType=Application\nName=Trash\nComment=Open the trash\nExec=pcmanfm-qt trash:///\nIcon=user-trash\nTerminal=false\nCategories=System;\n' > "$SHARE/applications/cachy-trash.desktop"
-command -v pcmanfm-qt >/dev/null 2>&1 && pcmanfm-qt --set-wallpaper="$WPV" --wallpaper-mode=stretch 2>/dev/null
-ok "wallpaper set; desktop icons cleared (Plank is the launcher)"
-
-if $DO_LXQT; then
 # ============================================================ panel: top bar
 # Surgical: keep the user's existing (working) panel.conf and only nudge
 # position/size/plugin-list — do NOT rebuild [panel1]/[mainmenu] from scratch.
@@ -1090,7 +1115,10 @@ if pgrep -f lxqt-powermanagement >/dev/null 2>&1; then
     spawn lxqt-powermanagement
 fi
 
-fi
+}
+
+# apply_shell - opt-in and desktop-agnostic; self-guards on $SHELL_CHOICE.
+apply_shell() {
 # ============================================================ shell (OPT-IN, --shell)
 # The terminal SKIN above is unconditional (pure appearance). Changing the shell is a
 # bigger, personal decision, so it only happens if asked. Two branded flavours, same
@@ -1144,6 +1172,18 @@ ZRC
         fi
     fi
 fi
+}
+
+# ============================================================ dispatch
+# The rule the whole plan exists for: shared assets always, then only the
+# appliers this machine actually asked for (see the target resolution above).
+apply_shared
+if $DO_LXQT; then
+    apply_openbox_session
+    apply_lxqt
+fi
+apply_shell
+
 
 # ============================================================ KDE Plasma applier
 # Tier-2 appliers are separate executables so that adding one cannot regress the
