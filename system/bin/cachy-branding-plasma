@@ -518,13 +518,22 @@ if $LIVE; then
     # appletsrc is plasmashell's own file and it rewrites it, so we do not edit it
     # — but we DO record it, or --remove could not put the panel back.
     bak "$CFG/plasma-org.kde.plasma.desktop-appletsrc"
+    # Only the panel that owns the LAUNCHER is the main bar. Touching every panel
+    # was a real bug: a second run dragged the dock created below up to the top,
+    # and then the dock step could not find it and made another one. Identify by
+    # contents, never by position, because position is what we are changing.
     PANEL_JS='
 var ps = panels();
 for (var i = 0; i < ps.length; i++) {
   var p = ps[i];
+  var ws = p.widgets();
+  var isMain = false;
+  for (var j = 0; j < ws.length; j++) {
+    if (ws[j].type == "org.kde.plasma.kickoff") { isMain = true; break; }
+  }
+  if (!isMain) { continue; }
   p.location = "top";
   p.height = 30;
-  var ws = p.widgets();
   for (var j = 0; j < ws.length; j++) {
     var w = ws[j];
     if (w.type == "org.kde.plasma.pager" || w.type == "org.kde.plasma.showdesktop") {
@@ -547,6 +556,100 @@ for (var i = 0; i < ps.length; i++) {
     fi
 else
     log "panel layout is applied inside the session; the first-login hook below does it"
+fi
+
+# --- 6a. the dock (Plank's parallel) ---------------------------------------
+# Reversing another judgement call. This applier shipped without a dock on the
+# grounds that Plasma's task manager already covers Plank's job — functionally
+# true, and beside the LXQt desktop it still read as missing, with the owner's
+# actual complaint being sharper than "no dock": there was NO updater icon
+# anywhere. The updater window is the product's main visible surface, so leaving
+# it unreachable except through a menu is a real regression, not a taste call.
+#
+# Plank's role here is a launcher strip, pinned in a deliberate order: the updater
+# FIRST (its 00- prefix) and the trash LAST (zz-). Mirrored below. The parallel is
+# an icons-only task manager on its own bottom panel, set to fit its contents and
+# float — which is what a Plasma dock is. Same duplication of running apps that
+# LXQt already lives with (its top bar carries a taskbar too), so parity holds.
+#
+# Roles, not literal packages: the terminal slot takes Konsole on Plasma (the one
+# this applier just skinned) and the file-manager slot takes Dolphin when it is
+# installed, falling back to what the box actually has.
+dock_entry(){   # $1 = desktop id to look for; prints an icontasks launcher entry
+    local d
+    for d in /usr/share/applications /usr/local/share/applications "$SHARE/applications"; do
+        if [ -f "$d/$1.desktop" ]; then
+            case "$d" in
+                "$SHARE/applications") printf 'file://%s/applications/%s.desktop' "$SHARE" "$1" ;;
+                *)                     printf 'applications:%s.desktop' "$1" ;;
+            esac
+            return 0
+        fi
+    done
+    return 1
+}
+
+DOCK_ITEMS=""
+dock_add(){     # first existing id wins, so Plasma-native names go first
+    local id e
+    for id in "$@"; do
+        if e="$(dock_entry "$id")"; then
+            DOCK_ITEMS="${DOCK_ITEMS:+$DOCK_ITEMS,}$e"
+            return 0
+        fi
+    done
+    return 0
+}
+dock_add cachy-updater
+dock_add firefox
+dock_add org.kde.dolphin dolphin pcmanfm-qt
+dock_add org.kde.konsole konsole qterminal
+dock_add steam
+dock_add cachy-trash
+
+if $LIVE && [ -n "$DOCK_ITEMS" ]; then
+    # Our dock is "a panel with the task manager and NO launcher" — again identified
+    # by contents, not position. Any extras are docks a previous buggy run left
+    # behind, so they get removed instead of accumulating.
+    DOCK_JS='
+var dock = null;
+var extra = [];
+var ps = panels();
+for (var i = 0; i < ps.length; i++) {
+  var p = ps[i];
+  var ws = p.widgets();
+  var hasLauncher = false, hasTasks = false;
+  for (var j = 0; j < ws.length; j++) {
+    if (ws[j].type == "org.kde.plasma.kickoff") { hasLauncher = true; }
+    if (ws[j].type == "org.kde.plasma.icontasks") { hasTasks = true; }
+  }
+  if (hasLauncher) { continue; }
+  if (hasTasks) { if (dock == null) { dock = p; } else { extra.push(p); } }
+}
+for (var k = 0; k < extra.length; k++) { extra[k].remove(); }
+if (dock == null) { dock = new Panel; }
+dock.location = "bottom";
+dock.height = 48;
+dock.alignment = "center";
+dock.lengthMode = "fit";
+dock.floating = true;
+dock.hiding = "dodgewindows";
+var tasks = null;
+var ws = dock.widgets();
+for (var j = 0; j < ws.length; j++) {
+  if (ws[j].type == "org.kde.plasma.icontasks") { tasks = ws[j]; break; }
+}
+if (tasks == null) { tasks = dock.addWidget("org.kde.plasma.icontasks"); }
+tasks.currentConfigGroup = ["General"];
+tasks.writeConfig("launchers", "DOCKITEMS");
+tasks.reloadConfig();
+'
+    DOCK_JS=$(printf '%s' "$DOCK_JS" | sed "s|DOCKITEMS|$DOCK_ITEMS|")
+    if plasma_script "$DOCK_JS"; then
+        ok "dock -> bottom, floating, $(printf '%s' "$DOCK_ITEMS" | tr ',' '\n' | grep -c .) launchers (updater first, trash last)"
+    else
+        warn "could not create the dock — plasmashell's scripting API did not answer"
+    fi
 fi
 
 # --- 6b. the LOCK screen ---------------------------------------------------
