@@ -599,6 +599,15 @@ is the correct outcome, not a shortfall.
 | Desktop theme | `plasma-apply-desktoptheme breeze-dark` | Keeps panel/plasmoid chrome dark; the colour scheme does the actual recolouring |
 | Wallpaper | `plasma-apply-wallpaperimage`, rendered to a screen-sized PNG first | Plasma re-rasterises an SVG every login; render once instead |
 
+**Governing rule for Plasma, from the owner (2026-08-20): Plasma's own look takes
+precedence, and the branding is small hints — not an LXQt clone.** That is the
+tie-breaker for every question below. It is why the palette, the launcher glyph,
+the wallpaper and the panel *position* are branded while Plasma keeps its own
+widgets, shell behaviour and defaults; and it is why the answer to "should X match
+LXQt exactly?" is usually no. The two exceptions earned their place by being
+identity rather than decoration: the thin top bar with the green Void mark, and
+the Conky telemetry.
+
 **What it deliberately does not touch:** the panel layout, a dock, a compositor,
 a launcher, and `plasma-org.kde.plasma.desktop-appletsrc` in general. Plasma owns
 those roles and rewrites that file itself; editing it behind a running Plasma's
