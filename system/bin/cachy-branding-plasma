@@ -510,38 +510,61 @@ mkdir -p "$DT/widgets"
 # slab instead of Plank's hairline. Authoring the parts at 1px gives the exact
 # line width, and the parts are tiny enough that writing the file beats forking it.
 #
-# Geometry, matching LXQt Plank's dock.theme (read, not eyeballed):
-#   LineWidth 1, OuterStrokeColor 40,44,52 (--panel), fill 27,29,30 (--bg).
+# Geometry and colour, both read rather than eyeballed:
+#   the line   - LXQt Plank's dock.theme: LineWidth 1, OuterStrokeColor 40,44,52
+#   the fill   - the LXQt bar's gradient, MEASURED off the rendered bar (its qss
+#                stops carry 80-90% alpha, so those numbers would not reproduce
+#                what you see). Sampled column: 62,63,63 -> 44,44,44 -> 24,26,27,
+#                taken opaque so it renders the same whatever is behind it.
 # The hint-*-margin parts set the CONTENT inset independently of the line, so the
 # icons do not sit flush against it.
 {
     printf '<?xml version="1.0" encoding="UTF-8"?>\n'
-    printf '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">\n'
-    printf '  <!-- Cachy-Void panel frame: 1px graphite line, obsidian fill. -->\n'
-    # corners: 1x1 graphite
+    printf '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">\n'
+    printf '  <!-- Cachy-Void panel frame: 1px graphite line over the LXQt bar gradient. -->\n'
+    printf '  <defs>\n'
+    printf '    <linearGradient id="cv-panel" x1="0" y1="0" x2="0" y2="1">\n'
+    printf '      <stop offset="0"    stop-color="#3e3f3f"/>\n'
+    printf '      <stop offset="0.40" stop-color="#2c2c2c"/>\n'
+    printf '      <stop offset="1"    stop-color="#181a1b"/>\n'
+    printf '    </linearGradient>\n'
+    printf '  </defs>\n'
+    # corners and edges: 1px graphite, so the border is exactly one pixel
     printf '  <rect id="topleft"     x="0"  y="0"  width="1" height="1" fill="#282c34"/>\n'
-    printf '  <rect id="topright"    x="4"  y="0"  width="1" height="1" fill="#282c34"/>\n'
-    printf '  <rect id="bottomleft"  x="0"  y="4"  width="1" height="1" fill="#282c34"/>\n'
-    printf '  <rect id="bottomright" x="4"  y="4"  width="1" height="1" fill="#282c34"/>\n'
-    # edges: 1px thick, stretched by Plasma along their run
     printf '  <rect id="top"         x="2"  y="0"  width="1" height="1" fill="#282c34"/>\n'
-    printf '  <rect id="bottom"      x="2"  y="4"  width="1" height="1" fill="#282c34"/>\n'
+    printf '  <rect id="topright"    x="4"  y="0"  width="1" height="1" fill="#282c34"/>\n'
     printf '  <rect id="left"        x="0"  y="2"  width="1" height="1" fill="#282c34"/>\n'
-    printf '  <rect id="right"       x="4"  y="2"  width="1" height="1" fill="#282c34"/>\n'
-    # fill
-    printf '  <rect id="center"      x="2"  y="2"  width="1" height="1" fill="#1b1d1e"/>\n'
-    # content inset: 4px all round, independent of the 1px line
-    printf '  <rect id="hint-top-margin"    x="8"  y="0" width="1" height="4" fill="none"/>\n'
-    printf '  <rect id="hint-bottom-margin" x="10" y="0" width="1" height="4" fill="none"/>\n'
-    printf '  <rect id="hint-left-margin"   x="12" y="0" width="4" height="1" fill="none"/>\n'
-    printf '  <rect id="hint-right-margin"  x="12" y="2" width="4" height="1" fill="none"/>\n'
+    printf '  <rect id="right"       x="14" y="2"  width="1" height="1" fill="#282c34"/>\n'
+    printf '  <rect id="bottomleft"  x="0"  y="14" width="1" height="1" fill="#282c34"/>\n'
+    printf '  <rect id="bottom"      x="2"  y="14" width="1" height="1" fill="#282c34"/>\n'
+    printf '  <rect id="bottomright" x="4"  y="14" width="1" height="1" fill="#282c34"/>\n'
+    # the fill. Deliberately roomy rather than 1x1: Plasma STRETCHES `center` (there
+    # is no hint-tile-center here, which would make it repeat and turn a gradient
+    # into stripes), and a larger source rect gives the rasteriser something to
+    # interpolate across.
+    printf '  <rect id="center"      x="2"  y="2"  width="10" height="10" fill="url(#cv-panel)"/>\n'
+    # content inset, independent of the 1px line
+    printf '  <rect id="hint-top-margin"    x="18" y="0"  width="1" height="4" fill="none"/>\n'
+    printf '  <rect id="hint-bottom-margin" x="20" y="0"  width="1" height="4" fill="none"/>\n'
+    printf '  <rect id="hint-left-margin"   x="22" y="0"  width="4" height="1" fill="none"/>\n'
+    printf '  <rect id="hint-right-margin"  x="22" y="2"  width="4" height="1" fill="none"/>\n'
     printf '</svg>\n'
 } > "$DT/widgets/panel-background.svg"
 rm -f "$DT/widgets/panel-background.svgz"
 [ -s "$DT/widgets/panel-background.svg" ] && DT_OK=true
 
-if $DT_OK && plasma-apply-desktoptheme void-tactical >/dev/null 2>&1; then
-    ok "desktop theme -> void-tactical (obsidian fill, graphite 1px frame, like Plank)"
+# plasma-apply-desktoptheme needs a live plasmashell, so outside a Plasma session
+# it fails - and the first version of this then "fell back" to breeze-dark and
+# WROTE THAT to plasmarc, quietly undoing the theme it had just built. Applying
+# from the LXQt session is exactly how that showed up. So the fallback for a theme
+# we did build is to select it in the config, never to downgrade it.
+if $DT_OK; then
+    if plasma-apply-desktoptheme void-tactical >/dev/null 2>&1; then
+        ok "desktop theme -> void-tactical (1px graphite frame, LXQt bar gradient)"
+    else
+        kwriteconfig6 --file plasmarc --group Theme --key name void-tactical
+        ok "desktop theme -> void-tactical (written to plasmarc; applies at next Plasma login)"
+    fi
 elif plasma-apply-desktoptheme breeze-dark >/dev/null 2>&1; then
     ok "desktop theme -> breeze-dark"
 else
