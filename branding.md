@@ -696,7 +696,16 @@ desktop broke my machine".
   listed so a user can see they were recognised and skipped on purpose).
   One brandable desktop is branded without asking; more than one is the user's choice,
   recorded in `/etc/cachy-void/branding-targets` and overridable with
-  `cachy-branding --de lxqt,plasma`.
+  `cachy-branding --desktop lxqt,plasma` (`--de` is the short form, `auto` resolves
+  normally). `--dry-run` reports what would be applied and where the decision came
+  from, writing nothing.
+- **The applier is split accordingly**: `apply_shared` (Tier 1 — Kvantum, icons,
+  terminal scheme, folders, wallpaper) runs unconditionally, then only the appliers
+  the machine resolved: `apply_openbox_session`, `apply_lxqt`, and Plasma's own
+  script. `apply_shell` is opt-in. A value both appliers need lives in the shared
+  half — which is how a latent coupling surfaced: `GTK_THEME` had been assigned
+  inside the LXQt section while the Openbox session's xsettingsd config read it,
+  working only because one happened to run first.
 - **GRUB theming: out of scope** on the foreign-GRUB testbed (another distro owns boot).
 - **Reversible** — a Cachy-Void that leaves no scars (the deploy-ledger ethos).
 

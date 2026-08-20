@@ -709,8 +709,20 @@ session that is running rather than guessing. The answer is recorded in
 `--brand-de lxqt,plasma` (also `all` / `none`) at install time, or per run:
 
 ```bash
-cachy-branding --de plasma
+cachy-branding --desktop plasma     # or --de; "auto" means resolve normally
 ```
+
+**See what it would do, without doing it:**
+
+```bash
+cachy-branding --dry-run
+```
+
+That prints which desktops were found, which appliers would run, and — usefully
+when something looks wrong — *where the decision came from* (the flag, the
+install-time record, or the detector). It writes nothing, needs no assets and no
+session, and unlike a real run it is allowed as root, so it works inside a
+container. That is what makes the dispatch logic testable without a desktop.
 
 A desktop with no applier of its own is **not** a failure: it still gets every
 integration-free asset (Kvantum skin, icons, wallpaper, terminal scheme, login

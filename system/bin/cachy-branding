@@ -49,19 +49,31 @@ bak(){
 spawn(){ command -v "$1" >/dev/null 2>&1 || return 0; setsid --fork "$@" >/dev/null 2>&1 </dev/null; }
 _words(){ printf '%s' "$*"; }   # normalise a whitespace-separated list
 
-[ "$(id -u)" -ne 0 ] || { warn "run as your normal user, not root (LXQt config is per-user)"; exit 1; }
-[ -d "$ASSETS" ] || { warn "branding assets not found at $ASSETS (deploy.sh installs them)"; exit 1; }
 
 # --- args: --remove, and the opt-in shell choice --shell bash|zsh ---
 SHELL_CHOICE=""
 DE_ARG=""
+DRY_RUN=false
 _prev=""
 for _arg in "$@"; do
     [ "$_prev" = "--shell" ] && { SHELL_CHOICE="$_arg"; _prev=""; continue; }
-    [ "$_prev" = "--de" ] && { DE_ARG="$_arg"; _prev=""; continue; }
+    # --desktop is the name the plan used; --de is the short form. Same thing.
+    case "$_prev" in --de|--desktop) DE_ARG="$_arg"; _prev=""; continue ;; esac
+    [ "$_arg" = "--dry-run" ] && DRY_RUN=true
     _prev="$_arg"
 done
+# "auto" means "resolve it the normal way", i.e. exactly as if nothing was passed.
+[ "$DE_ARG" = auto ] && DE_ARG=""
 case "$SHELL_CHOICE" in ""|bash|zsh) : ;; *) warn "--shell must be 'bash' or 'zsh'"; exit 1 ;; esac
+
+# Root is refused because the config this writes is per-user - but a DRY RUN
+# writes nothing, so refusing it as root only blocks the container/CI case the
+# dry run exists for (Void in WSL runs as root, and every dispatch test failed
+# there while passing on the dev box until this moved below the arg parsing).
+if ! $DRY_RUN && [ "$(id -u)" -eq 0 ]; then
+    warn "run as your normal user, not root (the desktop config this writes is per-user)"
+    exit 1
+fi
 
 # --- which desktop(s) to brand --------------------------------------------
 # The detector is shared with deploy.sh (cachy-de-detect --appliers), so the
@@ -73,15 +85,18 @@ case "$SHELL_CHOICE" in ""|bash|zsh) : ;; *) warn "--shell must be 'bash' or 'zs
 # No detector at all means an older install: assume LXQt, which is exactly what
 # this script did before appliers became selectable.
 TARGETS=""
+TARGET_SOURCE="the --de/--desktop flag"
 if [ -n "$DE_ARG" ]; then
     TARGETS="$(printf '%s' "$DE_ARG" | tr ',' ' ')"
 elif [ -s /etc/cachy-void/branding-targets ]; then
+    TARGET_SOURCE="/etc/cachy-void/branding-targets (chosen at install time)"
     TARGETS="$(grep -vE '^[[:space:]]*(#|$)' /etc/cachy-void/branding-targets | tr '\n' ' ')"
 elif command -v cachy-de-detect >/dev/null 2>&1; then
+    TARGET_SOURCE="cachy-de-detect (what is on this machine)"
     TARGETS="$(cachy-de-detect --appliers 2>/dev/null | tr '\n' ' ')"
 fi
 TARGETS="$(_words $TARGETS)"               # collapse blanks / trim the ends
-[ -n "$TARGETS" ] || TARGETS="lxqt"
+[ -n "$TARGETS" ] || { TARGETS="lxqt"; TARGET_SOURCE="fallback (no detector, no recorded choice)"; }
 DO_LXQT=false; DO_PLASMA=false
 for _t in $TARGETS; do
     case "$_t" in
@@ -153,9 +168,14 @@ PY
 fi
 
 # --- session env (so live restarts reach the running LXQt) ---
-SP=$(pgrep -u "$USER" -x lxqt-session | head -1)
+# $USER is not guaranteed set (a container, a scrubbed cron-ish environment, the
+# dry-run tests), and `set -u` turns that into a hard failure, so fall back to id.
+_me="${USER:-$(id -un)}"
+SP=$(pgrep -u "$_me" -x lxqt-session 2>/dev/null | head -1)
 if [ -n "$SP" ]; then while IFS= read -r -d '' kv; do export "$kv"; done < "/proc/$SP/environ"; fi
-case "${XDG_CURRENT_DESKTOP:-}" in *LXQt*) : ;; *) warn "not an LXQt session — this look targets LXQt/X11; applying config anyway" ;; esac
+if ! $DRY_RUN; then
+    case "${XDG_CURRENT_DESKTOP:-}" in *LXQt*) : ;; *) warn "not an LXQt session — this look targets LXQt/X11; applying config anyway" ;; esac
+fi
 
 
 # ============================================================ appliers
@@ -1177,6 +1197,39 @@ fi
 # ============================================================ dispatch
 # The rule the whole plan exists for: shared assets always, then only the
 # appliers this machine actually asked for (see the target resolution above).
+# --- dry run: say what WOULD be applied, touch nothing ---------------------
+# The point of this mode is not convenience, it is testability: with no desktop
+# installed and no assets on disk it still exercises argument parsing, the
+# detector and the whole resolution chain, so the dispatch logic can be tested in
+# a WSL container. CACHY_DE_ROOT lets the detector be pointed at a fake tree.
+if $DRY_RUN; then
+    printf '%swould brand:%s %s\n' "$C" "$Z" "${TARGETS:-(nothing)}"
+    printf '  resolved from : %s\n' "$TARGET_SOURCE"
+    printf '  assets        : %s\n' "$([ -d "$ASSETS" ] && echo "$ASSETS" || echo "MISSING ($ASSETS) - a real run would stop here")"
+    printf '\n  appliers that would run:\n'
+    printf '    %-26s %s\n' "apply_shared" "always (Kvantum, icons, terminal, folders, wallpaper)"
+    if $DO_LXQT; then
+        printf '    %-26s %s\n' "apply_openbox_session" "openbox titlebars + the bare session"
+        printf '    %-26s %s\n' "apply_lxqt" "panel theme, appearance, top bar, Plank, picom/rofi/conky"
+    fi
+    if $DO_PLASMA; then
+        printf '    %-26s %s\n' "cachy-branding-plasma" "$(command -v cachy-branding-plasma >/dev/null 2>&1 && echo 'colours, Kvantum bridge, Konsole, panel, dock' || echo 'NOT INSTALLED')"
+    fi
+    case "$SHELL_CHOICE" in
+        bash|zsh) printf '    %-26s %s\n' "apply_shell" "$SHELL_CHOICE (opt-in)" ;;
+        *)        printf '    %-26s %s\n' "apply_shell" "skipped (no --shell given)" ;;
+    esac
+    if command -v cachy-de-detect >/dev/null 2>&1; then
+        printf '\n  what the detector sees here:\n'
+        cachy-de-detect --summary 2>/dev/null || printf '    (detector found nothing)\n'
+    fi
+    printf '\n  nothing was written.\n'
+    exit 0
+fi
+
+# a real run needs the assets; a dry run deliberately does not.
+[ -d "$ASSETS" ] || { warn "branding assets not found at $ASSETS (deploy.sh installs them)"; exit 1; }
+
 apply_shared
 if $DO_LXQT; then
     apply_openbox_session
