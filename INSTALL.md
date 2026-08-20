@@ -816,9 +816,16 @@ sitting with the **lid closed** keeps its internal panel lit and stretches the
 desktop across a screen nobody can see, with the panel stranded on the invisible
 half.
 
+The same is true of **`ksystemstats`**, the sensor daemon: it ships *only* a
+systemd user unit and has no D-Bus activation at all, so on Void it can never
+start by itself — and without it every system-monitor widget renders empty,
+Plasma's own and third-party ones alike.
+
 `cachy-branding-plasma` handles both halves — it says so plainly if either
 package is missing, and it installs a small `OnlyShowIn=KDE;` autostart entry that
-starts `kded6`, because on Void nothing else will. (This is the same job the
+starts `kded6` and `ksystemstats`, because on Void nothing else will. (The list
+came from checking every `plasma-*.service` in `/usr/lib/systemd/user` against what
+was actually running.) (This is the same job the
 Openbox applier does when it starts pipewire and a polkit agent: cover what the
 environment does not provide.) After that, KScreen remembers your layout in
 `~/.local/share/kscreen/`, keyed to the set of connected outputs, so a closed lid

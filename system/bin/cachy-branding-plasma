@@ -121,29 +121,58 @@ mkdir -p "$SHARE/color-schemes" "$SHARE/konsole" "$CFG"
 # not — because on Void nothing else is going to. This is the same job the
 # Openbox session applier does when it starts pipewire and a polkit agent
 # (branding.md §5.9): cover what the environment does not provide.
-KDED_HOOK="$CFG/autostart/cachy-void-kded6.desktop"
-if command -v kded6 >/dev/null 2>&1; then
-    mkdir -p "$CFG/autostart"
-    {
-        printf '[Desktop Entry]\n'
-        printf 'Type=Application\n'
-        printf 'Name=Plasma service daemon (Cachy-Void: runit has no user units)\n'
-        printf 'Comment=Starts kded6, which upstream starts from a systemd user unit\n'
-        printf 'Exec=sh -c "pgrep -x kded6 >/dev/null || exec kded6"\n'
-        printf 'OnlyShowIn=KDE;\n'
-        printf 'X-GNOME-Autostart-enabled=true\n'
-    } > "$KDED_HOOK"
-    ok "kded6 autostart installed (its systemd user unit cannot run on Void)"
-    if ! pgrep -x kded6 >/dev/null 2>&1; then
-        setsid --fork kded6 >/dev/null 2>&1 </dev/null
-        ok "started kded6 for this session"
+# The list is not guesswork: every plasma-*.service in /usr/lib/systemd/user was
+# checked against what was actually running, and these are the ones nothing starts.
+#   kded6         KScreen (display memory + lid handling), keyboard layout,
+#                 device automount, touchpad, notifications
+#   ksystemstats  the sensor daemon. Nothing reads CPU/RAM/GPU/battery without it,
+#                 so EVERY system-monitor widget renders empty — Plasma's own and
+#                 third-party ones alike. It has no D-Bus activation file either,
+#                 so unlike kded6 it can never be started on demand.
+PLASMA_SVCS="kded6 ksystemstats"
+SVC_LAUNCH="$SHARE/cachy-void/plasma-services-start.sh"
+mkdir -p "$SHARE/cachy-void" "$CFG/autostart"
+{
+    printf '#!/bin/sh\n'
+    printf '# Cachy-Void: start the Plasma session services that upstream starts from\n'
+    printf '# systemd user units. Void has no systemd, so nothing else will. Idempotent.\n'
+    printf 'for s in %s; do\n' "$PLASMA_SVCS"
+    printf '    command -v "$s" >/dev/null 2>&1 || continue\n'
+    printf '    pgrep -x "$s" >/dev/null 2>&1 && continue\n'
+    printf '    setsid --fork "$s" >/dev/null 2>&1 </dev/null\n'
+    printf 'done\n'
+    printf 'exit 0\n'
+} > "$SVC_LAUNCH"
+chmod 0755 "$SVC_LAUNCH"
+{
+    printf '[Desktop Entry]\n'
+    printf 'Type=Application\n'
+    printf 'Name=Plasma session services (Cachy-Void: runit has no user units)\n'
+    printf 'Comment=Starts kded6 and ksystemstats, which upstream starts from systemd\n'
+    printf 'Exec=%s\n' "$SVC_LAUNCH"
+    printf 'OnlyShowIn=KDE;\n'
+    printf 'X-GNOME-Autostart-enabled=true\n'
+} > "$CFG/autostart/cachy-void-plasma-services.desktop"
+rm -f "$CFG/autostart/cachy-void-kded6.desktop"   # superseded by the above
+
+_missing=""
+for _s in $PLASMA_SVCS; do
+    if command -v "$_s" >/dev/null 2>&1; then
+        if ! pgrep -x "$_s" >/dev/null 2>&1; then
+            setsid --fork "$_s" >/dev/null 2>&1 </dev/null
+        fi
+    else
+        _missing="$_missing $_s"
     fi
-else
-    warn "kf6-kded is NOT installed, so Plasma will not remember your display layout,"
-    warn "  keyboard layout, automount or touchpad settings (none of it is a hard"
-    warn "  dependency of plasma-desktop). Install it and re-run this applier:"
-    warn "    sudo xbps-install -Sy kf6-kded kscreen"
+done
+ok "Plasma session services armed:$(printf ' %s' $PLASMA_SVCS) (no systemd to start them)"
+if [ -n "$_missing" ]; then
+    warn "not installed, so Plasma stays partly inert:$_missing"
+    warn "  kf6-kded gives display-layout memory, keyboard layout and automount;"
+    warn "  ksystemstats is what every system-monitor widget reads its numbers from."
+    warn "    sudo xbps-install -Sy kf6-kded ksystemstats kscreen"
 fi
+
 if [ ! -f /usr/lib/qt6/plugins/kf6/kded/kscreen.so ]; then
     warn "kscreen is NOT installed — Plasma cannot remember which outputs are on,"
     warn "  so a closed laptop lid will keep lighting its internal panel:"

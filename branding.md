@@ -660,8 +660,18 @@ Diagnosis worth remembering, because three plausible culprits were all innocent:
 it was not the hardware, not `xrandr`, and not powerdevil — powerdevil's own
 binary says *"Lid action was suppressed because an external monitor is present"*,
 i.e. it deliberately does nothing there. The applier therefore reports the missing
-packages and starts `kded6` from an `OnlyShowIn=KDE;` autostart entry, which is
+packages and starts them from an `OnlyShowIn=KDE;` autostart entry, which is
 the same duty §5.9 discharges by starting pipewire and a polkit agent for Openbox.
+
+The list is `kded6` and **`ksystemstats`**, arrived at by checking every
+`plasma-*.service` in `/usr/lib/systemd/user` against what was actually running.
+`ksystemstats` is the worse of the two: it has no D-Bus activation either, so
+nothing can start it on demand, and without it *every* system-monitor widget shows
+nothing — which is also why a third-party Conky-style widget would not have helped.
+Note that even with the daemon up, this box exposes **no `gpu/` sensors** (the
+plugin does not see the legacy NVIDIA driver), so a native text-only sensor face
+covers cpu/memory/network/disk/battery but not GPU temp or VRAM — which is the
+concrete reason Conky stays the telemetry of record here.
 
 **One more trap, and it is not ours to fix — only to name.** Plasma 6 is
 Wayland-first, so a box with `plasma-workspace-x11` installed offers both
