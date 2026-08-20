@@ -601,6 +601,31 @@ for (var i = 0; i < ps.length; i++) {
       w.reloadConfig();
     }
   }
+
+  // Everything except the launcher belongs on the RIGHT. Plasma gets that for
+  // free from its default layout because the TASK MANAGER expands to fill the
+  // middle — and we removed it, so the tray and clock collapsed leftwards.
+  // marginsseparator cannot do the job: it is a fixed margin, not a stretch.
+  // An expanding panelspacer can, and then the applet order is set explicitly so
+  // the result does not depend on the order widgets happen to come back in.
+  var idKickoff = null, idSpacer = null, idTray = null, idClock = null, idRest = [];
+  ws = p.widgets();
+  for (var j = 0; j < ws.length; j++) {
+    var t = ws[j].type;
+    if (t == "org.kde.plasma.kickoff") { idKickoff = ws[j].id; }
+    else if (t == "org.kde.plasma.panelspacer") {
+      if (idSpacer == null) { idSpacer = ws[j].id; } else { ws[j].remove(); }
+    }
+    else if (t == "org.kde.plasma.systemtray") { idTray = ws[j].id; }
+    else if (t == "org.kde.plasma.digitalclock") { idClock = ws[j].id; }
+    else { idRest.push(ws[j].id); }
+  }
+  if (idSpacer == null) {
+    var sp = p.addWidget("org.kde.plasma.panelspacer");
+    sp.currentConfigGroup = ["General"];
+    sp.writeConfig("expanding", true);
+    idSpacer = sp.id;
+  }
 }
 '
     PANEL_JS=$(printf '%s' "$PANEL_JS" | sed "s|MARKPATH|$MARK|")
@@ -608,6 +633,68 @@ for (var i = 0; i < ps.length; i++) {
         ok "panel -> top, 30px, pager/show-desktop dropped, launcher icon -> the green Void mark"
     else
         warn "could not reach plasmashell's scripting API — panel left as it was"
+    fi
+
+    # Applet ORDER is the one thing the scripting API cannot do: addWidget always
+    # appends, and writeConfig("AppletOrder") on a panel is overwritten by
+    # plasmashell from its live scene. So the order is written to the config and
+    # picked up by a shell restart, which is the only thing that reads it. Only
+    # restart when the order actually changed, so re-runs stay quiet.
+    if python3 - "$CFG/plasma-org.kde.plasma.desktop-appletsrc" <<'PY'
+import re, sys
+path = sys.argv[1]
+t = open(path).read()
+
+# the panel containment that owns the launcher
+panels = {}
+for m in re.finditer(r"^\[Containments\]\[(\d+)\]\[Applets\]\[(\d+)\]\n((?:(?!\[)[^\n]*\n)*)", t, re.M):
+    cid, aid, body = m.group(1), m.group(2), m.group(3)
+    for line in body.splitlines():
+        if line.startswith("plugin="):
+            panels.setdefault(cid, {})[aid] = line.split("=", 1)[1]
+
+target = None
+for cid, applets in panels.items():
+    if "org.kde.plasma.kickoff" in applets.values():
+        target = (cid, applets)
+        break
+if target is None:
+    sys.exit(1)
+
+cid, applets = target
+def ids_of(plugin):
+    return [a for a, pl in applets.items() if pl == plugin]
+
+# launcher, stretch, then everything else, with tray and clock pinned to the end
+head = ids_of("org.kde.plasma.kickoff") + ids_of("org.kde.plasma.panelspacer")
+tail = ids_of("org.kde.plasma.systemtray") + ids_of("org.kde.plasma.digitalclock")
+middle = [a for a in applets if a not in head and a not in tail]
+order = ";".join(head + middle + tail)
+
+grp = "[Containments][%s][General]" % cid
+m = re.search(r"^\[Containments\]\[%s\]\[General\]\n((?:(?!\[)[^\n]*\n)*)" % cid, t, re.M)
+if m and re.search(r"^AppletOrder=%s$" % re.escape(order), m.group(1), re.M):
+    sys.exit(2)                      # already in the right order: no restart needed
+if m:
+    body = m.group(1)
+    if re.search(r"^AppletOrder=", body, re.M):
+        body_new = re.sub(r"^AppletOrder=.*$", "AppletOrder=" + order, body, count=1, flags=re.M)
+    else:
+        body_new = "AppletOrder=" + order + "\n" + body
+    t = t[:m.start(1)] + body_new + t[m.end(1):]
+else:
+    t = t.rstrip("\n") + "\n\n" + grp + "\nAppletOrder=" + order + "\n"
+open(path, "w").write(t)
+PY
+    then
+        # config changed — make the running shell read it
+        if kquitapp6 plasmashell >/dev/null 2>&1 || pkill -x plasmashell 2>/dev/null; then
+            sleep 3
+            setsid --fork plasmashell >/dev/null 2>&1 </dev/null
+            ok "applet order -> launcher left, tray and clock right (shell restarted to read it)"
+        fi
+    else
+        [ $? -eq 2 ] && ok "applet order already correct"
     fi
 else
     log "panel layout is applied inside the session; the first-login hook below does it"
@@ -638,10 +725,12 @@ dock_entry(){   # $1 = desktop id to look for; prints an icontasks launcher entr
             # the writeConfig comment: a comma-joined STRING is read back as one
             # single launcher, which is how the dock ended up showing exactly one
             # "unknown icon" placeholder instead of six apps.
-            case "$d" in
-                "$SHARE/applications") printf '"file://%s/applications/%s.desktop"' "$SHARE" "$1" ;;
-                *)                     printf '"applications:%s.desktop"' "$1" ;;
-            esac
+            # file:// for EVERY entry, not the applications: id form. The id form
+            # makes Plasma resolve the launcher through KService, and when that
+            # lookup misses, the item renders with a generic placeholder instead of
+            # the app's own icon. A file URL points at the .desktop directly, so
+            # its Icon= is read as-is — including our updater's absolute-path SVG.
+            printf '"file://%s/%s.desktop"' "$d" "$1"
             return 0
         fi
     done
