@@ -699,6 +699,23 @@ desktop broke my machine".
   `cachy-branding --desktop lxqt,plasma` (`--de` is the short form, `auto` resolves
   normally). `--dry-run` reports what would be applied and where the decision came
   from, writing nothing.
+- **An unsupported desktop is told what to do, not left guessing.** Tier 1 means
+  the shared assets applied and nothing else, which from the user's chair looks
+  identical to "it did nothing". So when the running session has no applier,
+  `cachy-branding` prints the palette inline plus the real paths on *that* machine
+  — the icon theme, the Kvantum theme, the rendered wallpapers and their SVG
+  sources, the terminal scheme — and links `branding.md` for the full table. Only
+  paths that exist are named, so it never advertises a file that is not there. A
+  window manager gets the same list with different framing: deliberately excluded,
+  not merely unfinished.
+  **There is no separate "supported desktops" list to maintain**: support *is* the
+  tier column in `cachy-de-detect`'s table. Writing an applier and changing that
+  one row promotes a desktop, and the notice stops appearing for it automatically.
+- **A desktop with no applier no longer gets someone else's config.** The
+  resolution chain used to fall back to LXQt whenever it came out empty — including
+  when the detector had run and correctly found nothing brandable, which would
+  write LXQt config onto an Xfce box. LXQt is now assumed only when we could not
+  look at all (no detector, no recorded choice).
 - **How this gets verified without hardware.** The obvious system test — a clean
   Void with both desktops, run `deploy.sh` choosing one, check, wipe, repeat
   choosing both — spends a lot of machine time to check a decision, and still

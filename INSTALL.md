@@ -726,8 +726,12 @@ container. That is what makes the dispatch logic testable without a desktop.
 
 A desktop with no applier of its own is **not** a failure: it still gets every
 integration-free asset (Kvantum skin, icons, wallpaper, terminal scheme, login
-screen). Standalone window managers (i3, sway, dwm) are recognised and skipped on
-purpose — see [`rejected-ideas.md`](rejected-ideas.md).
+screen), and `cachy-branding` tells you where those landed so you can point that
+desktop's own appearance settings at them — the palette inline, plus the actual
+paths to the icon theme, Kvantum theme, wallpapers and terminal scheme on your
+machine, and a link to the palette table. Standalone window managers (i3, sway,
+dwm) get the same list, with the note that they are skipped on purpose — see
+[`rejected-ideas.md`](rejected-ideas.md).
 
 **1. Install the toolkit** (as root — packages + assets + the applier):
 

@@ -124,6 +124,36 @@ class BrandingDispatchTests(unittest.TestCase):
         cp = self.sh("--desktop", "nosuchdesktop")
         self.assertIn("unknown branding target", cp.stdout + cp.stderr)
 
+    # --- guidance for desktops we do not brand ---------------------------
+    def test_unsupported_desktop_gets_pointers_not_silence(self):
+        """A tier-1 desktop applies the shared assets and nothing else, which looks
+        like 'it did nothing' unless we say what happened and where the assets are."""
+        self.desktop("xfce4-session")
+        out = self.sh().stdout
+        self.assertIn("no Cachy-Void applier", out)
+        self.assertIn("branding.md", out)          # where the palette lives
+        self.assertIn("#478061", out)              # the accent, stated inline
+
+    def test_window_manager_is_told_it_is_deliberate(self):
+        self.desktop("i3")
+        out = self.sh().stdout
+        self.assertIn("deliberately", out)
+        self.assertIn("rejected-ideas", out)
+
+    def test_supported_desktop_is_not_nagged(self):
+        """The notice must not appear for a desktop that HAS an applier - that is
+        the difference between helpful and noise."""
+        self.desktop("lxqt-session")
+        self.assertNotIn("no Cachy-Void applier", self.sh().stdout)
+
+    def test_guidance_only_names_paths_that_exist(self):
+        """It must not advertise an icon theme or wallpaper dir that is not there."""
+        self.desktop("xfce4-session")
+        out = self.sh().stdout
+        self.assertNotIn("icon theme", out)        # nothing in this temp HOME yet
+        (self.home / ".local/share/icons/Luv-Void").mkdir(parents=True)
+        self.assertIn("icon theme", self.sh().stdout)
+
     # --- the safety properties ------------------------------------------
     def test_dry_run_reports_missing_assets_instead_of_dying(self):
         """A real run stops without assets; the dry run has to keep going, or it

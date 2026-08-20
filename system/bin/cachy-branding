@@ -49,6 +49,57 @@ bak(){
 spawn(){ command -v "$1" >/dev/null 2>&1 || return 0; setsid --fork "$@" >/dev/null 2>&1 </dev/null; }
 _words(){ printf '%s' "$*"; }   # normalise a whitespace-separated list
 
+# tier1_note - what to say when the RUNNING desktop has no applier of its own.
+#
+# The rule was always "shared assets plus a plain message, never a half-applied
+# look" - but a plain message is not much help to someone wondering why their
+# desktop did not change. So say what was installed, where it actually is on THIS
+# machine, and what to point their own appearance settings at. Paths are printed
+# only if they exist, so this never advertises a file that is not there.
+#
+# Supported vs unsupported is not a list maintained here: it is the tier column in
+# cachy-de-detect's table. Writing an applier and changing that row is what
+# promotes a desktop, and this notice stops appearing for it automatically.
+tier1_note() {
+    command -v cachy-de-detect >/dev/null 2>&1 || return 0
+    local cur tier app
+    cur="$(cachy-de-detect --current 2>/dev/null)" || cur=""
+    if [ -n "$cur" ]; then
+        app="$(cachy-de-detect --applier-of "$cur" 2>/dev/null)" || app="-"
+        [ "$app" = "-" ] || return 0      # this desktop has an applier: say nothing
+        tier="$(cachy-de-detect 2>/dev/null | awk -F'\t' -v i="$cur" '$1==i {print $4}')"
+    else
+        # No session we recognise (a TTY, a container, ssh). Only worth speaking up
+        # when there is nothing to brand at all - otherwise it would nag a good setup.
+        [ -z "$(_words $TARGETS)" ] || return 0
+        if [ -n "$(cachy-de-detect 2>/dev/null | awk -F'\t' '$4==1')" ]; then tier=1; else tier=0; fi
+        cur="this desktop"
+    fi
+
+    printf '\n%s%s has no Cachy-Void applier%s ' "$W" "$cur" "$Z"
+    if [ "$tier" = 0 ]; then
+        printf -- '- and deliberately so: standalone window\n'
+        printf '  managers are not branding targets (see rejected-ideas.md). The shared\n'
+        printf '  parts still apply, and you can point anything else at them:\n'
+    else
+        printf -- '- yet. Everything that needs no desktop\n'
+        printf '  integration was still installed, and you can point this desktop at it:\n'
+    fi
+    printf '    palette     %s bg  %s panel  %s text  %s accent\n' "#$BG" "#$PANEL" "#$FG" "#$ACCENT"
+    [ -d "$SHARE/icons/Luv-Void" ]      && printf '    icon theme  %s\n' "$SHARE/icons/Luv-Void"
+    [ -d "$CFG/Kvantum/void-tactical" ] && printf '    Qt widgets  %s   (select it in kvantummanager)\n' "$CFG/Kvantum/void-tactical"
+    ls "$SHARE"/cachy-void/*.png >/dev/null 2>&1 \
+        && printf '    wallpapers  %s/cachy-void/*.png\n' "$SHARE"
+    [ -d "$ASSETS/wallpapers" ]         && printf '    (sources)   %s/wallpapers/*.svg\n' "$ASSETS"
+    [ -f "$CFG/qterminal.org/qterminal.ini" ] && printf '    terminal    void-tactical scheme, already selected in qterminal\n'
+    printf '  The palette table and the reasoning behind it:\n'
+    printf '    https://github.com/Tubifix77/cachy-void/blob/main/branding.md\n'
+    if [ "$tier" != 0 ]; then
+        printf '  Want it done properly? An applier is one function plus one row in\n'
+        printf "  cachy-de-detect's table - branding.md \xc2\xa76 has the shape of it.\n"
+    fi
+}
+
 
 # --- args: --remove, and the opt-in shell choice --shell bash|zsh ---
 SHELL_CHOICE=""
@@ -85,6 +136,7 @@ fi
 # No detector at all means an older install: assume LXQt, which is exactly what
 # this script did before appliers became selectable.
 TARGETS=""
+DETECTOR_RAN=false
 TARGET_SOURCE="the --de/--desktop flag"
 if [ -n "$DE_ARG" ]; then
     TARGETS="$(printf '%s' "$DE_ARG" | tr ',' ' ')"
@@ -92,11 +144,23 @@ elif [ -s /etc/cachy-void/branding-targets ]; then
     TARGET_SOURCE="/etc/cachy-void/branding-targets (chosen at install time)"
     TARGETS="$(grep -vE '^[[:space:]]*(#|$)' /etc/cachy-void/branding-targets | tr '\n' ' ')"
 elif command -v cachy-de-detect >/dev/null 2>&1; then
+    DETECTOR_RAN=true
     TARGET_SOURCE="cachy-de-detect (what is on this machine)"
     TARGETS="$(cachy-de-detect --appliers 2>/dev/null | tr '\n' ' ')"
 fi
 TARGETS="$(_words $TARGETS)"               # collapse blanks / trim the ends
-[ -n "$TARGETS" ] || { TARGETS="lxqt"; TARGET_SOURCE="fallback (no detector, no recorded choice)"; }
+# The old rule fell back to lxqt whenever TARGETS came out empty - INCLUDING when
+# the detector had run and correctly found that nothing here has an applier, which
+# would write LXQt config onto (say) an Xfce box. Only assume LXQt when we could
+# not look at all; when we looked and found none, shared assets plus the notice
+# below is the designed outcome.
+if [ -z "$TARGETS" ]; then
+    if $DETECTOR_RAN; then
+        TARGET_SOURCE="cachy-de-detect (no desktop here has an applier)"
+    else
+        TARGETS="lxqt"; TARGET_SOURCE="fallback (no detector, no recorded choice)"
+    fi
+fi
 DO_LXQT=false; DO_PLASMA=false
 for _t in $TARGETS; do
     case "$_t" in
@@ -1223,6 +1287,7 @@ if $DRY_RUN; then
         printf '\n  what the detector sees here:\n'
         cachy-de-detect --summary 2>/dev/null || printf '    (detector found nothing)\n'
     fi
+    tier1_note
     printf '\n  nothing was written.\n'
     exit 0
 fi
@@ -1250,6 +1315,7 @@ if $DO_PLASMA; then
     fi
 fi
 
+tier1_note
 printf '\n%sCachy-Void desktop applied.%s  (branded: %s)\n' "$K" "$Z" "$TARGETS"
 printf '  * Log out / back in once for every app to pick up the Kvantum style + env.\n'
 $DO_LXQT && printf '  * Menu:      tap Super (Windows key)      Launcher: Super+Space (Rofi)\n'
