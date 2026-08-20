@@ -600,6 +600,18 @@ for (var i = 0; i < ps.length; i++) {
       w.writeConfig("icon", "MARKPATH");
       w.reloadConfig();
     }
+    // Time only, no date. The stock rendering runs them together as one
+    // undifferentiated string, and the date CANNOT be styled apart from the time:
+    // this applet exposes no per-element colour, only the theme-wide Kirigami
+    // ColorSet (checked in the applet binary rather than assumed). LXQt keeps the
+    // date one click away too, and the calendar popup still has it in full.
+    // NB: no apostrophes in this block - the whole script is a single-quoted
+    // shell string, and one apostrophe ends it (learned the hard way).
+    if (w.type == "org.kde.plasma.digitalclock") {
+      w.currentConfigGroup = ["Appearance"];
+      w.writeConfig("showDate", false);
+      w.reloadConfig();
+    }
   }
 
   // Everything except the launcher belongs on the RIGHT. Plasma gets that for
