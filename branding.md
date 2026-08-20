@@ -707,10 +707,15 @@ desktop broke my machine".
   overlay's to set, user-facing features are the user's to choose (CLAUDE.md).
 - **Two desktops on one Void install: what actually crosses over.** Autostart
   gating means neither desktop *starts* the other's daemons — verified in both
-  directions. But Void has **no user-session teardown** (no `systemd --user`), so
-  whatever a session started is reparented to init at logout and keeps running
-  under the next desktop. Observed live: `baloo_file` from a 19:17 Plasma session
-  still running in an LXQt session begun at 23:47. Nothing in the overlay causes
+  directions. Logout is the leaky part, but less than it sounds: what the session
+  manager owns does exit (`plasmashell`, `kwin_x11`, `powerdevil`, `kglobalacceld`,
+  `xembedsniproxy`, `kactivitymanagerd` were all gone). What survives is the short,
+  predictable set it does *not* own — **D-Bus-activated** services (`baloo_file` is
+  parented to `dbus-daemon`) and anything deliberately **detached** with `setsid`.
+  Observed live: `baloo_file` from a 19:17 Plasma session still running in an LXQt
+  session begun at 23:47. With no `systemd --user` there is no scope to tear those
+  down, so switching desktops without a reboot can leave them; `pkill -u "$USER"
+  -f 'baloo_file|ksystemstats|kded6'` clears it, and a reboot obviously does too. Nothing in the overlay causes
   it and nothing in the overlay can fully prevent it; a reboot or an explicit
   `pkill` is the cure. The lesson for us is narrower and was a real bug: an applier
   must not START another desktop's services just because that desktop is a
