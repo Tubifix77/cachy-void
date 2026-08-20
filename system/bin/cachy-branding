@@ -223,6 +223,15 @@ if [ -d "$LXSRC" ]; then
     # to the four #BackgroundWidget rules, so this targeted replace is safe.
     find "$D" -type f -name '*.qss' -print0 | xargs -0 sed -i \
         's/rgba(0, 0, 0, 72%)/rgba(22, 24, 25, 90%)/g'
+    # 1px graphite frame on the bar, the same hairline the Plasma dock and Plank
+    # draw (OuterStrokeColor 40,44,52 in Plank's dock.theme). Appended rather than
+    # substituted: nothing in the base theme sets a border on #BackgroundWidget, so
+    # there is no conflicting declaration to fight, and a later rule wins anyway.
+    printf '
+/* Cachy-Void: 1px graphite frame, matching Plank and the Plasma dock */
+LXQtPanel #BackgroundWidget { border: 1px solid #282c34; }
+'         >> "$D/lxqt-panel.qss"
+
     # kill the plugin move-handle "dots" (the taskbar/tray grip). The theme draws
     # them via Plugin[NeedsHandle="true"] + plugin-handle-*.svg; lockPanel is meant
     # to hide them but doesn't in LXQt 2.4, so null the image (last-wins override,
