@@ -637,6 +637,23 @@ rather than guessing:
 **Rule this establishes:** every autostart entry an applier writes must name the
 session it belongs to. An ungated entry is a bug the day a second desktop appears.
 
+**The trap that actually cost an evening: Plasma on Void starts no session
+services.** Upstream Plasma starts `kded6` from a systemd user unit
+(`plasma-kded6.service` is the only launcher `kf6-kded` ships), and nothing in the
+X11 startup path starts it otherwise. With no systemd, every `kded` module is
+silently absent — KScreen (display-layout memory *and* lid handling), keyboard
+layout, automount, touchpad, notifications. On top of that, neither `kf6-kded` nor
+`kscreen` is a hard dependency of `plasma-desktop`, so a by-the-book install has
+neither. The visible symptom was a laptop with a **closed lid** still lighting its
+internal panel and spanning the desktop onto a screen nobody could see.
+
+Diagnosis worth remembering, because three plausible culprits were all innocent:
+it was not the hardware, not `xrandr`, and not powerdevil — powerdevil's own
+binary says *"Lid action was suppressed because an external monitor is present"*,
+i.e. it deliberately does nothing there. The applier therefore reports the missing
+packages and starts `kded6` from an `OnlyShowIn=KDE;` autostart entry, which is
+the same duty §5.9 discharges by starting pipewire and a polkit agent for Openbox.
+
 **One more trap, and it is not ours to fix — only to name.** Plasma 6 is
 Wayland-first, so a box with `plasma-workspace-x11` installed offers both
 *Plasma (Wayland)* and *Plasma (X11)* at login. KWin's Wayland compositor needs

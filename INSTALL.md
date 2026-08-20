@@ -801,6 +801,33 @@ anything; the first login just finishes the job. To apply it by hand instead:
 cachy-branding-plasma
 ```
 
+**Two packages Plasma will not pull for you, and why it matters on Void.**
+`kf6-kded` and `kscreen` are not hard dependencies of `plasma-desktop`, and
+without them Plasma comes up missing a whole family of behaviour that most people
+assume is the desktop itself: remembering which displays are on, applying your
+keyboard layout, auto-mounting USB sticks, touchpad settings, notifications. They
+all live in `kded6` modules.
+
+Worse, `kf6-kded` ships exactly one thing that starts that daemon at session
+start — `/usr/lib/systemd/user/plasma-kded6.service`. Void has no systemd, and
+nothing in Plasma's X11 startup path launches `kded6` itself, so even with the
+package installed the daemon never runs. The symptom is not obvious: a laptop
+sitting with the **lid closed** keeps its internal panel lit and stretches the
+desktop across a screen nobody can see, with the panel stranded on the invisible
+half.
+
+`cachy-branding-plasma` handles both halves — it says so plainly if either
+package is missing, and it installs a small `OnlyShowIn=KDE;` autostart entry that
+starts `kded6`, because on Void nothing else will. (This is the same job the
+Openbox applier does when it starts pipewire and a polkit agent: cover what the
+environment does not provide.) After that, KScreen remembers your layout in
+`~/.local/share/kscreen/`, keyed to the set of connected outputs, so a closed lid
+with a TV attached stays a single-screen setup across logins.
+
+Note that **powerdevil is not the culprit** here, and does not need changing: it
+suppresses the lid action outright while an external monitor is present, so
+closing the lid will not suspend a machine that is driving a TV.
+
 **Pick the right session at login.** Plasma 6 is Wayland-first, so installing
 `plasma-workspace-x11` alongside it means your login screen offers both
 **Plasma (Wayland)** and **Plasma (X11)**. On a legacy NVIDIA box (driver 470 or
@@ -826,7 +853,8 @@ login screen then offers forever.
 
 ```bash
 sudo cachy-de-trial begin plasma
-sudo xbps-install -Sy plasma-desktop plasma-workspace-x11 plasma-nm konsole
+sudo xbps-install -Sy plasma-desktop plasma-workspace-x11 plasma-nm konsole \
+                      kf6-kded kscreen
 sudo cachy-de-trial diff
 ```
 

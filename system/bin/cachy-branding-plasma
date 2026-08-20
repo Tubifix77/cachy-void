@@ -77,6 +77,7 @@ if [ "${1:-}" = "--remove" ]; then
     rm -f "$SHARE/color-schemes/$SCHEME.colors"
     rm -f "$SHARE/konsole/$SCHEME.colorscheme" "$SHARE/konsole/$SCHEME.profile"
     rm -f "$CFG/autostart/cachy-branding-plasma-firstrun.desktop"
+    rm -f "$CFG/autostart/cachy-void-kded6.desktop"
     unbak "$CFG/Kvantum/kvantum.kvconfig"
     ok "removed — log out and back in for Plasma to reload."
     exit 0
@@ -95,6 +96,55 @@ fi
 LIVE=false; pgrep -u "$USER" -x plasmashell >/dev/null 2>&1 && LIVE=true
 
 mkdir -p "$SHARE/color-schemes" "$SHARE/konsole" "$CFG"
+
+# --- 0. what Plasma-on-Void does not start for itself ----------------------
+# Upstream Plasma starts its session services from systemd USER UNITS — kf6-kded
+# ships exactly one launcher, /usr/lib/systemd/user/plasma-kded6.service, and
+# nothing in the X11 startup path launches kded6 itself. Void has no systemd, so
+# on a stock Void Plasma install the entire kded module family silently never
+# runs: KScreen (display-layout memory AND lid handling), the keyboard layout
+# module, device automount, touchpad settings, notifications.
+#
+# Found the hard way (2026-08-20): a laptop sitting with its lid SHUT kept the
+# internal panel lit and spanned the desktop across a screen nobody could see,
+# with the panel on the invisible half. Cause was not the laptop and not
+# powerdevil — powerdevil suppresses the lid action while an external monitor is
+# present, by design. Cause was that kscreen and kf6-kded were not installed at
+# all (neither is a hard dependency of plasma-desktop), so ~/.local/share/kscreen
+# never existed and no layout was ever remembered.
+#
+# So: say it when the packages are missing, and start the daemon when they are
+# not — because on Void nothing else is going to. This is the same job the
+# Openbox session applier does when it starts pipewire and a polkit agent
+# (branding.md §5.9): cover what the environment does not provide.
+KDED_HOOK="$CFG/autostart/cachy-void-kded6.desktop"
+if command -v kded6 >/dev/null 2>&1; then
+    mkdir -p "$CFG/autostart"
+    {
+        printf '[Desktop Entry]\n'
+        printf 'Type=Application\n'
+        printf 'Name=Plasma service daemon (Cachy-Void: runit has no user units)\n'
+        printf 'Comment=Starts kded6, which upstream starts from a systemd user unit\n'
+        printf 'Exec=sh -c "pgrep -x kded6 >/dev/null || exec kded6"\n'
+        printf 'OnlyShowIn=KDE;\n'
+        printf 'X-GNOME-Autostart-enabled=true\n'
+    } > "$KDED_HOOK"
+    ok "kded6 autostart installed (its systemd user unit cannot run on Void)"
+    if ! pgrep -x kded6 >/dev/null 2>&1; then
+        setsid --fork kded6 >/dev/null 2>&1 </dev/null
+        ok "started kded6 for this session"
+    fi
+else
+    warn "kf6-kded is NOT installed, so Plasma will not remember your display layout,"
+    warn "  keyboard layout, automount or touchpad settings (none of it is a hard"
+    warn "  dependency of plasma-desktop). Install it and re-run this applier:"
+    warn "    sudo xbps-install -Sy kf6-kded kscreen"
+fi
+if [ ! -f /usr/lib/qt6/plugins/kf6/kded/kscreen.so ]; then
+    warn "kscreen is NOT installed — Plasma cannot remember which outputs are on,"
+    warn "  so a closed laptop lid will keep lighting its internal panel:"
+    warn "    sudo xbps-install -Sy kscreen"
+fi
 
 # --- 1. colour scheme ------------------------------------------------------
 # A KDE .colors file is the single asset that recolours every Qt/KDE app at once,
