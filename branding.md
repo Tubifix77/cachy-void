@@ -699,6 +699,18 @@ desktop broke my machine".
   `cachy-branding --desktop lxqt,plasma` (`--de` is the short form, `auto` resolves
   normally). `--dry-run` reports what would be applied and where the decision came
   from, writing nothing.
+- **How this gets verified without hardware.** The obvious system test — a clean
+  Void with both desktops, run `deploy.sh` choosing one, check, wipe, repeat
+  choosing both — spends a lot of machine time to check a decision, and still
+  cannot check the part that needs eyes. So the question is split three ways: the
+  **decision** is unit-tested against fake filesystem trees (`test_de_detect.py`,
+  `test_branding_dispatch.py`, and `cachy-branding --dry-run`); the **files
+  written** are checked by `updater/tests/dispatch-isolation.sh`, which runs the
+  real appliers into two disjoint `HOME`s and asserts neither desktop's config
+  appears in the other's (while Tier-1 assets appear in both); and only the
+  **pixels** need a real login. The middle one runs in the Void WSL sandbox given
+  a non-root user and `kf6-kconfig` — a real applier run refuses root, correctly,
+  since the config is per-user.
 - **The applier is split accordingly**: `apply_shared` (Tier 1 — Kvantum, icons,
   terminal scheme, folders, wallpaper) runs unconditionally, then only the appliers
   the machine resolved: `apply_openbox_session`, `apply_lxqt`, and Plasma's own
