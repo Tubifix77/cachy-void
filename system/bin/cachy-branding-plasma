@@ -247,9 +247,13 @@ ForegroundPositive=$RGB_ACCENT
 DecorationFocus=$RGB_ACCENT
 DecorationHover=$RGB_ACCENT
 
+# Plasma 6 paints PANELS from the Header set, so this group is what the top bar
+# and the dock are made of. It gets --panel graphite, which is what branding.md §2
+# calls the "Panel/border" role — having had --bg here made the floating dock read
+# as a dark slab against the wallpaper's lighter mid-band.
 [Colors:Header]
-BackgroundNormal=$RGB_BG
-BackgroundAlternate=$RGB_PANEL
+BackgroundNormal=$RGB_PANEL
+BackgroundAlternate=$RGB_BG
 ForegroundNormal=$RGB_FG
 ForegroundInactive=$RGB_DIM
 ForegroundActive=$RGB_ACCENT
@@ -295,7 +299,21 @@ for _f in kdeglobals kwinrc konsolerc plasmarc kcminputrc; do bak "$CFG/$_f"; do
 # plasma-apply-colorscheme both merges the scheme into kdeglobals AND tells a
 # running session to reload it. Without a session it can refuse, so fall back to
 # merging the file ourselves — a bare "ColorScheme=" key recolours nothing.
-if plasma-apply-colorscheme "$SCHEME" >/dev/null 2>&1; then
+# plasma-apply-colorscheme SHORT-CIRCUITS when the scheme name has not changed, so
+# editing VoidTactical.colors in place and re-applying it is a no-op — the file says
+# one thing and kdeglobals keeps the old values. Found by changing the panel colour
+# and watching nothing happen. So verify the result, and if it did not land, bounce
+# through another scheme to force a real change.
+_scheme_landed(){
+    grep -A8 '^\[Colors:Header\]' "$CFG/kdeglobals" 2>/dev/null \
+        | grep -q "^BackgroundNormal=$RGB_PANEL"
+}
+plasma-apply-colorscheme "$SCHEME" >/dev/null 2>&1
+if ! _scheme_landed; then
+    plasma-apply-colorscheme BreezeDark >/dev/null 2>&1
+    plasma-apply-colorscheme "$SCHEME" >/dev/null 2>&1
+fi
+if _scheme_landed; then
     ok "colour scheme applied via plasma-apply-colorscheme"
 else
     python3 - "$SHARE/color-schemes/$SCHEME.colors" "$CFG/kdeglobals" <<'PY'
@@ -518,6 +536,10 @@ if $LIVE; then
     # appletsrc is plasmashell's own file and it rewrites it, so we do not edit it
     # — but we DO record it, or --remove could not put the panel back.
     bak "$CFG/plasma-org.kde.plasma.desktop-appletsrc"
+    # App icons live on the DOCK, not up here — the same split LXQt has, where the
+    # launchers are Plank's job. Plasma's default puts a task manager in the top
+    # panel too, which left the same icons in two places at once.
+    #
     # Only the panel that owns the LAUNCHER is the main bar. Touching every panel
     # was a real bug: a second run dragged the dock created below up to the top,
     # and then the dock step could not find it and made another one. Identify by
@@ -537,6 +559,10 @@ for (var i = 0; i < ps.length; i++) {
   for (var j = 0; j < ws.length; j++) {
     var w = ws[j];
     if (w.type == "org.kde.plasma.pager" || w.type == "org.kde.plasma.showdesktop") {
+      w.remove();
+      continue;
+    }
+    if (w.type == "org.kde.plasma.icontasks" || w.type == "org.kde.plasma.taskmanager") {
       w.remove();
       continue;
     }
