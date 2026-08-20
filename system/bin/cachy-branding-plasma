@@ -605,9 +605,13 @@ dock_entry(){   # $1 = desktop id to look for; prints an icontasks launcher entr
     local d
     for d in /usr/share/applications /usr/local/share/applications "$SHARE/applications"; do
         if [ -f "$d/$1.desktop" ]; then
+            # QUOTED, because these go into a JS array literal below — see why in
+            # the writeConfig comment: a comma-joined STRING is read back as one
+            # single launcher, which is how the dock ended up showing exactly one
+            # "unknown icon" placeholder instead of six apps.
             case "$d" in
-                "$SHARE/applications") printf 'file://%s/applications/%s.desktop' "$SHARE" "$1" ;;
-                *)                     printf 'applications:%s.desktop' "$1" ;;
+                "$SHARE/applications") printf '"file://%s/applications/%s.desktop"' "$SHARE" "$1" ;;
+                *)                     printf '"applications:%s.desktop"' "$1" ;;
             esac
             return 0
         fi
@@ -667,7 +671,7 @@ for (var j = 0; j < ws.length; j++) {
 }
 if (tasks == null) { tasks = dock.addWidget("org.kde.plasma.icontasks"); }
 tasks.currentConfigGroup = ["General"];
-tasks.writeConfig("launchers", "DOCKITEMS");
+tasks.writeConfig("launchers", [DOCKITEMS]);
 tasks.reloadConfig();
 '
     DOCK_JS=$(printf '%s' "$DOCK_JS" | sed "s|DOCKITEMS|$DOCK_ITEMS|")
