@@ -926,6 +926,27 @@ if [ -n "${LOCKWALL:-}" ]; then
     ok "lock screen -> the same wallpaper as the desktop"
 fi
 
+# --- 6c. the file indexer, named but not touched ---------------------------
+# Plasma ships baloo, which indexes file CONTENTS so KRunner can search them. On a
+# box tuned for games that is exactly the background I/O you would rather not have
+# - and it is also a real feature somebody may be using, so this deliberately does
+# NOT disable it.
+#
+# The line the project draws: invisible tuning is ours to set (sysctls, THP, the
+# watchdog blacklist), user-facing features are the user's to choose. The same
+# reasoning made `--clean` refuse to remove libgamemode rather than be clever. So
+# say it once, with the command, and leave the decision alone.
+if command -v balooctl6 >/dev/null 2>&1; then
+    _baloo="$(kreadconfig6 --file baloofilerc --group "Basic Settings" --key Indexing-Enabled 2>/dev/null)"
+    if [ "$_baloo" != false ]; then
+        log "Plasma's file indexer (baloo) is enabled: $(balooctl6 status 2>/dev/null | sed -n 2p | tr -d '
+')"
+        log "  It powers file-content search in KRunner. On a performance box you may"
+        log "  prefer it off (this applier will not decide that for you):"
+        log "    balooctl6 disable        # re-enable with: balooctl6 enable"
+    fi
+fi
+
 # --- 7. Conky telemetry ----------------------------------------------------
 # The most recognisable half of the void-tactical desktop is not the palette, it
 # is the two Conky panels (branding.md §5.5 and the SYSTEM identity panel). Conky

@@ -699,6 +699,12 @@ desktop broke my machine".
   `cachy-branding --desktop lxqt,plasma` (`--de` is the short form, `auto` resolves
   normally). `--dry-run` reports what would be applied and where the decision came
   from, writing nothing.
+- **Costly-but-real desktop features get named, not disabled.** Plasma's `baloo`
+  indexes file contents for KRunner search, which is genuine background I/O on a
+  performance box *and* a genuine feature. The applier reports it and prints
+  `balooctl6 disable`, and stops mentioning it once you have decided either way.
+  The line: invisible tuning is the overlay's to set, user-facing features are the
+  user's to choose (see CLAUDE.md).
 - **An unsupported desktop is told what to do, not left guessing.** Tier 1 means
   the shared assets applied and nothing else, which from the user's chair looks
   identical to "it did nothing". So when the running session has no applier,

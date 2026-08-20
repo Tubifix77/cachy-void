@@ -81,6 +81,28 @@ built and validated.
 - **32-bit multilib stays upstream**: never cross-build i686 with `x86-64-v*` flags.
 - **No `mitigations=off`**, and `-f`/`--force` is sanctioned only for the same-pkgver overlay takeover (spec §4.6).
 
+## What The Overlay May Change Without Asking
+
+A line worth holding, because "it would be faster without X" is a recurring
+temptation and the answer is not always yes:
+
+- **Invisible tuning is ours to set** — sysctls, THP, zram, the §3.3 watchdog
+  blacklist, udev rules, compiler flags. Nobody loses a feature they would notice.
+- **User-facing features are the user's to choose.** We add, and we *say things*;
+  we do not quietly remove or disable what someone may be using. Precedent: when
+  `--clean` risked taking `libgamemode` it was made to **refuse**, not to be
+  clever; branding is opt-in and reversible; a desktop is never installed for you.
+- **When something is genuinely costly but genuinely a feature, name it and give
+  the command.** Plasma's `baloo` file indexer is the worked example: real
+  background I/O on a gaming box, and also what powers KRunner's file-content
+  search, so `cachy-branding-plasma` reports it and prints `balooctl6 disable`
+  rather than deciding. Same family as the nvidia-Wayland warning, the missing
+  `kded6` notice, and the tier-1 "here is where the assets are" message.
+
+This is not an invariant (see the build-scoped rubric above) — it is a taste rule
+about intrusiveness, and it is the reason the overlay has stayed additive in
+*behaviour* as well as in packaging.
+
 ## Architecture Notes That Are Easy To Get Wrong
 
 - **Kernel**: `srcpkgs/linux-cachy` is a fork of Void's own kernel template + BORE patch in `patches/` — *not* linux-tkg or XanMod. Unique pkgname means upstream never touches it, but also that it doesn't auto-update: the updater only warns on version drift (spec §2.6).
