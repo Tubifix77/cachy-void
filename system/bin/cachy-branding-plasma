@@ -157,17 +157,26 @@ chmod 0755 "$SVC_LAUNCH"
 } > "$CFG/autostart/cachy-void-plasma-services.desktop"
 rm -f "$CFG/autostart/cachy-void-kded6.desktop"   # superseded by the above
 
+# Start them NOW only if Plasma is the session we are in. Getting this wrong is not
+# theoretical: applying from an LXQt session used to launch kded6 and ksystemstats
+# there, and because Void has no user-session teardown they then outlive the
+# session and keep running under a desktop that never wanted them. The autostart
+# entry above is the right mechanism - it is gated OnlyShowIn=KDE and fires when
+# Plasma actually starts.
 _missing=""
 for _s in $PLASMA_SVCS; do
-    if command -v "$_s" >/dev/null 2>&1; then
-        if ! pgrep -x "$_s" >/dev/null 2>&1; then
-            setsid --fork "$_s" >/dev/null 2>&1 </dev/null
-        fi
-    else
-        _missing="$_missing $_s"
-    fi
+    command -v "$_s" >/dev/null 2>&1 || _missing="$_missing $_s"
 done
-ok "Plasma session services armed:$(printf ' %s' $PLASMA_SVCS) (no systemd to start them)"
+if $LIVE; then
+    for _s in $PLASMA_SVCS; do
+        command -v "$_s" >/dev/null 2>&1 || continue
+        pgrep -x "$_s" >/dev/null 2>&1 && continue
+        setsid --fork "$_s" >/dev/null 2>&1 </dev/null
+    done
+    ok "Plasma session services started:$(printf ' %s' $PLASMA_SVCS) (no systemd to do it)"
+else
+    ok "Plasma session services armed for the next Plasma login (not started: this is not a Plasma session)"
+fi
 if [ -n "$_missing" ]; then
     warn "not installed, so Plasma stays partly inert:$_missing"
     warn "  kf6-kded gives display-layout memory, keyboard layout and automount;"
@@ -927,23 +936,23 @@ if [ -n "${LOCKWALL:-}" ]; then
 fi
 
 # --- 6c. the file indexer, named but not touched ---------------------------
-# Plasma ships baloo, which indexes file CONTENTS so KRunner can search them. On a
-# box tuned for games that is exactly the background I/O you would rather not have
-# - and it is also a real feature somebody may be using, so this deliberately does
-# NOT disable it.
+# Plasma ships baloo, which indexes file CONTENTS so KRunner can search them. It is
+# reported, never disabled, and the owner put the reason better than the first
+# version of this comment did: baloo is part of what you install Plasma FOR. If you
+# did not want resources spent that way you would stay in LXQt - and the cost is
+# confined to Plasma sessions anyway, because the entry is gated OnlyShowIn=KDE.
 #
-# The line the project draws: invisible tuning is ours to set (sysctls, THP, the
+# The general line: invisible tuning is the overlay's to set (sysctls, THP, the
 # watchdog blacklist), user-facing features are the user's to choose. The same
-# reasoning made `--clean` refuse to remove libgamemode rather than be clever. So
-# say it once, with the command, and leave the decision alone.
+# reasoning made `--clean` refuse to remove libgamemode rather than be clever.
 if command -v balooctl6 >/dev/null 2>&1; then
     _baloo="$(kreadconfig6 --file baloofilerc --group "Basic Settings" --key Indexing-Enabled 2>/dev/null)"
     if [ "$_baloo" != false ]; then
-        log "Plasma's file indexer (baloo) is enabled: $(balooctl6 status 2>/dev/null | sed -n 2p | tr -d '
+        log "Plasma's file indexer (baloo) is on: $(balooctl6 status 2>/dev/null | sed -n 2p | tr -d '
 ')"
-        log "  It powers file-content search in KRunner. On a performance box you may"
-        log "  prefer it off (this applier will not decide that for you):"
-        log "    balooctl6 disable        # re-enable with: balooctl6 enable"
+        log "  It is what makes KRunner search file CONTENTS, and it only runs in Plasma"
+        log "  sessions - LXQt and the Openbox session pay nothing for it. Turn it off"
+        log "  only if you want Plasma without that:  balooctl6 disable"
     fi
 fi
 

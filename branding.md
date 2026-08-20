@@ -700,11 +700,22 @@ desktop broke my machine".
   normally). `--dry-run` reports what would be applied and where the decision came
   from, writing nothing.
 - **Costly-but-real desktop features get named, not disabled.** Plasma's `baloo`
-  indexes file contents for KRunner search, which is genuine background I/O on a
-  performance box *and* a genuine feature. The applier reports it and prints
-  `balooctl6 disable`, and stops mentioning it once you have decided either way.
-  The line: invisible tuning is the overlay's to set, user-facing features are the
-  user's to choose (see CLAUDE.md).
+  indexes file contents for KRunner search. It is reported, never switched off: it
+  is part of what you install Plasma *for*, and if you did not want resources spent
+  that way you would stay in LXQt. The cost is confined to Plasma sessions anyway,
+  since the entry is gated `OnlyShowIn=KDE`. General line: invisible tuning is the
+  overlay's to set, user-facing features are the user's to choose (CLAUDE.md).
+- **Two desktops on one Void install: what actually crosses over.** Autostart
+  gating means neither desktop *starts* the other's daemons — verified in both
+  directions. But Void has **no user-session teardown** (no `systemd --user`), so
+  whatever a session started is reparented to init at logout and keeps running
+  under the next desktop. Observed live: `baloo_file` from a 19:17 Plasma session
+  still running in an LXQt session begun at 23:47. Nothing in the overlay causes
+  it and nothing in the overlay can fully prevent it; a reboot or an explicit
+  `pkill` is the cure. The lesson for us is narrower and was a real bug: an applier
+  must not START another desktop's services just because that desktop is a
+  *branding target* — only when it is the *running session*. Applying from LXQt
+  used to launch `kded6` and `ksystemstats` there, and they then outlived it.
 - **An unsupported desktop is told what to do, not left guessing.** Tier 1 means
   the shared assets applied and nothing else, which from the user's chair looks
   identical to "it did nothing". So when the running session has no applier,
