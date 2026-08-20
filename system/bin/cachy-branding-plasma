@@ -78,7 +78,11 @@ if [ "${1:-}" = "--remove" ]; then
     rm -f "$SHARE/konsole/$SCHEME.colorscheme" "$SHARE/konsole/$SCHEME.profile"
     rm -f "$CFG/autostart/cachy-branding-plasma-firstrun.desktop"
     rm -f "$CFG/autostart/cachy-void-kded6.desktop"
+    rm -f "$CFG/autostart/cachy-void-conky.desktop"
+    rm -f "$SHARE/cachy-void/conky-start.sh"
+    pkill -x conky 2>/dev/null
     unbak "$CFG/Kvantum/kvantum.kvconfig"
+    unbak "$CFG/plasma-org.kde.plasma.desktop-appletsrc"
     ok "removed — log out and back in for Plasma to reload."
     exit 0
 fi
@@ -426,9 +430,12 @@ else
 fi
 kwriteconfig6 --file kdeglobals --group General --key ColorSchemeHint Dark 2>/dev/null
 
+# Same wallpaper LXQt uses, in the same order of preference. Picking a different
+# one here was a real bug: the two desktops are supposed to be the same desktop,
+# and "the hexagonal one, not the square one" is exactly how it got noticed.
 WALL=""
-for w in "$ASSETS/wallpapers/void-cachy-hex.svg" "$ASSETS/wallpapers/void-cachy-flow.svg" \
-         "$ASSETS/wallpapers/cachy-void-official.svg"; do
+for w in "$ASSETS/wallpapers/cachy-void-official.svg" "$ASSETS/wallpapers/void-cachy-flow.svg" \
+         "$ASSETS/wallpapers/void-cachy-hex.svg"; do
     [ -f "$w" ] && { WALL="$w"; break; }
 done
 if [ -n "$WALL" ]; then
@@ -444,6 +451,16 @@ if [ -n "$WALL" ]; then
             convert -background "#1b1d1e" "$WALL" -resize "$GEO^" -gravity center -extent "$GEO" "$PNG" 2>/dev/null && WALL="$PNG"
         fi
     fi
+    # Plasma caches the decoded wallpaper by PATH, exactly like pcmanfm-qt does, so
+    # re-rendering the same filename shows the OLD image until the next login. Point
+    # it at a fresh versioned copy each apply and prune the previous ones.
+    if [ -f "$PNG" ] && [ "$WALL" = "$PNG" ]; then
+        WPV="$SHARE/cachy-void/wallpaper-plasma-$(date +%s).png"
+        if cp -f "$PNG" "$WPV" 2>/dev/null; then
+            find "$SHARE/cachy-void" -maxdepth 1 -name 'wallpaper-plasma-*.png'                  ! -name "$(basename "$WPV")" -delete 2>/dev/null
+            WALL="$WPV"
+        fi
+    fi
     if plasma-apply-wallpaperimage "$WALL" >/dev/null 2>&1; then
         ok "wallpaper -> $(basename "$WALL")"
     else
@@ -457,6 +474,127 @@ fi
 # Rather than leave the first Plasma login half-branded, arm a one-shot autostart
 # that re-runs this applier INSIDE the session and then deletes itself. It is
 # gated OnlyShowIn=KDE, so it can never fire in LXQt or anywhere else.
+# --- 6. panel parity with LXQt ---------------------------------------------
+# This applier used to stop at colours, on the reasoning that "Plasma owns the
+# panel". That was wrong about the product: the void-tactical identity IS partly
+# the layout — a thin bar at the TOP with the green Void mark as its launcher —
+# so a Plasma that kept Plasma's default bottom bar and default launcher icon read
+# as "not branded" next to LXQt, whatever the palette said.
+#
+# It is done through plasmashell's OWN scripting API, which is the sanctioned
+# front door for panel layout (the same argument as using plasma-apply-*, and the
+# reason the earlier objection to hand-editing appletsrc still stands). Note Void
+# ships no qdbus, so gdbus is the fallback that actually gets used here.
+#
+# Mirrors the LXQt spec exactly (see cachy-branding's panel section):
+#   position Top, thickness 30, and pager / show-desktop dropped.
+plasma_script(){
+    if command -v qdbus6 >/dev/null 2>&1; then
+        qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$1" >/dev/null 2>&1
+    elif command -v qdbus >/dev/null 2>&1; then
+        qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$1" >/dev/null 2>&1
+    elif command -v gdbus >/dev/null 2>&1; then
+        gdbus call --session --dest org.kde.plasmashell --object-path /PlasmaShell \
+              --method org.kde.PlasmaShell.evaluateScript "$1" >/dev/null 2>&1
+    else
+        return 1
+    fi
+}
+
+# the green Void mark, rendered the same way and to the same path LXQt uses, so a
+# Plasma-only box gets it too instead of inheriting nothing.
+MARK="$SHARE/cachy-void/void-cachy-icon.png"
+if [ ! -f "$MARK" ] && [ -f "$ASSETS/void-cachy-icon.svg" ]; then
+    mkdir -p "$SHARE/cachy-void"
+    cp -f "$ASSETS/void-cachy-icon.svg" "$SHARE/cachy-void/void-cachy-icon.svg" 2>/dev/null
+    if command -v rsvg-convert >/dev/null 2>&1; then
+        rsvg-convert -w 64 -h 64 "$SHARE/cachy-void/void-cachy-icon.svg" -o "$MARK"
+    elif command -v magick >/dev/null 2>&1; then
+        magick -background none "$SHARE/cachy-void/void-cachy-icon.svg" -resize 64x64 "$MARK" 2>/dev/null
+    fi
+fi
+
+if $LIVE; then
+    # appletsrc is plasmashell's own file and it rewrites it, so we do not edit it
+    # — but we DO record it, or --remove could not put the panel back.
+    bak "$CFG/plasma-org.kde.plasma.desktop-appletsrc"
+    PANEL_JS='
+var ps = panels();
+for (var i = 0; i < ps.length; i++) {
+  var p = ps[i];
+  p.location = "top";
+  p.height = 30;
+  var ws = p.widgets();
+  for (var j = 0; j < ws.length; j++) {
+    var w = ws[j];
+    if (w.type == "org.kde.plasma.pager" || w.type == "org.kde.plasma.showdesktop") {
+      w.remove();
+      continue;
+    }
+    if (w.type == "org.kde.plasma.kickoff") {
+      w.currentConfigGroup = ["General"];
+      w.writeConfig("icon", "MARKPATH");
+      w.reloadConfig();
+    }
+  }
+}
+'
+    PANEL_JS=$(printf '%s' "$PANEL_JS" | sed "s|MARKPATH|$MARK|")
+    if [ -f "$MARK" ] && plasma_script "$PANEL_JS"; then
+        ok "panel -> top, 30px, pager/show-desktop dropped, launcher icon -> the green Void mark"
+    else
+        warn "could not reach plasmashell's scripting API — panel left as it was"
+    fi
+else
+    log "panel layout is applied inside the session; the first-login hook below does it"
+fi
+
+# --- 7. Conky telemetry ----------------------------------------------------
+# The most recognisable half of the void-tactical desktop is not the palette, it
+# is the two Conky panels (branding.md §5.5 and the SYSTEM identity panel). Conky
+# is an X11 program, not an LXQt one, so this is identity that carries across
+# without fighting Plasma — unlike a dock or a compositor, which Plasma owns.
+#
+# The LC_CTYPE guard is not optional: without it the degree sign in the
+# temperature lines renders as mojibake (fixed once already for LXQt, and it is
+# easy to reintroduce by starting conky from a fresh autostart entry).
+#
+# Known gap, stated rather than hidden: the two conky CONFIGS are still written by
+# the LXQt half of cachy-branding, so on a Plasma-only box there is nothing to
+# start yet and this step says so instead of pretending.
+CONKY_LAUNCH="$SHARE/cachy-void/conky-start.sh"
+if [ -f "$CFG/conky/conky.conf" ] && command -v conky >/dev/null 2>&1; then
+    mkdir -p "$SHARE/cachy-void"
+    {
+        printf '#!/bin/sh\n'
+        printf '# started by the Cachy-Void Plasma applier; safe to run twice.\n'
+        printf 'pgrep -x conky >/dev/null 2>&1 && exit 0\n'
+        printf 'sleep 8\n'
+        printf 'env LC_CTYPE=C.UTF-8 conky -c "$HOME/.config/conky/conky.conf" &\n'
+        printf '[ -f "$HOME/.config/conky/conky-system.conf" ] && \\\n'
+        printf '    env LC_CTYPE=C.UTF-8 conky -c "$HOME/.config/conky/conky-system.conf" &\n'
+        printf 'exit 0\n'
+    } > "$CONKY_LAUNCH"
+    chmod 0755 "$CONKY_LAUNCH"
+    {
+        printf '[Desktop Entry]\n'
+        printf 'Type=Application\n'
+        printf 'Name=Cachy-Void telemetry (conky)\n'
+        printf 'Exec=%s\n' "$CONKY_LAUNCH"
+        printf 'OnlyShowIn=KDE;\n'
+        printf 'X-GNOME-Autostart-enabled=true\n'
+    } > "$CFG/autostart/cachy-void-conky.desktop"
+    ok "conky telemetry autostart installed (same two panels LXQt runs)"
+    if $LIVE && ! pgrep -x conky >/dev/null 2>&1; then
+        setsid --fork env LC_CTYPE=C.UTF-8 conky -c "$CFG/conky/conky.conf" >/dev/null 2>&1 </dev/null
+        [ -f "$CFG/conky/conky-system.conf" ] && \
+            setsid --fork env LC_CTYPE=C.UTF-8 conky -c "$CFG/conky/conky-system.conf" >/dev/null 2>&1 </dev/null
+        ok "conky started for this session"
+    fi
+elif command -v conky >/dev/null 2>&1; then
+    log "no conky config yet (it is written by the LXQt half of cachy-branding) — telemetry skipped"
+fi
+
 # --- the session-picker trap on legacy NVIDIA ------------------------------
 # Plasma 6 is Wayland-first and Void follows upstream, so a machine that has
 # plasma-workspace-x11 installed offers BOTH "Plasma (Wayland)" and
