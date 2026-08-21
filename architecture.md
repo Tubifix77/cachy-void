@@ -1025,6 +1025,22 @@ The failure geometry: if the candidate panics or hangs, the user power-cycles; t
 
 - `manual` (safe): grubenv-hostile filesystem (btrfs/zfs/LVM) **with** `GRUB_DEFAULT=saved`. GRUB *reads* grubenv fine at boot — it only cannot consume a one-shot — so pinning the known-good default works. Staging proceeds minus `grub-reboot`; the user selects the candidate in the GRUB menu, and fallback is selecting the old entry — exactly §2.5's behavior. An undeterminable filesystem (e.g. `findmnt` unavailable) degrades here, never to oneshot.
 - `manual-unsafe`: `GRUB_DEFAULT≠saved`. Pinning is a silent no-op; staging refuses (exit 70) per the preflight bullet above.
+
+**Honesty note on what the classification can and cannot know (2026-08-21).** The
+class is decided from a *present* `grub.cfg`, a writable `/boot`, and
+`GRUB_DEFAULT=saved`. None of those prove that this GRUB is the one the firmware
+actually boots. A dual-boot host where Void's `grub` package is installed while
+another distro owns the MBR/ESP would therefore be classed `oneshot` and would
+stage into a `grubenv` nothing reads: the one-shot silently does not happen, the
+foreign menu decides what boots, and §8.7 then promotes whatever came up. The
+consequence is wrong *bookkeeping*, not a broken machine — nothing is written
+outside our own `grubenv`, and the kernel that boots is the one the real bootloader
+chose. Detecting the difference reliably would mean inspecting the ESP or MBR for
+whose GRUB is installed, which is well outside this project's remit; the mitigation
+is that `--with-grub` is opt-in and this shape is unusual (Void hosts with the grub
+package normally *are* the bootloader owner). Worth knowing before trusting a
+promotion on a multi-boot box. The testbed for this project sidesteps it entirely:
+it has no `grub` package at all, so it classes `external` correctly.
 - `external`: **a foreign bootloader owns boot** — `/boot/grub/grub.cfg` is absent on a real (non-WSL) machine, e.g. another distro's GRUB chain-boots Void through the evergreen `/boot` symlinks in a multi-boot setup. Kernels boot fine here; only menu control is impossible. Staging is **bookkeeping-only**: record the candidate, `staged_boot_id`, and the services snapshot (state → STAGED) and issue **zero** bootloader commands. The §8.7 confirm battery and promotion run identically — promotion advances `ported_version`/`known_good` without any `grub-set-default` — and both fallback (unhealthy candidate) and watchdog response are **manual**: the operator selects the known-good entry in the foreign menu. The watchdog therefore never fires an *active* rollback in this mode; a trip records CANDIDATE_UNHEALTHY and instructs the operator. *(Added after the first real-hardware kernel run: a Debian-owned-GRUB host was lumped into `skip`, so a healthy candidate boot was never promoted.)*
 - `skip`: no bootable kernel path at all (WSL2/containers). No staging, no confirm — telemetry only.
 
