@@ -1165,6 +1165,17 @@ fi
 ok "picom / rofi / conky configs (+ battery in conky, power tray icon hidden)"
 
 # ============================================================ apply live
+# Restarting the LXQt session's furniture only makes sense INSIDE that session.
+# Same bug class as the Plasma services one: this used to run whenever lxqt was a
+# branding TARGET, so applying from a Plasma session would pkill/respawn its
+# panel and then start picom and plank there - a second compositor and a dock
+# inside Plasma. Gate on the session that is actually running; the config written
+# above is what a later LXQt login picks up anyway.
+case "${XDG_CURRENT_DESKTOP:-}" in
+    *LXQt*|*Openbox*|*OPENBOX*) : ;;
+    *)  log "not in an LXQt/Openbox session - config written, live restart skipped"
+        return 0 ;;
+esac
 log "applying live"
 # Super_L -> menu, via LXQt's own global-shortcut daemon (cleaner than xcape; this
 # LXQt build binds a bare Super fine). The daemon OWNS globalkeyshortcuts.conf and
