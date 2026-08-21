@@ -289,7 +289,19 @@ install_file() {
         if manifest_has FILE "$dest"; then
             :  # already managed by us — overwrite in place, keep original backup
         else
-            backup="${dest}.pre-cachy.${TS}.bak"
+            # A backup must never land inside a drop-in directory. SDDM reads
+            # EVERY regular file in /etc/sddm.conf.d - its ConfigReader calls
+            # entryInfoList(QDir::Files) with no name filter - and
+            # "10-cachy.conf.pre-cachy.<ts>.bak" sorts AFTER "10-cachy.conf", so a
+            # stale backup would silently override the live setting. Same shape of
+            # risk for any *.d dir, so those backups go under the state dir instead.
+            # The ledger stores whatever path we choose, so --uninstall still
+            # restores correctly.
+            case "$(dirname -- "$dest")" in
+                *.d) backup="$STATE_DIR/backups/$(printf '%s' "${dest#/}" | tr '/' '_').pre-cachy.${TS}.bak"
+                     mkdir -p -- "$(rp "$STATE_DIR/backups")" ;;
+                *)   backup="${dest}.pre-cachy.${TS}.bak" ;;
+            esac
             cp -a -- "$pdest" "$(rp "$backup")"
             warn "backed up existing $dest -> $backup"
         fi
@@ -1586,6 +1598,7 @@ do_uninstall() {
             log "ledger updated: ${#matching[@]} entr(y/ies) rolled back, ${#kept[@]} kept"
         else
             rm -f -- "$MANIFEST"
+            rmdir --ignore-fail-on-non-empty -- "$(rp "$STATE_DIR/backups")" 2>/dev/null || true
             rmdir --ignore-fail-on-non-empty -- "$(rp "$STATE_DIR")" 2>/dev/null || true
         fi
         if live; then
