@@ -536,6 +536,183 @@ ok "wallpaper set; desktop icons cleared (Plank is the launcher)"
 
 }
 
+# apply_conky - the two Conky panels' CONFIG, shared rather than LXQt's.
+#
+# Conky is an X11 program, not an LXQt one, and these panels are the most
+# recognisable half of the look, so a Plasma-only box should have them too. Only
+# the generation lives here: the autostart entries stay per-desktop, gated
+# OnlyShowIn=LXQt for this session and written separately (KDE-gated) by
+# cachy-branding-plasma. picom and rofi deliberately do NOT move - they are LXQt
+# and Openbox furniture, and Plasma brings its own compositor and launcher.
+apply_conky() {
+    mkdir -p "$CFG/conky"
+# conky: fill host-specific iface + hwmon
+IFACE=$(ip route 2>/dev/null | awk '/^default/{print $5; exit}'); : "${IFACE:=eth0}"
+HW=$(for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name 2>/dev/null)" = coretemp ] && basename "$h" | tr -dc 0-9 && break; done); : "${HW:=0}"
+# GPU line: query the nvidia chip directly (nvidia-smi), not the game overlay
+# path — on legacy Optimus/PRIME render-offload MangoHud/NVML load% is unreliable,
+# but nvidia-smi's own reads are direct chip queries. Kepler cards (GT 730M etc.)
+# return [N/A] for util/power/clocks while temp + memory still read fine, so the
+# awk below prints ONLY the fields that came back as real numbers — self-adjusting
+# per card (a modern GPU also shows util%). One nvidia-smi call per 5s (execi).
+GPU_LINE=""
+if command -v nvidia-smi >/dev/null 2>&1 && [ -n "$(nvidia-smi -L 2>/dev/null)" ]; then
+    # Build the line at APPLY time from whichever fields the card reports as real
+    # numbers (Kepler returns [N/A] for util). Colours + units live in the STATIC
+    # template, and each value is a SIMPLE ${execi} (no braces / no ${} inside the
+    # command) — conky's parser mis-nests on ${color} embedded in an exec command
+    # (execpi) and truncates it, so keep exec commands bare. Green labels + units
+    # match the cpu/mem lines: gpu NN°C   load NN%   vram U/TMB.
+    q(){ nvidia-smi --query-gpu="$1" --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '; }
+    isnum(){ case "$1" in ''|*[!0-9.]*) return 1;; *) return 0;; esac; }
+    E='--format=csv,noheader,nounits 2>/dev/null'
+    seg='${color1}gpu ${color}'
+    if isnum "$(q temperature.gpu)"; then
+        seg="$seg"'${execi 5 nvidia-smi --query-gpu=temperature.gpu '"$E"'}°C'
+    fi
+    if isnum "$(q utilization.gpu)"; then
+        seg="$seg"'   ${color1}load ${color}${execi 5 nvidia-smi --query-gpu=utilization.gpu '"$E"'}%'
+    fi
+    TOTAL="$(q memory.total)"   # constant — bake it in, only "used" is dynamic
+    if isnum "$(q memory.used)" && isnum "$TOTAL"; then
+        seg="$seg"'   ${color1}vram ${color}${execi 5 nvidia-smi --query-gpu=memory.used '"$E"'}/'"$TOTAL"'MB'
+    fi
+    GPU_LINE="$seg"
+fi
+# Battery line: only on machines with a battery (laptops). We hide the lxqt-power
+# management tray icon (below) and surface charge + AC state here instead — honest
+# text, no widget. acpiacadapter reports on-line/off-line -> AC/batt via if_match.
+BAT_LINE=""
+BATDEV=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -1)
+if [ -n "$BATDEV" ]; then
+    BN=$(basename "$BATDEV")
+    ACDEV=$(ls -d /sys/class/power_supply/AC* /sys/class/power_supply/ADP* 2>/dev/null | head -1); AN=$(basename "${ACDEV:-AC0}")
+    BAT_LINE='${color1}bat ${color}${battery_percent '"$BN"'}%   ${color2}${if_match "${acpiacadapter '"$AN"'}"=="on-line"}AC${else}batt${endif}${color}'
+fi
+sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.in" | \
+    awk -v gpu="$GPU_LINE" -v bat="$BAT_LINE" '
+        $0=="@GPU_LINE@" { if (gpu != "") print gpu; next }
+        $0=="@BAT_LINE@" { if (bat != "") print bat; next }
+        { print }' > "$CFG/conky/conky.conf"
+
+# --- left "SYSTEM" identity panel (the "what it IS" spec-sheet) --------------
+# A second, static Conky anchored middle-left, to balance the two right-side
+# blocks (telemetry top-right + wordmark bottom-right). Every value is read from
+# the running system here at apply time — honest, self-adjusting (unknown fields
+# are dropped, never printed as [N/A]), so it also documents the actual fusion:
+# Void form (runit/xbps/glibc/snooze) + CachyOS substance (BORE/1000Hz/preempt).
+# Python reads the template + writes the final conf itself (encoding='utf-8') — going
+# through a shell $(...) var + awk double-encodes the box's UTF-8 glyphs (─ × ·) when
+# the ssh/login locale isn't UTF-8. Keeping it all in Python is byte-safe.
+python3 - "$ASSETS/conky/conky-system.conf.in" "$CFG/conky/conky-system.conf" <<'PY'
+import gzip, os, re, shutil, subprocess, sys
+
+def sh(*c):
+    try: return subprocess.run(c, capture_output=True, text=True, timeout=6).stdout
+    except Exception: return ""
+
+def read(p):
+    try:
+        with open(p) as f: return f.read()
+    except Exception: return ""
+
+# -- SYSTEM ---------------------------------------------------------------
+osname = ""
+for ln in read("/etc/os-release").splitlines():
+    if ln.startswith("PRETTY_NAME="): osname = ln.split("=",1)[1].strip().strip('"'); break
+osname = osname or "Void Linux"
+
+libc = ""
+v = sh("ldd", "--version")
+m = re.search(r"GNU libc\)\s*([0-9.]+)", v) or re.search(r"\b([0-9]+\.[0-9]+)\b", v)
+if "musl" in v.lower() or os.path.exists("/lib/ld-musl-x86_64.so.1"):
+    libc = "musl" + (" " + m.group(1) if m else "")
+elif m:
+    libc = "glibc " + m.group(1)
+
+flags = set()
+model = ""
+for ln in read("/proc/cpuinfo").splitlines():
+    if ln.startswith("flags") and not flags: flags = set(ln.split(":",1)[1].split())
+    if ln.startswith("model name") and not model: model = ln.split(":",1)[1].strip()
+if {"avx512f"} <= flags:                                 arch = "x86_64-v4"
+elif {"avx2","bmi2","fma"} <= flags:                     arch = "x86_64-v3"
+elif {"sse4_2","popcnt"} <= flags:                       arch = "x86_64-v2"
+else:                                                    arch = "x86_64"
+
+cron = "snooze" if shutil.which("snooze") else ""
+
+# -- KERNEL (read the RUNNING kernel's config, not assumptions) -----------
+kcfg = ""
+try: kcfg = gzip.open("/proc/config.gz","rt").read()
+except Exception: kcfg = read("/boot/config-" + os.uname().release)
+def has(sym): return re.search(r"^%s=y" % re.escape(sym), kcfg, re.M) is not None
+ksched = "BORE" if has("CONFIG_SCHED_BORE") else ("EEVDF" if kcfg else "")
+mhz = re.search(r"^CONFIG_HZ=(\d+)", kcfg, re.M)
+ktick = (mhz.group(1) + " Hz") if mhz else ""
+kpreempt = "full" if has("CONFIG_PREEMPT") else ("voluntary" if has("CONFIG_PREEMPT_VOLUNTARY") else ("none" if kcfg else ""))
+thp = ""
+mt = re.search(r"\[(\w+)\]", read("/sys/kernel/mm/transparent_hugepage/enabled"))
+if mt: thp = mt.group(1)
+mit = "off" if "mitigations=off" in read("/proc/cmdline") else "on"
+swp = read("/proc/sys/vm/swappiness").strip()
+
+# -- HARDWARE -------------------------------------------------------------
+cpu = re.sub(r"\(R\)|\(TM\)", "", model)
+cpu = re.sub(r"\s*@.*$", "", cpu)
+cpu = re.sub(r"\b(Intel|Core|CPU|Processor)\b", "", cpu)
+cpu = re.sub(r"\s+", " ", cpu).strip()
+if cpu and os.cpu_count(): cpu += " ×%d" % os.cpu_count()
+
+gpu = sh("nvidia-smi", "--query-gpu=name", "--format=csv,noheader").strip().splitlines()
+gpu = gpu[0] if gpu else ""
+if not gpu:
+    for ln in sh("sh","-c","lspci 2>/dev/null | grep -Ei 'vga|3d'").splitlines():
+        gpu = re.sub(r".*: ", "", ln).strip(); break
+gpu = re.sub(r"NVIDIA\s*|GeForce\s*|Corporation\s*", "", gpu).strip()
+
+drvver = read("/sys/module/nvidia/version").strip()
+driver = ("nvidia " + drvver) if drvver else ""
+
+memkb = re.search(r"MemTotal:\s*(\d+)", read("/proc/meminfo"))
+mem = ("%.2f GiB" % (int(memkb.group(1))/1048576)) if memkb else ""
+
+root = ""
+for ln in read("/proc/mounts").splitlines():
+    p = ln.split()
+    if len(p) > 2 and p[1] == "/": root = p[2]; break
+
+zram = "active" if os.path.exists("/sys/block/zram0") else ""
+if zram and shutil.which("zramen"): zram += " · zramen"
+
+# -- render ---------------------------------------------------------------
+def line(label, val):
+    return "${color1}%-8s${color}%s" % (label, val) if val else None
+
+out = []
+def section(title, items):
+    body = [x for x in (line(l, v) for l, v in items) if x]
+    if not body: return
+    if out: out.append("")
+    out.append("${color1}%s${color}" % title)
+    out.append("${color2}%s${color}" % ("─" * 16))
+    out.extend(body)
+
+section("SYSTEM", [("os", osname), ("libc", libc), ("arch", arch),
+                   ("init", "runit"), ("pkg", "xbps"), ("cron", cron)])
+section("KERNEL", [("sched", ksched), ("tick", ktick), ("preempt", kpreempt),
+                   ("thp", thp), ("vm.swap", swp), ("mitig.", mit)])
+section("HARDWARE", [("cpu", cpu), ("gpu", gpu), ("driver", driver),
+                     ("mem", mem), ("root", root), ("zram", zram)])
+
+tmpl, dest = sys.argv[1], sys.argv[2]
+with open(tmpl, encoding="utf-8") as f: t = f.read()
+with open(dest, "w", encoding="utf-8") as f:
+    f.write(t.replace("@SYSTEM_TEXT@", "\n".join(out)))
+PY
+    ok "conky panels configured (telemetry + SYSTEM sheet)"
+}
+
 # apply_openbox_session - the bare Openbox session AND the openbox titlebars that
 # LXQt also uses (LXQt runs openbox as its window manager). Called before
 # apply_lxqt on purpose: the LXQt body ends by running `openbox --reconfigure`,
@@ -961,174 +1138,11 @@ Hidden=true
     ok "pasystray XDG autostart masked (LXQt panel provides volume; the WM session starts it directly)"
 fi
 cp -f "$ASSETS/rofi/config.rasi" "$CFG/rofi/config.rasi"
-# conky: fill host-specific iface + hwmon
-IFACE=$(ip route 2>/dev/null | awk '/^default/{print $5; exit}'); : "${IFACE:=eth0}"
-HW=$(for h in /sys/class/hwmon/hwmon*; do [ "$(cat $h/name 2>/dev/null)" = coretemp ] && basename "$h" | tr -dc 0-9 && break; done); : "${HW:=0}"
-# GPU line: query the nvidia chip directly (nvidia-smi), not the game overlay
-# path — on legacy Optimus/PRIME render-offload MangoHud/NVML load% is unreliable,
-# but nvidia-smi's own reads are direct chip queries. Kepler cards (GT 730M etc.)
-# return [N/A] for util/power/clocks while temp + memory still read fine, so the
-# awk below prints ONLY the fields that came back as real numbers — self-adjusting
-# per card (a modern GPU also shows util%). One nvidia-smi call per 5s (execi).
-GPU_LINE=""
-if command -v nvidia-smi >/dev/null 2>&1 && [ -n "$(nvidia-smi -L 2>/dev/null)" ]; then
-    # Build the line at APPLY time from whichever fields the card reports as real
-    # numbers (Kepler returns [N/A] for util). Colours + units live in the STATIC
-    # template, and each value is a SIMPLE ${execi} (no braces / no ${} inside the
-    # command) — conky's parser mis-nests on ${color} embedded in an exec command
-    # (execpi) and truncates it, so keep exec commands bare. Green labels + units
-    # match the cpu/mem lines: gpu NN°C   load NN%   vram U/TMB.
-    q(){ nvidia-smi --query-gpu="$1" --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '; }
-    isnum(){ case "$1" in ''|*[!0-9.]*) return 1;; *) return 0;; esac; }
-    E='--format=csv,noheader,nounits 2>/dev/null'
-    seg='${color1}gpu ${color}'
-    if isnum "$(q temperature.gpu)"; then
-        seg="$seg"'${execi 5 nvidia-smi --query-gpu=temperature.gpu '"$E"'}°C'
-    fi
-    if isnum "$(q utilization.gpu)"; then
-        seg="$seg"'   ${color1}load ${color}${execi 5 nvidia-smi --query-gpu=utilization.gpu '"$E"'}%'
-    fi
-    TOTAL="$(q memory.total)"   # constant — bake it in, only "used" is dynamic
-    if isnum "$(q memory.used)" && isnum "$TOTAL"; then
-        seg="$seg"'   ${color1}vram ${color}${execi 5 nvidia-smi --query-gpu=memory.used '"$E"'}/'"$TOTAL"'MB'
-    fi
-    GPU_LINE="$seg"
-fi
-# Battery line: only on machines with a battery (laptops). We hide the lxqt-power
-# management tray icon (below) and surface charge + AC state here instead — honest
-# text, no widget. acpiacadapter reports on-line/off-line -> AC/batt via if_match.
-BAT_LINE=""
-BATDEV=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -1)
-if [ -n "$BATDEV" ]; then
-    BN=$(basename "$BATDEV")
-    ACDEV=$(ls -d /sys/class/power_supply/AC* /sys/class/power_supply/ADP* 2>/dev/null | head -1); AN=$(basename "${ACDEV:-AC0}")
-    BAT_LINE='${color1}bat ${color}${battery_percent '"$BN"'}%   ${color2}${if_match "${acpiacadapter '"$AN"'}"=="on-line"}AC${else}batt${endif}${color}'
-fi
-sed -e "s/@NET_IFACE@/$IFACE/g" -e "s/@HWMON@/$HW/g" "$ASSETS/conky/conky.conf.in" | \
-    awk -v gpu="$GPU_LINE" -v bat="$BAT_LINE" '
-        $0=="@GPU_LINE@" { if (gpu != "") print gpu; next }
-        $0=="@BAT_LINE@" { if (bat != "") print bat; next }
-        { print }' > "$CFG/conky/conky.conf"
 # delayed autostart: same TV-detection race as Plank — gap_x/gap_y anchoring
 # (top_right) gets computed against whatever screen geometry is live when
 # conky starts, so it drifts if that's the wrong output.
 printf '[Desktop Entry]\nType=Application\nName=conky\nExec=sh -c "sleep 8 && exec env LC_CTYPE=C.UTF-8 conky -c %s/conky/conky.conf"\nOnlyShowIn=LXQt;\n' "$CFG" > "$CFG/autostart/conky.desktop"
 
-# --- left "SYSTEM" identity panel (the "what it IS" spec-sheet) --------------
-# A second, static Conky anchored middle-left, to balance the two right-side
-# blocks (telemetry top-right + wordmark bottom-right). Every value is read from
-# the running system here at apply time — honest, self-adjusting (unknown fields
-# are dropped, never printed as [N/A]), so it also documents the actual fusion:
-# Void form (runit/xbps/glibc/snooze) + CachyOS substance (BORE/1000Hz/preempt).
-# Python reads the template + writes the final conf itself (encoding='utf-8') — going
-# through a shell $(...) var + awk double-encodes the box's UTF-8 glyphs (─ × ·) when
-# the ssh/login locale isn't UTF-8. Keeping it all in Python is byte-safe.
-python3 - "$ASSETS/conky/conky-system.conf.in" "$CFG/conky/conky-system.conf" <<'PY'
-import gzip, os, re, shutil, subprocess, sys
-
-def sh(*c):
-    try: return subprocess.run(c, capture_output=True, text=True, timeout=6).stdout
-    except Exception: return ""
-
-def read(p):
-    try:
-        with open(p) as f: return f.read()
-    except Exception: return ""
-
-# -- SYSTEM ---------------------------------------------------------------
-osname = ""
-for ln in read("/etc/os-release").splitlines():
-    if ln.startswith("PRETTY_NAME="): osname = ln.split("=",1)[1].strip().strip('"'); break
-osname = osname or "Void Linux"
-
-libc = ""
-v = sh("ldd", "--version")
-m = re.search(r"GNU libc\)\s*([0-9.]+)", v) or re.search(r"\b([0-9]+\.[0-9]+)\b", v)
-if "musl" in v.lower() or os.path.exists("/lib/ld-musl-x86_64.so.1"):
-    libc = "musl" + (" " + m.group(1) if m else "")
-elif m:
-    libc = "glibc " + m.group(1)
-
-flags = set()
-model = ""
-for ln in read("/proc/cpuinfo").splitlines():
-    if ln.startswith("flags") and not flags: flags = set(ln.split(":",1)[1].split())
-    if ln.startswith("model name") and not model: model = ln.split(":",1)[1].strip()
-if {"avx512f"} <= flags:                                 arch = "x86_64-v4"
-elif {"avx2","bmi2","fma"} <= flags:                     arch = "x86_64-v3"
-elif {"sse4_2","popcnt"} <= flags:                       arch = "x86_64-v2"
-else:                                                    arch = "x86_64"
-
-cron = "snooze" if shutil.which("snooze") else ""
-
-# -- KERNEL (read the RUNNING kernel's config, not assumptions) -----------
-kcfg = ""
-try: kcfg = gzip.open("/proc/config.gz","rt").read()
-except Exception: kcfg = read("/boot/config-" + os.uname().release)
-def has(sym): return re.search(r"^%s=y" % re.escape(sym), kcfg, re.M) is not None
-ksched = "BORE" if has("CONFIG_SCHED_BORE") else ("EEVDF" if kcfg else "")
-mhz = re.search(r"^CONFIG_HZ=(\d+)", kcfg, re.M)
-ktick = (mhz.group(1) + " Hz") if mhz else ""
-kpreempt = "full" if has("CONFIG_PREEMPT") else ("voluntary" if has("CONFIG_PREEMPT_VOLUNTARY") else ("none" if kcfg else ""))
-thp = ""
-mt = re.search(r"\[(\w+)\]", read("/sys/kernel/mm/transparent_hugepage/enabled"))
-if mt: thp = mt.group(1)
-mit = "off" if "mitigations=off" in read("/proc/cmdline") else "on"
-swp = read("/proc/sys/vm/swappiness").strip()
-
-# -- HARDWARE -------------------------------------------------------------
-cpu = re.sub(r"\(R\)|\(TM\)", "", model)
-cpu = re.sub(r"\s*@.*$", "", cpu)
-cpu = re.sub(r"\b(Intel|Core|CPU|Processor)\b", "", cpu)
-cpu = re.sub(r"\s+", " ", cpu).strip()
-if cpu and os.cpu_count(): cpu += " ×%d" % os.cpu_count()
-
-gpu = sh("nvidia-smi", "--query-gpu=name", "--format=csv,noheader").strip().splitlines()
-gpu = gpu[0] if gpu else ""
-if not gpu:
-    for ln in sh("sh","-c","lspci 2>/dev/null | grep -Ei 'vga|3d'").splitlines():
-        gpu = re.sub(r".*: ", "", ln).strip(); break
-gpu = re.sub(r"NVIDIA\s*|GeForce\s*|Corporation\s*", "", gpu).strip()
-
-drvver = read("/sys/module/nvidia/version").strip()
-driver = ("nvidia " + drvver) if drvver else ""
-
-memkb = re.search(r"MemTotal:\s*(\d+)", read("/proc/meminfo"))
-mem = ("%.2f GiB" % (int(memkb.group(1))/1048576)) if memkb else ""
-
-root = ""
-for ln in read("/proc/mounts").splitlines():
-    p = ln.split()
-    if len(p) > 2 and p[1] == "/": root = p[2]; break
-
-zram = "active" if os.path.exists("/sys/block/zram0") else ""
-if zram and shutil.which("zramen"): zram += " · zramen"
-
-# -- render ---------------------------------------------------------------
-def line(label, val):
-    return "${color1}%-8s${color}%s" % (label, val) if val else None
-
-out = []
-def section(title, items):
-    body = [x for x in (line(l, v) for l, v in items) if x]
-    if not body: return
-    if out: out.append("")
-    out.append("${color1}%s${color}" % title)
-    out.append("${color2}%s${color}" % ("─" * 16))
-    out.extend(body)
-
-section("SYSTEM", [("os", osname), ("libc", libc), ("arch", arch),
-                   ("init", "runit"), ("pkg", "xbps"), ("cron", cron)])
-section("KERNEL", [("sched", ksched), ("tick", ktick), ("preempt", kpreempt),
-                   ("thp", thp), ("vm.swap", swp), ("mitig.", mit)])
-section("HARDWARE", [("cpu", cpu), ("gpu", gpu), ("driver", driver),
-                     ("mem", mem), ("root", root), ("zram", zram)])
-
-tmpl, dest = sys.argv[1], sys.argv[2]
-with open(tmpl, encoding="utf-8") as f: t = f.read()
-with open(dest, "w", encoding="utf-8") as f:
-    f.write(t.replace("@SYSTEM_TEXT@", "\n".join(out)))
-PY
 # Force a UTF-8 ctype on launch: the panel's ─ / × / · glyphs render as mojibake if
 # conky decodes the (UTF-8) config under a non-UTF-8 LC_CTYPE. Pinned for BOTH
 # instances now: the guard originally covered only conky-system, which contains no
@@ -1296,6 +1310,7 @@ fi
 [ -d "$ASSETS" ] || { warn "branding assets not found at $ASSETS (deploy.sh installs them)"; exit 1; }
 
 apply_shared
+apply_conky
 if $DO_LXQT; then
     apply_openbox_session
     apply_lxqt

@@ -966,9 +966,9 @@ fi
 # temperature lines renders as mojibake (fixed once already for LXQt, and it is
 # easy to reintroduce by starting conky from a fresh autostart entry).
 #
-# Known gap, stated rather than hidden: the two conky CONFIGS are still written by
-# the LXQt half of cachy-branding, so on a Plasma-only box there is nothing to
-# start yet and this step says so instead of pretending.
+# The configs themselves come from cachy-branding's SHARED half (apply_conky), not
+# its LXQt half. That was a real gap once - a Plasma-only box had nothing to start -
+# so the only reason to skip now is conky not being installed.
 CONKY_LAUNCH="$SHARE/cachy-void/conky-start.sh"
 if [ -f "$CFG/conky/conky.conf" ] && command -v conky >/dev/null 2>&1; then
     mkdir -p "$SHARE/cachy-void"
@@ -998,8 +998,8 @@ if [ -f "$CFG/conky/conky.conf" ] && command -v conky >/dev/null 2>&1; then
             setsid --fork env LC_CTYPE=C.UTF-8 conky -c "$CFG/conky/conky-system.conf" >/dev/null 2>&1 </dev/null
         ok "conky started for this session"
     fi
-elif command -v conky >/dev/null 2>&1; then
-    log "no conky config yet (it is written by the LXQt half of cachy-branding) — telemetry skipped"
+elif [ -f "$CFG/conky/conky.conf" ]; then
+    log "conky is not installed — telemetry skipped (xbps-install -S conky)"
 fi
 
 # --- the session-picker trap on legacy NVIDIA ------------------------------

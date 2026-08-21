@@ -751,9 +751,12 @@ desktop broke my machine".
   a non-root user and `kf6-kconfig` — a real applier run refuses root, correctly,
   since the config is per-user.
 - **The applier is split accordingly**: `apply_shared` (Tier 1 — Kvantum, icons,
-  terminal scheme, folders, wallpaper) runs unconditionally, then only the appliers
-  the machine resolved: `apply_openbox_session`, `apply_lxqt`, and Plasma's own
-  script. `apply_shell` is opt-in. A value both appliers need lives in the shared
+  terminal scheme, folders, wallpaper) and `apply_conky` (both telemetry panels'
+  configs) run unconditionally, then only the appliers the machine resolved:
+  `apply_openbox_session`, `apply_lxqt`, and Plasma's own script. Conky's *configs*
+  are shared because Conky is an X11 program and the panels are half the identity —
+  a Plasma-only box used to get none; its *autostart* stays per-desktop, gated to
+  the session that should run it. `apply_shell` is opt-in. A value both appliers need lives in the shared
   half — which is how a latent coupling surfaced: `GTK_THEME` had been assigned
   inside the LXQt section while the Openbox session's xsettingsd config read it,
   working only because one happened to run first.
