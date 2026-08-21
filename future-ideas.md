@@ -18,13 +18,29 @@ written down.
 
 ## 1. Desktop support beyond the three that exist
 
-The *next* desktop, and only that. Read `branding.md` §5.12/§6 first: it has the
-applier model, the plumbing a new one plugs into, and how to test one without
-hardware — which is what makes the scope below small.
+The *next* desktop, and only that. Read `branding.md` §5.12/§6 first for the applier
+model and the plumbing a new one plugs into.
 
-- **XFCE is the cheap one.** `xfconf-query` sets the wm theme and wallpaper, and
-  the dual-boot Debian on the test laptop already runs it, so it is testable
-  without installing anything new on the Void side.
+**Price it honestly.** The plumbing IS cheap now — a row in the detector's table, a
+function, and the install-time choice, dry-run and offline isolation test come free.
+The plumbing was never the expensive part. Of the fourteen bug fixes the Plasma
+applier took, **not one** was findable offline: they were sensor daemons that never
+start on Void, a launcher URL scheme that silently renders a placeholder, a panel
+frame that is a slab instead of a line, applet order that no API can set, a colour
+scheme that refuses to re-apply under its own name. Every one needed the desktop
+installed and a human looking at it. Openbox was the same story from the other
+direction — it provides nothing, so the applier had to supply audio, polkit,
+notifications and a panel before the look mattered at all.
+
+So the real cost of a desktop is **discovery**, and it scales with how much the
+desktop assumes: Openbox assumed nothing and needed everything; Plasma provided
+everything its own way and assumed systemd. Budget login cycles, not lines.
+
+- **XFCE** is the most plausible next one — `xfconf-query` is a clean config
+  mechanism and the dual-boot Debian on the test laptop runs XFCE, so its *look* can
+  be studied there. But it would still need installing on the Void side to develop
+  against, exactly as Plasma did. That part is at least safe and reversible now:
+  wrap it in `cachy-de-trial`.
 - **GTK/GNOME is the lowest priority.** It resists theming, ships its own network
   applet, and its users are the least likely to want a Qt-shaped look.
 
