@@ -215,11 +215,23 @@ class Tray(QSystemTrayIcon):
         except (TypeError, ValueError):
             n, held = 0, 0
 
+        try:
+            drivers = int(up.get("drivers") or 0)
+        except (TypeError, ValueError):
+            drivers = 0
         lines = []
         if n:
-            lines.append("%d package%s to update%s"
-                         % (n, "" if n == 1 else "s",
-                            " (%d on hold)" % held if held else ""))
+            # Same split as the window (see upstream_counts): a tray saying "20
+            # packages" beside a window saying "12 packages, 8 drivers" would be
+            # the 20-vs-16 mismatch all over again in a different costume.
+            hold = " (%d on hold)" % held if held else ""
+            if drivers and drivers <= n:
+                lines.append("%d package update%s, %d driver update%s%s"
+                             % (n - drivers, "" if n - drivers == 1 else "s",
+                                drivers, "" if drivers == 1 else "s", hold))
+            else:
+                lines.append("%d package%s to update%s"
+                             % (n, "" if n == 1 else "s", hold))
         for r in reasons:
             if r != "updates":
                 lines.append(REASON_TEXT[r])

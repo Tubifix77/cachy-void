@@ -1763,7 +1763,8 @@ class PendingProbeTests(unittest.TestCase):
         cfg = self._cfg(tempfile.mkdtemp())
         rc, d = self._probe(cfg, self._run_ok)
         self.assertEqual(rc, cli.EXIT_OK)
-        self.assertEqual(d["upstream"], {"updatable": 2, "held": 1})
+        self.assertEqual(d["upstream"],
+                         {"updatable": 2, "held": 1, "drivers": 0})
         self.assertTrue(d["fresh"])
         self.assertIn("updates", d["attention"])
 
@@ -2219,7 +2220,8 @@ class CountAgreementTests(unittest.TestCase):
         self.assertIn(f"{data['upstream']['updatable']} upstream package(s) "
                       "updatable", st.text())
         self.assertIn(f"(+{data['upstream']['held']} on hold)", st.text())
-        self.assertEqual(data["upstream"], {"updatable": 3, "held": 1})
+        self.assertEqual(data["upstream"],
+                         {"updatable": 3, "held": 1, "drivers": 0})
 
     def test_status_memory_syncs_rather_than_trusting_the_cache(self):
         seen = []
@@ -2310,3 +2312,64 @@ class DriverAdviceTests(unittest.TestCase):
         t = out.text()
         self.assertIn("one of the system packages above", t)
         self.assertNotIn("restart apps to use it", t)
+
+
+class DriverSplitTests(unittest.TestCase):
+    """Which pending packages count as hardware drivers or firmware.
+
+    Wider than "GPU" on purpose: the testbed alone carries intel-ucode, sof- and
+    alsa-firmware, ipw2100/2200-firmware and five linux-firmware-* blobs, so a
+    label saying "gpu" would be wrong the day any of those moves (the owner
+    asked precisely this).
+    """
+
+    def test_the_graphics_stack_counts(self):
+        for name in ("mesa", "mesa-dri", "mesa-libgallium", "mesa-32bit",
+                     "mesa-dri-32bit", "libgbm", "libgbm-32bit", "libdrm",
+                     "nvidia470", "nvidia470-dkms", "xf86-video-intel"):
+            self.assertTrue(cli.is_driver_pkg(name), name)
+
+    def test_cpu_microcode_and_firmware_count_too(self):
+        for name in ("intel-ucode", "amd-ucode", "linux-firmware-intel",
+                     "linux-firmware-network", "sof-firmware", "alsa-firmware",
+                     "ipw2200-firmware"):
+            self.assertTrue(cli.is_driver_pkg(name), name)
+
+    def test_ordinary_packages_do_not(self):
+        for name in ("firefox", "perl", "python3-yaml", "steam", "autoconf",
+                     "wpa_supplicant", "libz3", "liblilv", "xdg-user-dirs"):
+            self.assertFalse(cli.is_driver_pkg(name), name)
+
+    def test_the_split_matches_the_real_pending_list(self):
+        # The testbed's actual 20 pending updates, verbatim: eight of them are
+        # one mesa release (four packages, each with a 32-bit twin).
+        listing = (
+            "linux6.12-6.12.104_1 hold\n"
+            "linux6.12-headers-6.12.104_1 hold\n"
+            "autoconf-2.73_1 update\nfirefox-154.0_1 update\n"
+            "firefox-i18n-da-154.0_1 update\nlibgbm-26.1.8_1 update\n"
+            "libgbm-32bit-26.1.8_1 update\nliblilv-0.28.0_1 update\n"
+            "libsord-0.16.22_1 update\nlibz3-5.1.0_1 update\n"
+            "libz3-32bit-5.1.0_1 update\nmesa-26.1.8_1 update\n"
+            "mesa-32bit-26.1.8_1 update\nmesa-dri-26.1.8_1 update\n"
+            "mesa-dri-32bit-26.1.8_1 update\nmesa-libgallium-26.1.8_1 update\n"
+            "mesa-libgallium-32bit-26.1.8_1 update\nperl-5.42.3_1 update\n"
+            "python3-yaml-6.0.3_1 update\nsteam-1.0.0.87_1 update\n"
+            "wpa_supplicant-2.12_2 update\nxdg-user-dirs-0.20_2 update\n")
+        n, held, fresh, drivers = cli.upstream_counts(
+            lambda a: cp(0, listing) if a[:2] == ["xbps-install", "-Mun"] else cp(1))
+        self.assertEqual((n, held, drivers), (20, 2, 8))
+        self.assertTrue(fresh)
+
+    def test_status_states_the_split_rather_than_a_lump(self):
+        listing = ("mesa-26.1.8_1 update\nfirefox-154.0_1 update\n"
+                   "perl-5.42.3_1 update\n")
+
+        def run(args):
+            a = list(args)
+            if a[:2] in (["xbps-install", "-Mun"], ["xbps-install", "-un"]):
+                return cp(0, listing)
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_status(FakeXbps(), _config([]), out=out, run=run)
+        self.assertIn("2 package update(s), 1 driver/firmware update(s)", out.text())

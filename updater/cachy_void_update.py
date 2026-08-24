@@ -641,6 +641,38 @@ def cmd_check(xbps, config: Config, out=print) -> int:
     return EXIT_OK
 
 
+# What counts as a hardware driver or firmware package. Deliberately WIDER than
+# "GPU": this box alone carries intel-ucode (CPU microcode), sof/alsa-firmware
+# (audio DSP), ipw2100/2200-firmware (WiFi) and five linux-firmware-* blobs, any
+# of which can turn up in an update — so a label saying "gpu" would be wrong on
+# the day one of them moves (owner asked exactly this).
+_DRIVER_EXACT = {"intel-ucode", "amd-ucode"}
+_DRIVER_PREFIXES = ("mesa", "libgbm", "libdrm", "nvidia",
+                    "xf86-video-", "xf86-input-")
+
+
+def is_driver_pkg(name: str) -> bool:
+    """True for a hardware driver / firmware binpkg.
+
+    32-bit twins count as the same kind of thing (Void ships mesa-32bit et al
+    for Steam), and sub-packages count with their parent: a single mesa release
+    arrives as mesa, mesa-dri, mesa-libgallium and libgbm, each doubled. That is
+    why a "one driver update" can legitimately show as eight packages — the unit
+    everywhere else in this interface is the PACKAGE, and changing units here to
+    flatter a number would be its own kind of lie.
+    """
+    base = name[:-6] if name.endswith("-32bit") else name
+    if base in _DRIVER_EXACT:
+        return True
+    if base.startswith("linux-firmware") or base.endswith("-firmware"):
+        return True
+    if "-firmware-" in base:
+        return True
+    return any(base == pre.rstrip("-") or base.startswith(pre)
+               or (pre == "nvidia" and base.startswith("nvidia"))
+               for pre in _DRIVER_PREFIXES)
+
+
 def _count_upstream(cp) -> tuple[int, int]:
     """Split an ``xbps-install -un`` dry-run listing into (actionable, held).
 
@@ -655,8 +687,22 @@ def _count_upstream(cp) -> tuple[int, int]:
     return n, len(lines) - n
 
 
+def _split_drivers(cp) -> int:
+    """How many of the ACTIONABLE pending packages are drivers/firmware."""
+    n = 0
+    for line in (cp.stdout or "").splitlines():
+        f = line.split()
+        if len(f) > 1 and f[1] in ("update", "install"):
+            try:
+                if is_driver_pkg(split_pkgver(f[0])[0]):
+                    n += 1
+            except (ValueError, KeyError):
+                continue
+    return n
+
+
 def upstream_counts(run) -> tuple:
-    """``(updatable, held, fresh)`` from a dry-run system update.
+    """``(updatable, held, fresh, drivers)`` from a dry-run system update.
 
     ``-M`` (``--memory-sync``) fetches the remote index into memory for this one
     command: unprivileged, no cache write, and the answer is CURRENT. When the
@@ -673,14 +719,14 @@ def upstream_counts(run) -> tuple:
         cp = run(["xbps-install", "-Mun"])
         if cp.returncode == 0:
             n, held = _count_upstream(cp)
-            return n, held, True
+            return n, held, True, _split_drivers(cp)
         cp = run(["xbps-install", "-un"])          # offline: the cache will do
         if cp.returncode == 0:
             n, held = _count_upstream(cp)
-            return n, held, False
+            return n, held, False, _split_drivers(cp)
     except OSError:
         pass
-    return None, 0, False
+    return None, 0, False, 0
 
 
 def cmd_pending(config: Config, out=print, run=_run) -> int:
@@ -707,13 +753,14 @@ def cmd_pending(config: Config, out=print, run=_run) -> int:
                      "upstream": {"updatable": 0, "held": 0},
                      "kernel": {}, "attention": [], "notes": []}
 
-    n, held, fresh = upstream_counts(run)
+    n, held, fresh, drivers = upstream_counts(run)
     payload["fresh"] = fresh
     if n is None:
         payload["notes"].append("xbps-install unavailable: could not determine "
                                 "the upstream update count")
     else:
-        payload["upstream"] = {"updatable": n, "held": held}
+        payload["upstream"] = {"updatable": n, "held": held,
+                               "drivers": drivers}
         if not fresh:
             payload["notes"].append("remote index unreachable; counts are from "
                                     "the on-disk cache and may be stale")
@@ -975,14 +1022,22 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
 
     out("\n[1] System (upstream Void)")
     # The SAME counting path as --pending, deliberately: see upstream_counts().
-    n, held, fresh = upstream_counts(run)
+    n, held, fresh, drivers = upstream_counts(run)
     if n is None:
         out("    unknown — xbps-install unavailable")
     else:
-        out(f"    {n} upstream package(s) updatable"
-            + ("" if n else " — up to date")
-            + (f"   (+{held} on hold)" if held else "")
-            + ("" if fresh else "   (mirror unreachable; from the local cache)"))
+        # Split rather than one lump: "is a driver in there?" is the question
+        # this tier gets asked, and a total cannot answer it.
+        if drivers:
+            out(f"    {n - drivers} package update(s), "
+                f"{drivers} driver/firmware update(s)"
+                + (f"   (+{held} on hold)" if held else "")
+                + ("" if fresh else "   (mirror unreachable; local cache)"))
+        else:
+            out(f"    {n} upstream package(s) updatable"
+                + ("" if n else " — up to date")
+                + (f"   (+{held} on hold)" if held else "")
+                + ("" if fresh else "   (mirror unreachable; from the local cache)"))
 
     out(f"\n[2] Performance overlay (rebuilt at -O3{_march_label(config)})")
     try:

@@ -688,12 +688,20 @@ class Updater(QWidget):
         and the detail beneath it to disagree.
         """
         parts = []
+        held = re.search(r"\(\+(\d+) on hold\)", text)
+        hold_txt = f" ({held.group(1)} on hold)" if held else ""
+        # Counts, not prose. The owner's format, and it is simply better: the
+        # question "is a driver in there?" is answered by a number instead of a
+        # sentence, and nothing has to be read to find out.
+        split = re.search(r"(\d+) package update\(s\), (\d+) driver/firmware", text)
         m = re.search(r"(\d+) upstream package\(s\) updatable", text)
-        n = int(m.group(1)) if m else 0
-        if n:
-            held = re.search(r"\(\+(\d+) on hold\)", text)
-            parts.append(f"{n} package{'' if n == 1 else 's'} to update"
-                         + (f" ({held.group(1)} on hold)" if held else ""))
+        if split:
+            pk, drv = int(split.group(1)), int(split.group(2))
+            parts.append(f"{pk} package update{'' if pk == 1 else 's'}, "
+                         f"{drv} driver update{'' if drv == 1 else 's'}" + hold_txt)
+        elif m and int(m.group(1)):
+            n = int(m.group(1))
+            parts.append(f"{n} package update{'' if n == 1 else 's'}" + hold_txt)
         m = re.search(r"(\d+) to rebuild, (\d+) to deploy", text)
         if m:
             rb, dep = int(m.group(1)), int(m.group(2))
@@ -701,22 +709,12 @@ class Updater(QWidget):
                 parts.append(f"{rb} overlay package{'' if rb == 1 else 's'} to rebuild")
             elif dep:
                 parts.append(f"{dep} to deploy")
-        # Three attempts to get one clause right, each failing a reader test the
-        # owner applied: "a graphics driver update" said nothing; "new mesa
-        # 26.1.8_1" assumed you know what mesa is; and both read as a SEPARATE
-        # item carrying an instruction ("restart apps to use it") for a driver
-        # not installed yet — "use what?" was the exact, fair reply.
-        #
-        # So: the driver is a HIGHLIGHT FROM WITHIN the package count, phrased
-        # as part of the same sentence, and it gives no instruction at all. What
-        # to do afterwards is printed after the update, when it is actionable.
-        drivers = [f"{pkg} {ver.split('_')[0]}" for pkg, ver in re.findall(
-            r"graphics driver update: (\S+) \S+ -> (\S+) ", text)]
-        if drivers and parts:
-            parts[0] += ", including a new graphics driver (" + \
-                        ", ".join(drivers) + ")"
-        elif drivers:
-            parts.append("a new graphics driver (" + ", ".join(drivers) + ")")
+        # No driver NAMES here any more. Four attempts proved the point: every
+        # version of that clause was either meaningless ("a graphics driver
+        # update"), jargon ("new mesa 26.1.8_1"), or an instruction about
+        # something not installed yet. A count says the same thing without any
+        # of those failure modes, and the detail pane below names the packages
+        # for anyone who wants them.
         # The kernel is the one thing Update genuinely will NOT do, so the
         # clause names the button that does — otherwise it sits beside the
         # others looking like something the same press would handle.
