@@ -83,6 +83,81 @@ and a fourth needs a better reason than "we could".
   without regenerating the other OS's menu. The updater should state that plainly
   instead of leaving the user to infer it from a "bookkeeping-only" message.
 
+### 2b. From the Omarchy 4 review (2026-08-23): two updater upgrades
+
+Omarchy 4 was surveyed for anything adoptable (most of it is self-maintained
+desktop-replacement — disqualified by §4 by construction). Two ideas survived the
+filter, and both land in the updater — the one place where the maintenance is
+already ours and "make it more user-friendly" cannot cross the philosophy. They
+are **two features, not one**, but they share one piece of groundwork.
+
+**Shared groundwork — a fast, machine-readable status surface.** `--status` today
+is a human-readable overview that "can take a while" (the GUI shows a busy line
+for it). Both features below, plus the staged-candidate readout above, want a
+cheap read-only probe: pending upstream count, kernel drift, staged candidate,
+snapshot inventory — as JSON (say `--pending`), answering in a second. Single
+source of truth stays the CLI; the GUI and the tray both consume it.
+
+**Idea 1 — a passive "updates pending" tray presence.** Today the updater only
+speaks when opened. A small tray icon (our own PyQt code — the toolkit is already
+a dependency, so §4 does not apply) that idles, periodically probes, shows a
+quiet badge when updates are pending, and opens `cachy-updater-gui` on click.
+Facts that make it cheap, all verified:
+  - **The probe needs no root and no staleness workaround**: `xbps-install -Mun`
+    (`-M, --memory-sync`) fetches the remote index *in memory*, unprivileged,
+    ignoring the on-disk cache — a fresh dry-run update list with zero system
+    writes. `-u` respects holds, so pinned kernels never cause a stuck badge.
+    Poll every few hours; never hammer mirrors.
+  - Overlay-side pending (the §7.3 M/P/O terms) deliberately stays out of the
+    probe — those only materialize after a sync anyway; the badge says "upstream
+    has N for you", the GUI's Check remains the full truth.
+  - Sessions: one ungated XDG autostart entry (this is a product surface wanted
+    in *every* desktop — the opposite of the branding rule) covers LXQt and
+    Plasma; the bare-Openbox session runs no XDG autostart, so its line goes in
+    the branding-managed `~/.config/openbox/autostart` (tint2 already provides
+    the tray there). Heed the nm-tray lesson: exactly one autostart mechanism
+    per session, never two.
+  - Notifications (libnotify) at most once per new-updates transition; never
+    nag, never auto-open. The icon must read as void-tactical, not as alarm.
+
+**Idea 2 — a snapshot restore surface ("go back to before an update").** §9.5
+takes snapshots religiously; §5 documents restoring one — but as a manual
+runbook. The affordance belongs in the GUI, next to (and clearly distinct from)
+"Boot known-good kernel": that button re-pins a *kernel*; this feature restores
+*userland*. Never reuse the word "rollback" across the two. Phased, because the
+privilege story differs per filesystem layout:
+  - **Phase R1 — see and understand (no new privileges).** A Snapshots pane:
+    list via the already-granted `btrfs subvolume list`, showing every snapshot
+    (`deploy-*`, `manual-*`, `de-trial-*` — prune only ever touches `deploy-*`),
+    its age, and — the annotate-never-dump touch — what the matching journal
+    run_id says that update *did* ("36 pkgs incl. mesa, firefox"). Then detect
+    the host's layout and render the exact §5 restore recipe for THIS machine,
+    not a generic doc pointer.
+  - **Phase R2 — one-click restore, where the layout permits (opt-in, spec
+    §4.1/§9.5 amendment).** On a root with no `subvol=` pin in fstab (the
+    btrfs-convert testbed is exactly this: root = top-level ID 5, fstab mounts
+    the bare UUID), restore is two commands: writable snapshot of the chosen
+    read-only one, then `btrfs subvolume set-default`, then a user-confirmed
+    reboot. Needs exactly two new sudoers grants: `btrfs subvolume snapshot`
+    (writable variant) and `btrfs subvolume set-default` — as narrow as the §9.5
+    originals. Take a `-r` safety snapshot of the current root first (already
+    granted), so restore itself is undoable. On the §9.1 `@` layout, fstab's
+    `subvol=@` ignores set-default and the honest move is Phase R1's recipe
+    (the snapper-style rename-swap needs mount+mv grants — too wide; refuse
+    rather than widen).
+  - **Verify-before-ship items**, named now so nobody assumes: (1) on the
+    converted testbed `/boot` lives *inside* the root tree (unlike §9.1 where
+    it is outside the `@` subvol), so a restore also rewinds `/boot` content —
+    how the foreign GRUB's hand-written menuentry resolves paths against a
+    changed default subvolume must be tested, not deduced; (2) post-restore
+    state must be visible ("running from restored snapshot X", get-default ≠ 5)
+    with cleanup guidance, or the box quietly accumulates mystery subvolumes.
+
+Also noted in passing during the same survey, for whoever tends the testbed: the
+`ext2_saved` subvolume (btrfs-convert's undo image) still pins pre-conversion
+blocks on the box; deleting it is the standard post-conversion cleanup once the
+btrfs root is trusted — an operator decision, not overlay business.
+
 ---
 
 ## 3. Undecided levers
