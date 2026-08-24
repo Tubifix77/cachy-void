@@ -538,13 +538,32 @@ class HeadlineTests(unittest.TestCase):
                        "base is 6.12.103_1 — port linux-cachy (§2.6/§8.4).\n")
         self.assertIn("a newer BORE kernel to build", t)
 
-    def test_a_graphics_driver_update_is_called_out(self):
-        # It rides the ordinary update, but it is the one that rebuilds DKMS
-        # and can change what happens at the next login (owner asked whether
-        # the GPU button was an update — it is not; this is where that shows).
+    def test_a_userspace_gl_update_names_the_package_version_and_cost(self):
+        # "a graphics driver update" was the first attempt and said nothing
+        # (owner: "what does that mean??"). mesa is userspace GL: no reboot,
+        # but a running game keeps the old one until restarted.
         t = self._head("    3 upstream package(s) updatable\n"
-                       "    graphics driver update pending — included in Update\n")
-        self.assertIn("a graphics driver update", t)
+                       "    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
+                       "(restart apps to use it)\n")
+        self.assertIn("new mesa 26.1.8_1 — restart apps to use it", t)
+        self.assertNotIn("reboot", t)
+
+    def test_a_kernel_module_driver_says_reboot_instead(self):
+        # The distinction is the whole point: an nvidia driver rebuilds a
+        # kernel module and the running kernel keeps the old one until reboot.
+        t = self._head("    3 upstream package(s) updatable\n"
+                       "    graphics driver update: nvidia470 470.256.02_1 -> "
+                       "470.260.00_1 (reboot to load it)\n")
+        self.assertIn("new nvidia470 470.260.00_1 — reboot to load it", t)
+        self.assertNotIn("restart apps", t)
+
+    def test_two_pending_drivers_are_both_named(self):
+        t = self._head("    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
+                       "(restart apps to use it)\n"
+                       "    graphics driver update: nvidia470 470.256.02_1 -> "
+                       "470.260.00_1 (reboot to load it)\n")
+        self.assertIn("new mesa 26.1.8_1", t)
+        self.assertIn("new nvidia470 470.260.00_1", t)
 
     def test_flatpak_apps_are_included_since_update_applies_them(self):
         t = self._head("    0 upstream package(s) updatable — up to date\n"
@@ -559,10 +578,11 @@ class HeadlineTests(unittest.TestCase):
     def test_everything_at_once_reads_as_one_line(self):
         t = self._head("    20 upstream package(s) updatable   (+4 on hold)\n"
                        "    2 to rebuild, 1 to deploy\n"
-                       "    graphics driver update pending — included in Update\n"
+                       "    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
+                       "(restart apps to use it)\n"
                        "    kernel: ported base is old — port linux-cachy\n")
         for bit in ("20 packages to update", "2 overlay packages to rebuild",
-                    "a graphics driver update", "a newer BORE kernel to build"):
+                    "new mesa 26.1.8_1", "a newer BORE kernel to build"):
             self.assertIn(bit, t)
         self.assertEqual(t.count("·"), 3)          # separators, not sentences
 

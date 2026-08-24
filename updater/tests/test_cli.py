@@ -870,7 +870,7 @@ class StatusTests(unittest.TestCase):
     @staticmethod
     def _run(args):
         a = list(args)
-        if a[:2] == ["xbps-install", "-un"]:
+        if a[:2] in (["xbps-install", "-Mun"], ["xbps-install", "-un"]):
             return cp(0, "foo-1.2_3 update x86_64\nbar-2.0_1 update x86_64\n")
         if a[0] == "xbps-remove":
             return cp(0, "orphan-1_1 x86_64\n")
@@ -905,7 +905,8 @@ class StatusTests(unittest.TestCase):
         # skips them, and counting them is false-alarm security (found on the
         # Medion: "4 updatable" that were all the pinned kernels)
         def run(args):
-            if list(args)[:2] == ["xbps-install", "-un"]:
+            if list(args)[:2] in (["xbps-install", "-Mun"],
+                                  ["xbps-install", "-un"]):
                 return cp(0, "foo-1.2_3 update x86_64\n"
                              "linux6.12-6.12.98_1 hold x86_64\n"
                              "linux6.18-6.18.40_1 hold x86_64\n")
@@ -2186,3 +2187,60 @@ class MarchLabelTests(unittest.TestCase):
         cfg = cli.Config(void_packages=Path("/nonexistent-vp"),
                          state_dir=Path(tempfile.mkdtemp()))
         self.assertEqual(cli._march_label(cfg), "")
+
+
+class CountAgreementTests(unittest.TestCase):
+    """--status and --pending must never report different numbers.
+
+    They did: the tray memory-synced (fresh) while the window read the on-disk
+    cache (stale), so the same machine showed 20 in the tray and 16 in the
+    window, both defensible and together useless. One helper now serves both,
+    so a divergence has to be introduced deliberately.
+    """
+
+    LISTING = ("foo-1.2_3 update x86_64\n"
+               "bar-2.0_1 update x86_64\n"
+               "baz-3.0_1 install x86_64\n"
+               "linux6.12-6.12.98_1 hold x86_64\n")
+
+    def _run(self, args):
+        a = list(args)
+        if a[:2] == ["xbps-install", "-Mun"]:
+            return cp(0, self.LISTING)
+        return cp(0, "")
+
+    def test_both_front_ends_see_the_same_counts(self):
+        cfg = _config([])
+        st = Sink()
+        cli.cmd_status(FakeXbps(), cfg, out=st, run=self._run)
+        pd = Sink()
+        cli.cmd_pending(cfg, out=pd, run=self._run)
+        data = json.loads(pd.text())
+        self.assertIn(f"{data['upstream']['updatable']} upstream package(s) "
+                      "updatable", st.text())
+        self.assertIn(f"(+{data['upstream']['held']} on hold)", st.text())
+        self.assertEqual(data["upstream"], {"updatable": 3, "held": 1})
+
+    def test_status_memory_syncs_rather_than_trusting_the_cache(self):
+        seen = []
+
+        def run(args):
+            seen.append(list(args))
+            return cp(0, self.LISTING)
+        cli.cmd_status(FakeXbps(), _config([]), out=Sink(), run=run)
+        self.assertIn(["xbps-install", "-Mun"], seen)
+
+    def test_an_unreachable_mirror_is_disclosed_in_both(self):
+        def run(args):
+            a = list(args)
+            if a[:2] == ["xbps-install", "-Mun"]:
+                return cp(16, "", "failed to fetch")
+            if a[:2] == ["xbps-install", "-un"]:
+                return cp(0, self.LISTING)
+            return cp(0, "")
+        st = Sink()
+        cli.cmd_status(FakeXbps(), _config([]), out=st, run=run)
+        self.assertIn("mirror unreachable", st.text())
+        pd = Sink()
+        cli.cmd_pending(_config([]), out=pd, run=run)
+        self.assertFalse(json.loads(pd.text())["fresh"])

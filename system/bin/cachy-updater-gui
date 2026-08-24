@@ -684,11 +684,15 @@ class Updater(QWidget):
                 parts.append(f"{rb} overlay package{'' if rb == 1 else 's'} to rebuild")
             elif dep:
                 parts.append(f"{dep} to deploy")
-        # Named separately because it is the update most likely to matter at the
-        # next login (it rebuilds DKMS modules), even though Update applies it
-        # like any other package.
-        if "graphics driver update pending" in text:
-            parts.append("a graphics driver update")
+        # Named separately, and named SPECIFICALLY. "a graphics driver update"
+        # was the first attempt and it said nothing a user did not already know
+        # (owner: "what does that mean??"). What is useful is which driver, to
+        # what version, and what has to happen before it counts — and that last
+        # part is not the same for a userspace GL stack as for a kernel module,
+        # so the CLI decides it and this lifts the answer verbatim.
+        for pkg, ver, hint in re.findall(
+                r"graphics driver update: (\S+) \S+ -> (\S+) \(([^)]+)\)", text):
+            parts.append(f"new {pkg} {ver} — {hint}")
         # A kernel BUMP belongs to a different button — Update deliberately
         # leaves the kernel alone — so it is named rather than folded into the
         # package count.

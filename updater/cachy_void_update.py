@@ -655,6 +655,34 @@ def _count_upstream(cp) -> tuple[int, int]:
     return n, len(lines) - n
 
 
+def upstream_counts(run) -> tuple:
+    """``(updatable, held, fresh)`` from a dry-run system update.
+
+    ``-M`` (``--memory-sync``) fetches the remote index into memory for this one
+    command: unprivileged, no cache write, and the answer is CURRENT. When the
+    mirror is unreachable it falls back to the on-disk cache and reports
+    ``fresh=False`` rather than passing stale numbers off as fact. ``updatable``
+    is ``None`` when nothing could be determined at all.
+
+    Shared by ``--status`` and ``--pending`` deliberately. Two front-ends of the
+    same product showing different counts is worse than either number being
+    wrong, and that is exactly what happened when the tray memory-synced while
+    the window read the cache: 20 in one, 16 in the other, both "correct".
+    """
+    try:
+        cp = run(["xbps-install", "-Mun"])
+        if cp.returncode == 0:
+            n, held = _count_upstream(cp)
+            return n, held, True
+        cp = run(["xbps-install", "-un"])          # offline: the cache will do
+        if cp.returncode == 0:
+            n, held = _count_upstream(cp)
+            return n, held, False
+    except OSError:
+        pass
+    return None, 0, False
+
+
 def cmd_pending(config: Config, out=print, run=_run) -> int:
     """Fast, machine-readable "is anything waiting?" probe — JSON on stdout.
 
@@ -679,28 +707,18 @@ def cmd_pending(config: Config, out=print, run=_run) -> int:
                      "upstream": {"updatable": 0, "held": 0},
                      "kernel": {}, "attention": [], "notes": []}
 
-    # -M (--memory-sync) fetches the remote index into memory for this command
-    # only: a FRESH answer with no root and no on-disk cache write, which is the
-    # whole reason a passive poller can be honest about what is pending.
-    cp = None
-    try:
-        cp = run(["xbps-install", "-Mun"])
-        if cp.returncode == 0:
-            payload["fresh"] = True
-        else:
+    n, held, fresh = upstream_counts(run)
+    payload["fresh"] = fresh
+    if n is None:
+        payload["notes"].append("xbps-install unavailable: could not determine "
+                                "the upstream update count")
+    else:
+        payload["upstream"] = {"updatable": n, "held": held}
+        if not fresh:
             payload["notes"].append("remote index unreachable; counts are from "
                                     "the on-disk cache and may be stale")
-            cp = run(["xbps-install", "-un"])
-    except OSError as exc:
-        payload["notes"].append(f"xbps-install unavailable: {exc}")
-        cp = None
-    if cp is not None and cp.returncode == 0:
-        n, held = _count_upstream(cp)
-        payload["upstream"] = {"updatable": n, "held": held}
         if n:
             payload["attention"].append("updates")
-    elif cp is not None:
-        payload["notes"].append("could not determine the upstream update count")
 
     # Kernel: read the state store directly — no solver, no subprocess.
     try:
@@ -956,20 +974,15 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
     rc = EXIT_OK
 
     out("\n[1] System (upstream Void)")
-    try:
-        cp = run(["xbps-install", "-un"])          # dry-run, cached repodata
-        if cp.returncode == 0:
-            # count only actionable entries — `hold` lines (pinned kernels etc.)
-            # would otherwise show as "updatable" things Update rightly skips
-            n, held = _count_upstream(cp)
-            out(f"    {n} upstream package(s) updatable"
-                + ("" if n else " — up to date")
-                + (f"   (+{held} on hold)" if held else "")
-                + ("   (list may be stale; --sync refreshes it)" if n else ""))
-        else:
-            out("    unknown — run --sync to refresh the repository list")
-    except OSError:
+    # The SAME counting path as --pending, deliberately: see upstream_counts().
+    n, held, fresh = upstream_counts(run)
+    if n is None:
         out("    unknown — xbps-install unavailable")
+    else:
+        out(f"    {n} upstream package(s) updatable"
+            + ("" if n else " — up to date")
+            + (f"   (+{held} on hold)" if held else "")
+            + ("" if fresh else "   (mirror unreachable; from the local cache)"))
 
     out(f"\n[2] Performance overlay (rebuilt at -O3{_march_label(config)})")
     try:
@@ -1031,20 +1044,49 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
             out("    DKMS: none (or driver is not DKMS)")
     except OSError:
         pass
-    # A pending GRAPHICS DRIVER update is worth naming separately even though it
-    # rides the ordinary system update: it is the one package whose update
-    # rebuilds DKMS modules and can change what happens at the next login. The
-    # marker below is stable — the front-end keys its headline off it (owner's
-    # question: "is the GPU button an update?" — it is not, this is the answer).
+    # A pending GRAPHICS DRIVER update is worth naming even though it rides the
+    # ordinary system update, because "an update is pending" answers nothing:
+    # WHICH driver, to WHAT version, and what must happen before it actually
+    # takes effect. That last part differs by kind and conflating them is a lie
+    # — mesa is userspace GL (the running apps keep the old one until they are
+    # restarted), while an nvidia driver rebuilds a KERNEL MODULE at install
+    # time and the running kernel keeps the old module until a reboot.
+    # Dependency packages dragged along (libgbm, mesa-dri, …) are deliberately
+    # not named: the headline package is the answer to "what is changing".
     try:
         drv = sorted(b for b in xbps.installed()
-                     if re.fullmatch(r"nvidia\d*(-dkms)?|mesa|linux-firmware-amd", b))
+                     if re.fullmatch(r"nvidia\d*(-dkms)?|mesa", b))
     except (XbpsError, OSError):
         drv = []
     if drv:
         try:
-            if _lines(run(["xbps-install", "-un", *drv])):
-                out("    graphics driver update pending — included in Update")
+            pend = {}
+            for line in _lines(run(["xbps-install", "-un", *drv])):
+                tok = line.split()[0] if line.split() else ""
+                try:
+                    name, ver = split_pkgver(tok)
+                except (ValueError, KeyError):
+                    continue
+                if name in drv:
+                    pend[name] = ver
+            for name in drv:
+                if name not in pend:
+                    continue
+                try:
+                    cur = split_pkgver(xbps.inst_pkgver(name))[1]
+                except (XbpsError, KeyError, ValueError, OSError):
+                    cur = "?"
+                is_module = bool(re.fullmatch(r"nvidia\d*(-dkms)?", name))
+                hint = ("reboot to load it" if is_module
+                        else "restart apps to use it")
+                out(f"    graphics driver update: {name} {cur} -> "
+                    f"{pend[name]} ({hint})")
+                out("      " + (
+                    "the kernel module is rebuilt when it installs, but the "
+                    "running kernel keeps the old one until you reboot"
+                    if is_module else
+                    "this is userspace OpenGL/Vulkan: no reboot, but a running "
+                    "game or browser keeps the old one until it is restarted"))
         except OSError:
             pass
 
