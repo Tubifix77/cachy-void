@@ -268,7 +268,10 @@ _ATOM_RE = re.compile(r"([A-Za-z][\w.+-]*) (\d[\w.+-]*)")
 
 def _glue_atoms(text: str) -> str:
     text = _ATOM_RE.sub(lambda m: f"{m.group(1)}\u00a0{m.group(2)}", text)
-    return text.replace('"Update kernel" button', '"Update\u00a0kernel"\u00a0button')
+    # The quoted button name is a label, not prose: splitting it across
+    # lines makes it stop looking like the thing to press.
+    return text.replace(chr(34) + "Update kernel" + chr(34),
+                        chr(34) + "Update kernel" + chr(34))
 
 
 class Updater(QWidget):
@@ -715,11 +718,15 @@ class Updater(QWidget):
         # something not installed yet. A count says the same thing without any
         # of those failure modes, and the detail pane below names the packages
         # for anyone who wants them.
-        # The kernel is the one thing Update genuinely will NOT do, so the
-        # clause names the button that does — otherwise it sits beside the
-        # others looking like something the same press would handle.
+        # The kernel is the one thing Update genuinely will NOT do, so this
+        # clause names the button that does. It is the only clause phrased as an
+        # INSTRUCTION rather than a count, because it is the only one asking for
+        # a different press — "a newer BORE kernel to build - the Update kernel
+        # button" was a fragment nobody could parse (owner: "what a horrible
+        # sentence"). "to build it" stays: this button starts a compile measured
+        # in hours, not a download, and finding that out afterwards is worse.
         if "port linux-cachy" in text:
-            parts.append('a newer BORE kernel to build — the "Update kernel" button')
+            parts.append('New BORE kernel — press "Update kernel" to build it')
         m = re.search(r"(\d+) app\(s\) updatable", text)
         if m and int(m.group(1)):
             parts.append(f"{m.group(1)} Flatpak app(s)")

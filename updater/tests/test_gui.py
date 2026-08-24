@@ -557,7 +557,13 @@ class HeadlineTests(unittest.TestCase):
         # a bare "a newer BORE kernel" looks like the same press would handle it.
         t = self._head("    3 upstream package(s) updatable\n"
                        "    kernel: ported base is old — port linux-cachy\n")
-        self.assertIn("Update kernel", t)
+        # An instruction, not a fragment - "a newer BORE kernel to build
+        # - the Update kernel button" parsed as nothing at all. It names
+        # the press, and says that press starts a BUILD (hours), not a
+        # download.
+        self.assertIn("New BORE kernel", t)
+        self.assertIn("press", t)
+        self.assertIn("to build it", t)
 
     def test_flatpak_apps_are_included_since_update_applies_them(self):
         t = self._head("    0 upstream package(s) updatable — up to date\n"
@@ -604,4 +610,5 @@ class HeadlineTests(unittest.TestCase):
             "    3 upstream package(s) updatable\n"
             "    kernel: ported base is old — port linux-cachy\n")
         self._update()
-        self.assertIn('"Update\u00a0kernel"\u00a0button', self.w.headline.text())
+        self.assertIn(chr(34) + "Update" + chr(0x00a0) + "kernel" + chr(34),
+                      self.w.headline.text())
