@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -225,6 +226,21 @@ def _always_build(config: Config) -> list[str]:
         return []
 
 
+def _checkout_age_days(void_packages) -> float:
+    """Days since the void-packages checkout last fetched, or -1 if unknowable.
+
+    ``.git/FETCH_HEAD`` is rewritten by every fetch, so its mtime is the honest
+    answer to "when was this check last able to see anything new".
+    """
+    for rel in (".git/FETCH_HEAD", ".git/HEAD"):
+        try:
+            mtime = (pathlib.Path(void_packages) / rel).stat().st_mtime
+        except OSError:
+            continue
+        return max(0.0, (time.time() - mtime) / 86400.0)
+    return -1.0
+
+
 def _kernel_report(config: Config, xbps, out) -> None:
     """§8.2 bump classification — informational (template regen §8.4 is a
     human step for now). Never fails the run."""
@@ -317,6 +333,19 @@ def _kernel_report(config: Config, xbps, out) -> None:
         elif ev == grub.EV_AWAIT_HUMAN_SERIES:
             out(f"kernel: tracked series linux{series} is gone upstream — "
                 "human decision required (§8.2).")
+        else:
+            # Silence here is ambiguous, and that ambiguity hid a real bump: this
+            # check compares against the linux template in the LOCAL
+            # void-packages checkout, which only a sync refreshes. On the testbed
+            # that checkout was nine days old and still said 6.12.103 while Void
+            # had shipped 6.12.104 — so "no kernel news" actually meant "nobody
+            # has looked recently". Tier [1] memory-syncs the binary repo and is
+            # always current; this one cannot, so it says how old it is instead.
+            age = _checkout_age_days(config.void_packages)
+            if age >= 2:
+                out(f"kernel: no newer version in a void-packages checkout last "
+                    f"refreshed {int(age)} days ago — Update (or --sync) "
+                    "refreshes this check.")
     except (grub.GrubError, XbpsError, OSError) as exc:
         out(f"warning: kernel bump check skipped: {exc}")
 

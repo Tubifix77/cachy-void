@@ -2373,3 +2373,62 @@ class DriverSplitTests(unittest.TestCase):
         out = Sink()
         cli.cmd_status(FakeXbps(), _config([]), out=out, run=run)
         self.assertIn("2 package update(s), 1 driver/firmware update(s)", out.text())
+
+
+class StaleCheckoutTests(unittest.TestCase):
+    """"No kernel news" must not be able to mean "nobody has looked".
+
+    The kernel bump check compares against the linux template in the LOCAL
+    void-packages checkout, which only a sync refreshes — unlike tier [1], which
+    memory-syncs the binary repo every time and is always current. On the
+    testbed that checkout was nine days old and still read 6.12.103 while Void
+    had shipped 6.12.104, so the "Update kernel" prompt was silently absent.
+    """
+
+    def _cfg(self, age_days=None, template="6.12.103"):
+        import os
+        import time as _t
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "srcpkgs" / "linux6.12").mkdir(parents=True)
+        (tmp / "srcpkgs" / "linux6.12" / "template").write_text(
+            f"pkgname=linux6.12\nversion={template}\nrevision=1\n", encoding="utf-8")
+        if age_days is not None:
+            git = tmp / ".git"
+            git.mkdir()
+            fh = git / "FETCH_HEAD"
+            fh.write_text("x\n", encoding="utf-8")
+            when = _t.time() - age_days * 86400
+            os.utime(fh, (when, when))
+        state_dir = Path(tempfile.mkdtemp())
+        cfg = cli.Config(void_packages=tmp, state_dir=state_dir)
+        st = grub_mod.default_state(base_series="6.12", ported_version="6.12.103_1")
+        grub_mod.KernelStateStore(cfg.kernel_state_path).save(st)
+        return cfg
+
+    def _report(self, cfg):
+        out = Sink()
+        cli._kernel_report(cfg, FakeXbps(), out)
+        return out.text()
+
+    def test_a_stale_checkout_is_disclosed_when_there_is_no_bump(self):
+        t = self._report(self._cfg(age_days=9))
+        self.assertIn("9 days ago", t)
+        self.assertIn("--sync", t)
+
+    def test_a_fresh_checkout_stays_quiet(self):
+        # Nothing to say: the check is current and found nothing.
+        t = self._report(self._cfg(age_days=0.5))
+        self.assertNotIn("days ago", t)
+
+    def test_a_real_bump_is_reported_instead_of_the_age(self):
+        # When the checkout DID see something, the age is irrelevant noise.
+        t = self._report(self._cfg(age_days=9, template="6.12.104"))
+        self.assertIn("port linux-cachy", t)
+        self.assertNotIn("days ago", t)
+
+    def test_an_unknowable_age_says_nothing_rather_than_guessing(self):
+        t = self._report(self._cfg(age_days=None))
+        self.assertNotIn("days ago", t)
+
+    def test_the_age_helper_reports_minus_one_when_it_cannot_tell(self):
+        self.assertEqual(cli._checkout_age_days("/nonexistent-void-packages"), -1.0)
