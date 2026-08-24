@@ -116,8 +116,8 @@ QLabel#noticeText {{ color: {FG}; }}
 
 /* The headline answers the only question this window exists for: should I
    press Update? So it is the largest text in the pane, on purpose. */
-QLabel#headline {{ color: {ACCENT}; font-size: 15px; font-weight: bold; }}
-QLabel#headlineQuiet {{ color: {FG_DIM}; font-size: 15px; }}
+QLabel#headline {{ color: {ACCENT}; font-size: 13px; font-weight: bold; }}
+QLabel#headlineQuiet {{ color: {FG_DIM}; font-size: 13px; }}
 
 /* Informational sibling of the notice card: same shape, accent instead of
    amber, because "a kernel is waiting for its trial boot" is news, not a
@@ -252,6 +252,23 @@ these buttons.</li>
 updater; nothing in this window has privileges of its own. Reboots are only ever
 needed for a new kernel.</p>
 """
+
+
+# Wrapping rule for the headline. The first attempt glued every space inside a
+# clause, which stopped "mesa" being orphaned from "26.1.8" but made a long
+# clause UNBREAKABLE — with both a mesa and an nvidia update pending it could
+# not wrap at all and would push the window wider (owner asked what happens
+# when both need updating; that is what happens).
+#
+# So glue only the atoms that are nonsense when split: a package name from its
+# version, and the short quoted button name. Everything else wraps normally, so
+# a busy machine simply uses a second and third line.
+_ATOM_RE = re.compile(r"([A-Za-z][\w.+-]*) (\d[\w.+-]*)")
+
+
+def _glue_atoms(text: str) -> str:
+    text = _ATOM_RE.sub(lambda m: f"{m.group(1)}\u00a0{m.group(2)}", text)
+    return text.replace('"Update kernel" button', '"Update\u00a0kernel"\u00a0button')
 
 
 class Updater(QWidget):
@@ -684,32 +701,33 @@ class Updater(QWidget):
                 parts.append(f"{rb} overlay package{'' if rb == 1 else 's'} to rebuild")
             elif dep:
                 parts.append(f"{dep} to deploy")
-        # Named specifically, and led by WHAT IT IS. Two earlier attempts failed
-        # the same reader test: "a graphics driver update" said nothing at all,
-        # and "new mesa 26.1.8_1" assumed you know what mesa is. Leading with
-        # "graphics driver:" explains the package by position, and the package
-        # revision suffix (_1) is dropped because it is noise to a human — the
-        # detail pane below still carries the exact pkgver.
-        for pkg, ver, hint in re.findall(
-                r"graphics driver update: (\S+) \S+ -> (\S+) \(([^)]+)\)", text):
-            parts.append(f"graphics driver: {pkg} {ver.split('_')[0]} — {hint}")
-        # A kernel BUMP belongs to a different button — Update deliberately
-        # leaves the kernel alone — so it is named rather than folded into the
-        # package count.
+        # Three attempts to get one clause right, each failing a reader test the
+        # owner applied: "a graphics driver update" said nothing; "new mesa
+        # 26.1.8_1" assumed you know what mesa is; and both read as a SEPARATE
+        # item carrying an instruction ("restart apps to use it") for a driver
+        # not installed yet — "use what?" was the exact, fair reply.
+        #
+        # So: the driver is a HIGHLIGHT FROM WITHIN the package count, phrased
+        # as part of the same sentence, and it gives no instruction at all. What
+        # to do afterwards is printed after the update, when it is actionable.
+        drivers = [f"{pkg} {ver.split('_')[0]}" for pkg, ver in re.findall(
+            r"graphics driver update: (\S+) \S+ -> (\S+) ", text)]
+        if drivers and parts:
+            parts[0] += ", including a new graphics driver (" + \
+                        ", ".join(drivers) + ")"
+        elif drivers:
+            parts.append("a new graphics driver (" + ", ".join(drivers) + ")")
+        # The kernel is the one thing Update genuinely will NOT do, so the
+        # clause names the button that does — otherwise it sits beside the
+        # others looking like something the same press would handle.
         if "port linux-cachy" in text:
-            parts.append("a newer BORE kernel to build")
+            parts.append('a newer BORE kernel to build — the "Update kernel" button')
         m = re.search(r"(\d+) app\(s\) updatable", text)
         if m and int(m.group(1)):
             parts.append(f"{m.group(1)} Flatpak app(s)")
 
         if parts:
-            # Wrap only BETWEEN clauses, never inside one: a line that breaks
-            # after "graphics driver:" and orphans the version reads as two
-            # unrelated fragments (owner asked for exactly this). Hard spaces
-            # inside each clause make it unbreakable; the separators keep
-            # ordinary spaces, so those are the only places a wrap can land.
-            glued = [p.replace(" ", "\u00a0") for p in parts]
-            self.headline.setText("  ·  ".join(glued))
+            self.headline.setText(_glue_atoms("  ·  ".join(parts)))
             self.headline.setObjectName("headline")
         else:
             self.headline.setText("Everything is up to date")

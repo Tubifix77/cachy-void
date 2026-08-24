@@ -496,6 +496,9 @@ class HeadlineTests(unittest.TestCase):
     def tearDown(self):
         self.w.deleteLater()
 
+    def _update(self):
+        self.w._update_pin_banner()
+
     def _head(self, text):
         self.w.status.setPlainText(text)
         self.w._update_pin_banner()
@@ -503,16 +506,46 @@ class HeadlineTests(unittest.TestCase):
         # normalise them here, since these tests are about wording.
         return self.w.headline.text().replace("\u00a0", " ")
 
-    def test_a_clause_cannot_be_broken_across_lines(self):
+    def test_a_version_is_never_orphaned_from_its_package(self):
+        """The wrapping rule, after two goes at it.
+
+        Round one glued every space inside a clause, which kept "mesa" with
+        "26.1.8" but made a long clause unbreakable — with two drivers pending
+        it could not wrap at all and would push the window wider. So only the
+        ATOMS are glued: a package name to its version, and the quoted button
+        name. Everything else wraps, and a busy machine just uses more lines.
+        """
         self.w.status.setPlainText(
             "    20 upstream package(s) updatable   (+4 on hold)\n"
             "    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
-            "(restart apps to use it)\n")
-        self.w._update_pin_banner()
+            "(one of the system packages above)\n"
+            "    graphics driver update: nvidia470 470.256.02_1 -> "
+            "470.260.00_1 (one of the system packages above)\n"
+            "    kernel: ported base is old — port linux-cachy\n")
+        self._update()
         raw = self.w.headline.text()
-        # Ordinary spaces survive ONLY as the separators between clauses.
-        self.assertEqual(raw.count(" "), raw.count("  ·  ") * 4)
-        self.assertIn("\u00a0", raw)
+        self.assertIn("mesa\u00a026.1.8", raw)
+        self.assertIn("nvidia470\u00a0470.260.00", raw)
+        self.assertIn('"Update\u00a0kernel"\u00a0button', raw)
+        # …and the text can still break somewhere, or it cannot wrap at all.
+        self.assertIn(" ", raw)
+
+    def test_the_busiest_case_stays_breakable(self):
+        # Everything pending at once: two drivers, overlay work and a kernel.
+        # Every ordinary space is a legal wrap point, so this lays out over as
+        # many lines as it needs instead of widening the window.
+        self.w.status.setPlainText(
+            "    20 upstream package(s) updatable   (+4 on hold)\n"
+            "    2 to rebuild, 1 to deploy\n"
+            "    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
+            "(one of the system packages above)\n"
+            "    graphics driver update: nvidia470 470.256.02_1 -> "
+            "470.260.00_1 (one of the system packages above)\n"
+            "    kernel: ported base is old — port linux-cachy\n")
+        self._update()
+        raw = self.w.headline.text()
+        longest = max(len(run) for run in raw.split(" "))
+        self.assertLess(longest, 40, f"unbreakable run too long: {raw}")
 
     def test_the_package_count_leads(self):
         t = self._head("[1] System (upstream Void)\n"
@@ -551,39 +584,63 @@ class HeadlineTests(unittest.TestCase):
                        "base is 6.12.103_1 — port linux-cachy (§2.6/§8.4).\n")
         self.assertIn("a newer BORE kernel to build", t)
 
-    def test_a_userspace_gl_update_names_the_package_version_and_cost(self):
-        # "a graphics driver update" was the first attempt and said nothing
-        # (owner: "what does that mean??"). mesa is userspace GL: no reboot,
-        # but a running game keeps the old one until restarted.
-        t = self._head("    3 upstream package(s) updatable\n"
+    def test_the_driver_is_a_highlight_inside_the_count_not_an_extra_item(self):
+        """The mistake this pins: mesa IS one of the packages counted above.
+
+        Listing it as its own clause read as a separate thing to do, and the
+        owner correctly asked whether it "goes with the rest of the updates".
+        It does, so it is phrased as part of the same sentence.
+        """
+        t = self._head("    20 upstream package(s) updatable   (+4 on hold)\n"
                        "    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
-                       "(restart apps to use it)\n")
-        self.assertIn("graphics driver:", t)
-        self.assertIn("mesa", t)
-        self.assertIn("26.1.8", t)
-        self.assertNotIn("26.1.8_1", t)      # the _1 revision is noise here
-        self.assertIn("restart apps to use it", t)
-        self.assertNotIn("reboot", t)
+                       "(one of the system packages above)\n")
+        self.assertIn("20 packages to update (4 on hold), including a new "
+                      "graphics driver (mesa 26.1.8)", t)
+        self.assertNotIn("·", t)              # one sentence, not two items
 
-    def test_a_kernel_module_driver_says_reboot_instead(self):
-        # The distinction is the whole point: an nvidia driver rebuilds a
-        # kernel module and the running kernel keeps the old one until reboot.
+    def test_the_headline_gives_no_instruction(self):
+        """A pending summary must not tell you to do something to a thing you
+        have not installed yet. "restart apps to use it" beside "20 packages to
+        update" earned the fair reply: use WHAT? That advice now waits until
+        the update has actually happened."""
+        t = self._head("    20 upstream package(s) updatable\n"
+                       "    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
+                       "(one of the system packages above)\n")
+        for instruction in ("restart apps", "reboot", "log out", "use it"):
+            self.assertNotIn(instruction, t.lower())
+
+    def test_a_kernel_module_driver_is_folded_in_the_same_way(self):
+        # The KIND of driver changes the after-advice, not this summary.
         t = self._head("    3 upstream package(s) updatable\n"
                        "    graphics driver update: nvidia470 470.256.02_1 -> "
-                       "470.260.00_1 (reboot to load it)\n")
-        self.assertIn("graphics driver:", t)
-        self.assertIn("nvidia470", t)
-        self.assertIn("reboot to load it", t)
-        self.assertNotIn("restart apps", t)
+                       "470.260.00_1 (one of the system packages above)\n")
+        self.assertIn("including a new graphics driver (nvidia470 470.260.00)", t)
+        self.assertNotIn("reboot", t.lower())
 
-    def test_two_pending_drivers_are_both_named(self):
-        t = self._head("    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
-                       "(restart apps to use it)\n"
+    def test_two_pending_drivers_are_both_named_in_one_clause(self):
+        t = self._head("    9 upstream package(s) updatable\n"
+                       "    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
+                       "(one of the system packages above)\n"
                        "    graphics driver update: nvidia470 470.256.02_1 -> "
-                       "470.260.00_1 (reboot to load it)\n")
-        self.assertIn("mesa", t)
-        self.assertIn("nvidia470", t)
-        self.assertEqual(t.count("graphics driver:"), 2)
+                       "470.260.00_1 (one of the system packages above)\n")
+        self.assertIn("mesa 26.1.8", t)
+        self.assertIn("nvidia470 470.260.00", t)
+        self.assertEqual(t.count("including a new graphics driver"), 1)
+
+    def test_a_driver_with_no_package_count_still_reads(self):
+        # Degraded tier [1] must not produce a dangling ", including …".
+        t = self._head("    unknown — xbps-install unavailable\n"
+                       "    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
+                       "(one of the system packages above)\n")
+        self.assertIn("a new graphics driver (mesa 26.1.8)", t)
+        self.assertFalse(t.startswith(","), t)
+
+    def test_the_kernel_clause_names_the_button_that_does_it(self):
+        # Update deliberately leaves the kernel alone; beside the other clauses
+        # a bare "a newer BORE kernel" looks like the same press would handle it.
+        t = self._head("    3 upstream package(s) updatable\n"
+                       "    kernel: ported base is old — port linux-cachy\n")
+        self.assertIn("Update kernel", t)
 
     def test_flatpak_apps_are_included_since_update_applies_them(self):
         t = self._head("    0 upstream package(s) updatable — up to date\n"
@@ -599,12 +656,13 @@ class HeadlineTests(unittest.TestCase):
         t = self._head("    20 upstream package(s) updatable   (+4 on hold)\n"
                        "    2 to rebuild, 1 to deploy\n"
                        "    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
-                       "(restart apps to use it)\n"
+                       "(one of the system packages above)\n"
                        "    kernel: ported base is old — port linux-cachy\n")
         for bit in ("20 packages to update", "2 overlay packages to rebuild",
-                    "mesa", "a newer BORE kernel to build"):
+                    "mesa 26.1.8", "a newer BORE kernel to build"):
             self.assertIn(bit, t)
-        self.assertEqual(t.count("·"), 3)          # separators, not sentences
+        # The driver joins the package clause; overlay and kernel stay separate.
+        self.assertEqual(t.count("·"), 2)
 
     def test_a_degraded_status_does_not_invent_a_number(self):
         # "unknown — xbps-install unavailable" must not read as "up to date"

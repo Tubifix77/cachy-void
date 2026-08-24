@@ -2244,3 +2244,69 @@ class CountAgreementTests(unittest.TestCase):
         pd = Sink()
         cli.cmd_pending(_config([]), out=pd, run=run)
         self.assertFalse(json.loads(pd.text())["fresh"])
+
+
+class DriverAdviceTests(unittest.TestCase):
+    """What to do about a new graphics driver is said AFTER it is installed.
+
+    It used to ride in the pending summary, where "restart apps to use it" sat
+    beside "20 packages to update" and invited the fair question: use what, the
+    driver I have not installed yet? Advice belongs at the moment it becomes
+    actionable, and only for what actually changed.
+    """
+
+    def test_nothing_is_said_when_no_driver_changed(self):
+        out = Sink()
+        cli.report_driver_change({"mesa": "26.1.7_1"}, {"mesa": "26.1.7_1"}, out)
+        self.assertEqual(out.text(), "")
+
+    def test_a_userspace_gl_update_explains_reopening_not_rebooting(self):
+        out = Sink()
+        cli.report_driver_change({"mesa": "26.1.7_1"}, {"mesa": "26.1.8_1"}, out)
+        t = out.text()
+        self.assertIn("mesa 26.1.7_1 -> 26.1.8_1", t)
+        self.assertIn("close and reopen", t)
+        self.assertIn("no reboot", t)
+
+    def test_a_kernel_module_driver_asks_for_a_reboot(self):
+        out = Sink()
+        cli.report_driver_change({"nvidia470": "470.256.02_1"},
+                                 {"nvidia470": "470.260.00_1"}, out)
+        t = out.text()
+        self.assertIn("REBOOT", t)
+        self.assertNotIn("close and reopen", t)
+
+    def test_a_newly_installed_driver_is_not_reported_as_changed(self):
+        # No "before" version means it was not an update; saying "updated" would
+        # be wrong, and there is nothing the user must do about a fresh install.
+        out = Sink()
+        cli.report_driver_change({}, {"mesa": "26.1.8_1"}, out)
+        self.assertEqual(out.text(), "")
+
+    def test_both_kinds_at_once_each_get_their_own_advice(self):
+        out = Sink()
+        cli.report_driver_change(
+            {"mesa": "26.1.7_1", "nvidia470": "470.256.02_1"},
+            {"mesa": "26.1.8_1", "nvidia470": "470.260.00_1"}, out)
+        t = out.text()
+        self.assertIn("REBOOT", t)
+        self.assertIn("close and reopen", t)
+
+    def test_the_pending_status_line_carries_no_instruction(self):
+        # The status tier may explain what a driver IS, but must not tell the
+        # user to act on something not yet installed.
+        xb = FakeXbps(installed=["mesa"], src_map={"mesa": "mesa"},
+                      inst_ver={"mesa": "26.1.7_1"})
+
+        def run(args):
+            a = list(args)
+            if a[:2] == ["xbps-install", "-un"] and "mesa" in a:
+                return cp(0, "mesa-26.1.8_1 update x86_64\n")
+            if a[:2] in (["xbps-install", "-Mun"], ["xbps-install", "-un"]):
+                return cp(0, "mesa-26.1.8_1 update x86_64\n")
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_status(xb, _config([]), out=out, run=run)
+        t = out.text()
+        self.assertIn("one of the system packages above", t)
+        self.assertNotIn("restart apps to use it", t)

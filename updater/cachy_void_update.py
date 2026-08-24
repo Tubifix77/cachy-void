@@ -1077,16 +1077,18 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
                 except (XbpsError, KeyError, ValueError, OSError):
                     cur = "?"
                 is_module = bool(re.fullmatch(r"nvidia\d*(-dkms)?", name))
-                hint = ("reboot to load it" if is_module
-                        else "restart apps to use it")
-                out(f"    graphics driver update: {name} {cur} -> "
-                    f"{pend[name]} ({hint})")
+                # One of the packages counted in tier [1], not an extra thing to
+                # do — saying otherwise invited "does that go with the rest?".
+                # And NO instruction here: what to do afterwards is printed when
+                # the update has actually happened, not while it is pending.
+                out(f"    graphics driver update: {name} {cur} -> {pend[name]} "
+                    "(one of the system packages above)")
                 out("      " + (
-                    "the kernel module is rebuilt when it installs, but the "
-                    "running kernel keeps the old one until you reboot"
+                    "a kernel module: it is rebuilt at install time and needs a "
+                    "reboot afterwards before the new one is in use"
                     if is_module else
-                    "this is userspace OpenGL/Vulkan: no reboot, but a running "
-                    "game or browser keeps the old one until it is restarted"))
+                    "the OpenGL/Vulkan stack games render through; afterwards, "
+                    "programs already open keep the old copy until reopened"))
         except OSError:
             pass
 
@@ -1950,12 +1952,68 @@ def _stream_run(args, out, run) -> subprocess.CompletedProcess:
                                        stdout="", stderr="")
 
 
+def graphics_drivers(xbps) -> list:
+    """Installed graphics-driver packages, newest-facing names only.
+
+    ``mesa`` is userspace OpenGL/Vulkan; ``nvidia*`` builds a kernel module.
+    What the user must do after an update differs between the two, which is the
+    only reason this distinction exists.
+    """
+    try:
+        return sorted(b for b in xbps.installed()
+                      if re.fullmatch(r"nvidia\d*(-dkms)?|mesa", b))
+    except (XbpsError, OSError):
+        return []
+
+
+def driver_versions(xbps, names) -> dict:
+    """{pkg: installed version} for the given packages; missing ones omitted."""
+    out = {}
+    for n in names:
+        try:
+            out[n] = split_pkgver(xbps.inst_pkgver(n))[1]
+        except (XbpsError, KeyError, ValueError, OSError):
+            pass
+    return out
+
+
+def report_driver_change(before: dict, after: dict, out) -> None:
+    """Say what a graphics-driver update means NOW that it has happened.
+
+    Placed here on purpose. This advice used to ride along in the pending
+    summary, where it read as an instruction for the present — "restart apps to
+    use it" next to "20 packages to update" invites the fair question *use
+    what, the driver I have not installed yet?* (owner, and he was right). It is
+    only actionable once the new driver is on disk, so it is only said then.
+    """
+    changed = [(n, before[n], after[n]) for n in sorted(after)
+               if n in before and before[n] != after[n]]
+    if not changed:
+        return
+    for name, old, new in changed:
+        if re.fullmatch(r"nvidia\d*(-dkms)?", name):
+            out(f"graphics driver updated: {name} {old} -> {new}")
+            out("  its kernel module was rebuilt during the install, but the "
+                "running kernel still has the old one loaded. REBOOT before "
+                "expecting the new driver.")
+        else:
+            out(f"graphics driver updated: {name} {old} -> {new}")
+            out("  this is the OpenGL/Vulkan stack your games render through. "
+                "Anything already open — a game, Steam, the browser — is still "
+                "using the old copy it loaded at launch; close and reopen those "
+                "to pick it up. Nothing else is needed, and no reboot.")
+
+
 def _deploy(config: Config, deploy_bins, xbps, out, run) -> int:
     repo_args = [f"--repository={r}" for r in config.repos]
     globs = [str(r / "*.xbps") for r in config.repos]
     if run(["xbps-rindex", "-a", *globs]).returncode != 0:
         out("error: xbps-rindex failed")
         return EXIT_INDEX
+    # Snapshot the graphics drivers so the post-update advice can be about what
+    # ACTUALLY changed rather than about what was merely pending.
+    drivers = graphics_drivers(xbps)
+    drv_before = driver_versions(xbps, drivers)
     out("downloading & installing (xbps output follows) …")
     if _stream_run(["sudo", "xbps-install", "-Suy", *repo_args],
                    out, run).returncode != 0:
@@ -1969,6 +2027,7 @@ def _deploy(config: Config, deploy_bins, xbps, out, run) -> int:
                 out(f"error: forced reinstall of {b} failed")
                 return EXIT_INSTALL
     out(f"deployed {len(deploy_bins)} package(s).")
+    report_driver_change(drv_before, driver_versions(xbps, drivers), out)
     return _post_verify(deploy_bins, xbps, repo_paths, out)
 
 
