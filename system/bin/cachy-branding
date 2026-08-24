@@ -813,10 +813,18 @@ _kbd="$(setxkbmap -query 2>/dev/null | awk '/^layout/{print $2}')"
         printf '(sleep 2; env LC_CTYPE=C.UTF-8 conky -c "$HOME/.config/conky/conky.conf") &\n'
     [ -f "$CFG/conky/conky-system.conf" ] && \
         printf '(sleep 2; env LC_CTYPE=C.UTF-8 conky -c "$HOME/.config/conky/conky-system.conf") &\n'
+    # The updater's own tray indicator. Its XDG autostart entry is deliberately
+    # ungated (it belongs in every session, unlike a look), but the bare Openbox
+    # session reads no XDG autostart at all - so this is where it gets started
+    # here, and ONLY here. Exactly one mechanism per session: two would give two
+    # icons, which is the nm-tray lesson above learned the hard way. After tint2,
+    # so the systray it docks into already exists.
+    command -v cachy-updater-tray >/dev/null 2>&1 && \
+        printf '(sleep 4; cachy-updater-tray) &\n'
 } > "$OBA"
 chmod +x "$OBA"
 command -v feh >/dev/null 2>&1 || warn "feh not installed — openbox session has no wallpaper (deploy.sh --with-branding installs it)"
-ok "openbox autostart -> wallpaper + picom + conky${_kbd:+ + keyboard $_kbd}$(command -v tint2 >/dev/null 2>&1 && printf ' + tint2 panel')$(command -v nm-tray >/dev/null 2>&1 && printf ' + nm-tray')"
+ok "openbox autostart -> wallpaper + picom + conky${_kbd:+ + keyboard $_kbd}$(command -v tint2 >/dev/null 2>&1 && printf ' + tint2 panel')$(command -v nm-tray >/dev/null 2>&1 && printf ' + nm-tray')$(command -v cachy-updater-tray >/dev/null 2>&1 && printf ' + updater tray')"
 
 # Curated openbox ROOT MENU (right-click). Openbox's stock /etc/xdg/openbox/menu.xml
 # is a generic 48-entry list hard-coding apps from every DE (KDE/GNOME/XFCE/OpenOffice)

@@ -640,6 +640,45 @@ minimal, non-package-naming set:
   making H2 structurally always-False. The boundary adds **exactly**
   `dmesg --level=emerg,alert,crit` (fixed argument, read-only); the checker
   tries unprivileged first and falls back to the grant.
+- **`--pending`** — a fast, machine-readable probe (one JSON document on stdout)
+  answering only "is anything waiting?". It exists because `--status` is a
+  *human report* and an expensive one: it builds the §7.3 queue and shells out
+  to `du`, `dkms` and Flatpak, which is why the front-end shows a busy line for
+  it. Nothing that polls can afford that. Two design points are normative.
+  **Unprivileged freshness:** the count comes from `xbps-install -Mun` —
+  `--memory-sync` fetches the remote index into memory for that one command, so
+  the answer is current with no root and no on-disk cache write; if the mirror
+  is unreachable it falls back to the cache and says so (`fresh: false`).
+  **Policy travels with the data:** the payload carries an `attention` array of
+  stable tokens (`updates`, `kernel-staged`, `kernel-unhealthy`,
+  `bore-pin-missing`) so a front-end renders a decision rather than re-deriving
+  one from raw counts and drifting from what the window says. Deliberately
+  *not* probed: the overlay queue (it only materialises after a `--sync`, and
+  computing it is the cost being avoided) and Flatpak (a remote query per
+  remote). The probe never exits non-zero — degradations are reported in band,
+  because a poller reading a non-zero code would report the updater as broken
+  when the real story is a mirror being down.
+
+**The tray indicator** (`system/bin/cachy-updater-tray`) is the first consumer:
+a passive presence that idles, polls `--pending` on a lazy cadence (default
+three hours, first check delayed past the login storm), marks its icon when the
+`attention` array is non-empty — accent for news, amber for the two states that
+need a decision — and opens the GUI on a click. It holds **no** privilege and
+invokes exactly one command; a test asserts that no mutating flag appears in
+its code, because a tray is a tempting place to bolt "Update now" onto and the
+moment it can mutate the system it needs privilege and confirmation surfaces it
+does not have. It announces a reason once, never per poll, and a probe that
+fails badges *nothing* — an indicator that cries "updates!" because it could
+not read anything is one people learn to ignore. It runs from a deliberately
+**ungated** `/etc/xdg/autostart` entry (unlike every branding autostart, which
+is gated to one desktop: this is the product's status surface and belongs in
+whichever session the user chose), plus a line in the branding-managed
+`~/.config/openbox/autostart`, since a bare WM reads no XDG autostart —
+**exactly one mechanism per session**, which is the nm-tray double-icon lesson.
+A second copy exits rather than duplicating, and a box with no system tray at
+all exits 0 rather than erroring. `deploy.sh --no-tray` skips the autostart
+(the binary still installs); the install run says so out loud, because putting
+a new icon on someone's panel is not something to do silently.
 
 ---
 

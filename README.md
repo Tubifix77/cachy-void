@@ -18,6 +18,7 @@ The base system stays 100% upstream Void binaries. Only a short, curated overlay
 | **Safe kernel updates** | SHA-256-pinned BORE patch trust, deterministic template regeneration, a config gate that catches silent `oldconfig` drops, and GRUB **one-shot** boot-testing — a bad kernel rolls back on the next power cycle with zero interaction. |
 | **Automated updater** | A fail-fast update engine that syncs `void-packages`, computes a topologically-ordered build queue, compiles, deploys with overlay priority, cycles runit services, and — because an updater should update *everything* — refreshes **Flatpak** apps too. Recovery is by recomputation from live state. |
 | **Graphical front-end** | `cachy-updater-gui` — the window you actually live with after installing (see [The updater window](#the-updater-window)). Installed by default, painted in the void-tactical palette, and a thin shell over the same tested CLI: it never has privileges of its own. |
+| **Tray indicator** | `cachy-updater-tray` — a passive presence that notices when updates, or a kernel waiting for its first boot, need you, and opens the window on a click. It reads one read-only probe and holds no privilege; it announces a thing once rather than nagging. `deploy.sh --no-tray` skips it. |
 | **32-bit ready** | Void ships 64-bit libraries only, but the Steam client and most Proton titles are 32-bit — so the install **enables Void's `multilib` repository** and adds the 32-bit driver libraries matching your GPU. It is a stock Void repo package, ledger-recorded and removed again by `--uninstall`; opt out with `--no-multilib`. |
 | **Gaming layer** | `cachy-game` launch wrapper (GameMode → PRIME → optional gamescope → game) with opt-in MangoHud, **gamescope** (frame limiting/FSR) and **vkBasalt** toggles, `earlyoom` guarding the aggressive zram posture, and `cachy-proton` to install Proton-CachyOS. |
 | **Maintenance & GPU** | `--clean` (orphans + package cache; **never** kernels, and it refuses a sweep containing a package the overlay built), `--gpu` (detected card, driver + pending update, module actually loaded, and a warning for any installed kernel with **no** out-of-tree module built). |
@@ -134,7 +135,8 @@ bootstrap.sh             Zero-touch provisioning entry point
 deploy.sh                Idempotent, reversible system installer (--with-grub/-branding/-schedule)
 system/                  Static config + runit services + gaming/branding assets:
   sysctl.d, udev, xbps.d, modprobe.d, sudoers.d, sv/   Tuning, boundaries, services
-  bin/                   cachy-game, cachy-proton, cachy-branding(-plasma), cachy-updater-gui,
+  bin/                   cachy-game, cachy-proton, cachy-branding(-plasma),
+                         cachy-updater-gui, cachy-updater-tray,
                          cachy-de-detect, cachy-de-trial
   cachy-void/            Default updater.toml template
   branding/, sddm/       void-tactical theme assets + branded login screen

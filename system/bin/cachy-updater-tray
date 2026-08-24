@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+"""Cachy-Void updater — passive tray presence.
+
+The gap this closes: the updater only ever spoke when you opened it. Everything
+it knows — pending upstream packages, a kernel staged and waiting for its trial
+boot, a BORE patch that was never approved — sat behind a window nobody had a
+reason to open. This is the smallest honest fix: a tray icon that idles, asks
+the CLI what is waiting, and marks itself when the answer is "something".
+
+What it deliberately is NOT:
+
+* It never acts. No update, no sudo, no privileged call of any kind — it reads
+  ``cachy-void-update --pending`` (a read-only probe) and, on a click, launches
+  the GUI. Every decision stays where it already lives.
+* It never re-derives policy. The CLI returns an ``attention`` list and this
+  file renders it. A tray that recomputed "is this worth a badge?" from raw
+  counts would drift from the window's own answer, and the two disagreeing
+  about whether anything is pending is worse than having no tray at all.
+* It never nags. A notification fires only when something NEW appears, once,
+  and there is no auto-open, no modal, and no repeat every interval.
+
+Two hard-won details are load-bearing. **One instance only:** a second
+autostart entry for a tray applet is how the nm-tray round produced two icons,
+so this refuses to start twice, using a local socket held by the first copy.
+**Degrade silently:** on a box with no system tray (a bare WM before its panel
+starts, a headless install) it exits 0 rather than erroring — an autostart
+entry that reliably fails is a support question waiting to happen.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+try:
+    from PyQt5.QtCore import QProcess, QTimer, Qt
+    from PyQt5.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+    from PyQt5.QtNetwork import QLocalServer, QLocalSocket
+    from PyQt5.QtWidgets import (QAction, QApplication, QMenu, QMessageBox,
+                                 QSystemTrayIcon)
+except ImportError as exc:                      # pragma: no cover - install-time
+    sys.stderr.write("cachy-updater-tray: PyQt5 is required (%s)\n" % exc)
+    sys.exit(0)                                 # not an error worth alarming about
+
+CLI = "cachy-void-update"
+GUI = "cachy-updater-gui"
+ICON_PATH = "/usr/share/cachy-void/branding/void-cachy-updater.svg"
+SOCKET_NAME = "cachy-updater-tray"
+# The ONLY CLI invocation this program makes. Named, so a test can assert
+# it: the tray must never grow an action that changes the system.
+PROBE_ARGS = ["--pending"]
+
+ACCENT = "#478061"          # "the Void" green — the brand's own accent
+WARN = "#967940"            # muted brass amber, the same token the GUI warns with
+FG = "#abb2bf"              # the icon's own arrow grey
+
+# Polling: the first check waits out the login storm rather than competing with
+# it, and the steady cadence is deliberately lazy. Upstream Void does not move
+# hourly, and a poller that fetches an index every few minutes is just rude to
+# the mirrors. Override for testing with CACHY_TRAY_INTERVAL_MIN.
+FIRST_DELAY_MS = 90_000
+DEFAULT_INTERVAL_MIN = 180
+
+# Human wording for each machine-readable reason the CLI can report. Keeping the
+# mapping here, rather than sentences in the JSON, keeps the contract between the
+# CLI and any front-end down to a short list of stable tokens.
+REASON_TEXT = {
+    "updates": "system updates are available",
+    "kernel-staged": "a new kernel is waiting for its first boot",
+    "kernel-unhealthy": "a kernel candidate did not pass its health check",
+    "bore-pin-missing": "kernel updates are paused — the BORE patch needs approval",
+}
+# Amber rather than green: these two mean "something needs you", not "there is
+# something new". Everything else is ordinary news and gets the accent.
+REASON_IS_WARNING = {"kernel-unhealthy", "bore-pin-missing"}
+
+
+def interval_ms() -> int:
+    try:
+        mins = int(os.environ.get("CACHY_TRAY_INTERVAL_MIN", DEFAULT_INTERVAL_MIN))
+    except ValueError:
+        mins = DEFAULT_INTERVAL_MIN
+    return max(1, mins) * 60_000
+
+
+class Tray(QSystemTrayIcon):
+    def __init__(self, app: QApplication):
+        super().__init__()
+        self.app = app
+        self.proc = None
+        self.seen: set = set()               # reasons already announced once
+        self.setIcon(self.build_icon())
+        self.setToolTip("Cachy-Void updater — checking…")
+
+        menu = QMenu()
+        self.act_status = QAction("checking…", menu)
+        self.act_status.setEnabled(False)    # a label, not a command
+        self.act_open = QAction("Open updater", menu)
+        self.act_open.triggered.connect(self.open_gui)
+        self.act_check = QAction("Check now", menu)
+        self.act_check.triggered.connect(self.check)
+        act_quit = QAction("Quit (until next login)", menu)
+        act_quit.triggered.connect(self.app.quit)
+        menu.addAction(self.act_status)
+        menu.addSeparator()
+        menu.addAction(self.act_open)
+        menu.addAction(self.act_check)
+        menu.addSeparator()
+        menu.addAction(act_quit)
+        self.setContextMenu(menu)
+        self.menu = menu
+
+        self.activated.connect(self.on_activated)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.check)
+        self.timer.start(interval_ms())
+        QTimer.singleShot(FIRST_DELAY_MS, self.check)
+
+    # -- appearance ---------------------------------------------------------
+    def base_pixmap(self, size: int) -> QPixmap:
+        """The product icon, or a plain accent disc if it is not installed.
+
+        The fallback is insurance only: the icon ships with the updater itself
+        (core, not branding) precisely so this path stays unused.
+        """
+        if os.path.exists(ICON_PATH):
+            icon = QIcon(ICON_PATH)
+            if not icon.isNull():
+                px = icon.pixmap(size, size)
+                if not px.isNull():
+                    return px
+        px = QPixmap(size, size)
+        px.fill(Qt.transparent)
+        p = QPainter(px)
+        p.setRenderHint(QPainter.Antialiasing)
+        # A grey ring around a small accent core - a crude echo of the real icon
+        # (grey refresh arrows, green diamond). NOT a solid accent disc: a green
+        # circle swallows the green "news" badge drawn on top of it, which is the
+        # one thing a fallback icon must not do (caught in a render).
+        pen = QPen(QColor(FG))
+        pen.setWidth(max(2, size // 10))
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        inset = max(3, size // 8)
+        p.drawEllipse(inset, inset, size - 2 * inset, size - 2 * inset)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(ACCENT))
+        core = size // 4
+        p.drawEllipse((size - core) // 2, (size - core) // 2, core, core)
+        p.end()
+        return px
+
+    def build_icon(self, badge: str = "") -> QIcon:
+        """The icon, optionally carrying a small corner dot.
+
+        A dot, not a number: a count rendered at 22px is unreadable, and the
+        tooltip and the menu's first line already say how many of what.
+        """
+        size = 64
+        px = self.base_pixmap(size)
+        if badge:
+            p = QPainter(px)
+            p.setRenderHint(QPainter.Antialiasing)
+            d = size // 3
+            p.setBrush(QColor(badge))
+            p.setPen(QColor("#1b1d1e"))      # a rim, so it reads on any panel
+            p.drawEllipse(size - d - 2, size - d - 2, d, d)
+            p.end()
+        return QIcon(px)
+
+    # -- probing -----------------------------------------------------------
+    def check(self):
+        if self.proc is not None and self.proc.state() != QProcess.NotRunning:
+            return                            # a poll is already in flight
+        self.proc = QProcess(self)
+        self.proc.finished.connect(self.on_finished)
+        self.proc.errorOccurred.connect(self.on_failed)
+        self.proc.start(CLI, list(PROBE_ARGS))
+
+    def on_failed(self, _err):
+        self.go_quiet("could not run %s" % CLI)
+
+    def on_finished(self, code, _status):
+        raw = bytes(self.proc.readAllStandardOutput()).decode("utf-8", "replace")
+        if code != 0:
+            self.go_quiet("the updater CLI reported a problem")
+            return
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            self.go_quiet("could not read the updater's answer")
+            return
+        if not isinstance(data, dict):
+            self.go_quiet("could not read the updater's answer")
+            return
+        self.render(data)
+
+    def go_quiet(self, why: str):
+        """A probe failed: say so, and badge NOTHING.
+
+        An icon that cries "updates!" because it could not read anything teaches
+        people to ignore it, which costs more than the missed notification.
+        """
+        self.setIcon(self.build_icon())
+        self.setToolTip("Cachy-Void updater — " + why)
+        self.act_status.setText(why)
+
+    def summary(self, data: dict):
+        """(lines, badge_colour) for a --pending payload. Pure, hence testable."""
+        reasons = [r for r in (data.get("attention") or []) if r in REASON_TEXT]
+        up = data.get("upstream") or {}
+        try:
+            n = int(up.get("updatable") or 0)
+            held = int(up.get("held") or 0)
+        except (TypeError, ValueError):
+            n, held = 0, 0
+
+        lines = []
+        if n:
+            lines.append("%d package%s to update%s"
+                         % (n, "" if n == 1 else "s",
+                            " (%d on hold)" % held if held else ""))
+        for r in reasons:
+            if r != "updates":
+                lines.append(REASON_TEXT[r])
+        if not lines:
+            lines.append("everything is up to date")
+        if not data.get("fresh", True):
+            lines.append("(counts from the local cache — the mirror was unreachable)")
+
+        badge = ""
+        if any(r in REASON_IS_WARNING for r in reasons):
+            badge = WARN
+        elif reasons:
+            badge = ACCENT
+        return lines, badge, reasons
+
+    def render(self, data: dict):
+        lines, badge, reasons = self.summary(data)
+        self.setIcon(self.build_icon(badge))
+        self.setToolTip("Cachy-Void updater\n" + "\n".join(lines))
+        self.act_status.setText(lines[0])
+
+        # Announce only what is NEW, once. A reason that goes away is forgotten,
+        # so it can announce itself again if it comes back.
+        fresh_reasons = [r for r in reasons if r not in self.seen]
+        self.seen = set(reasons)
+        if fresh_reasons and self.supportsMessages():
+            self.showMessage("Cachy-Void", "\n".join(lines),
+                             self.build_icon(badge), 8000)
+
+    # -- actions -----------------------------------------------------------
+    def on_activated(self, reason):
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self.open_gui()
+
+    def open_gui(self):
+        # The GUI is its own long-lived window: detach it, so quitting the tray
+        # (or the tray dying) never takes the updater window down with it.
+        if not QProcess.startDetached(GUI, []):
+            QMessageBox.warning(None, "Cachy-Void",
+                                "Could not start %s.\n\n"
+                                "The command-line updater still works:\n"
+                                "cachy-void-update --status" % GUI)
+
+
+def claim_single_instance() -> bool:
+    """True if we are the only tray. Second copies exit rather than duplicate.
+
+    A stale socket from a crashed predecessor is removed rather than inherited,
+    so a hard reboot can never leave the tray permanently unable to start.
+    """
+    probe = QLocalSocket()
+    probe.connectToServer(SOCKET_NAME)
+    if probe.waitForConnected(200):
+        probe.abort()
+        return False
+    QLocalServer.removeServer(SOCKET_NAME)
+    server = QLocalServer()
+    if not server.listen(SOCKET_NAME):
+        sys.stderr.write("cachy-updater-tray: could not claim the instance lock\n")
+    claim_single_instance.server = server        # keep it alive for the process
+    return True
+
+
+def main() -> int:
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)        # a tray app has no window to close
+
+    if not claim_single_instance():
+        sys.stderr.write("cachy-updater-tray: already running\n")
+        return 0
+
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        # Not an error: bare WMs start their panel after autostart runs, and a
+        # headless box has no tray at all. Exit 0 so nothing reports a failure.
+        sys.stderr.write("cachy-updater-tray: no system tray here — exiting\n")
+        return 0
+
+    tray = Tray(app)
+    tray.show()
+    return app.exec_()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

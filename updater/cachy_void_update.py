@@ -23,6 +23,7 @@ userspace updates (§8 preamble).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -629,6 +630,97 @@ def cmd_check(xbps, config: Config, out=print) -> int:
     return EXIT_OK
 
 
+def _count_upstream(cp) -> tuple[int, int]:
+    """Split an ``xbps-install -un`` dry-run listing into (actionable, held).
+
+    Held lines (pinned kernels etc.) are things Update rightly skips, so
+    counting them as updatable is false-alarm noise — found on the Medion,
+    where "4 updatable" were all pinned kernels. Shared by --status tier [1]
+    and --pending so the two can never disagree.
+    """
+    lines = [l for l in (cp.stdout or "").splitlines() if l.strip()]
+    n = len([l for l in lines
+             if l.split()[1:2] and l.split()[1] in ("update", "install")])
+    return n, len(lines) - n
+
+
+def cmd_pending(config: Config, out=print, run=_run) -> int:
+    """Fast, machine-readable "is anything waiting?" probe — JSON on stdout.
+
+    Why this exists next to ``--status``: that command is a *human report* and
+    an expensive one (it builds the §7.3 overlay queue, shells out to du, dkms
+    and flatpak) — the GUI shows a busy line for it. Anything that polls, such
+    as a tray indicator, needs one cheap answer instead, from the two sources
+    that cost nothing: an unprivileged xbps dry-run and the kernel state file.
+
+    Two deliberate omissions. The **overlay** queue (§7.3 M/P/O terms) is not
+    probed: it only materializes after a `--sync`, and computing it is the slow
+    part we are avoiding — the badge says "upstream has N for you" and the GUI's
+    Check remains the whole truth. **Flatpak** is skipped for the same reason
+    (a remote query per remote).
+
+    Never fails: a probe that exits non-zero would read as "the updater is
+    broken". Degradations are reported *in band* (``fresh``, ``notes``) and the
+    exit code stays EXIT_OK. ``attention`` carries the policy so a front-end
+    never has to re-derive it from counts.
+    """
+    payload: dict = {"schema": 1, "fresh": False,
+                     "upstream": {"updatable": 0, "held": 0},
+                     "kernel": {}, "attention": [], "notes": []}
+
+    # -M (--memory-sync) fetches the remote index into memory for this command
+    # only: a FRESH answer with no root and no on-disk cache write, which is the
+    # whole reason a passive poller can be honest about what is pending.
+    cp = None
+    try:
+        cp = run(["xbps-install", "-Mun"])
+        if cp.returncode == 0:
+            payload["fresh"] = True
+        else:
+            payload["notes"].append("remote index unreachable; counts are from "
+                                    "the on-disk cache and may be stale")
+            cp = run(["xbps-install", "-un"])
+    except OSError as exc:
+        payload["notes"].append(f"xbps-install unavailable: {exc}")
+        cp = None
+    if cp is not None and cp.returncode == 0:
+        n, held = _count_upstream(cp)
+        payload["upstream"] = {"updatable": n, "held": held}
+        if n:
+            payload["attention"].append("updates")
+    elif cp is not None:
+        payload["notes"].append("could not determine the upstream update count")
+
+    # Kernel: read the state store directly — no solver, no subprocess.
+    try:
+        state = grub.KernelStateStore(config.kernel_state_path).load()
+        name = state.get("state") or ""
+        cand = (state.get("candidate") or {}).get("kver") or ""
+        good = (state.get("known_good") or {}).get("kver") or ""
+        payload["kernel"] = {"state": name, "candidate": cand or None,
+                             "known_good": good or None,
+                             "mode": (state.get("grub") or {}).get("mode") or None}
+        if cand and name == "STAGED":
+            payload["attention"].append("kernel-staged")
+        elif cand and name in ("CANDIDATE_UNHEALTHY", "ROLLED_BACK"):
+            payload["attention"].append("kernel-unhealthy")
+        series = state.get("base_series") or ""
+        if config.kernel_enable and series:
+            try:
+                lock = trust.load_bore_lock(config.bore_lock_path)
+                pinned = bool(lock.patches.get(series))
+            except (trust.TrustConfigError, OSError):
+                pinned = False
+            payload["kernel"]["bore_pin"] = "pinned" if pinned else "missing"
+            if not pinned:
+                payload["attention"].append("bore-pin-missing")
+    except (grub.GrubError, OSError, ValueError) as exc:
+        payload["notes"].append(f"kernel state unreadable: {exc}")
+
+    out(json.dumps(payload, indent=2, sort_keys=True))
+    return EXIT_OK
+
+
 def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
     """Read-only overview of every update tier — the 'what's pending' view.
 
@@ -656,10 +748,7 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
         if cp.returncode == 0:
             # count only actionable entries — `hold` lines (pinned kernels etc.)
             # would otherwise show as "updatable" things Update rightly skips
-            lines = _lines(cp)
-            n = len([l for l in lines
-                     if l.split()[1:2] and l.split()[1] in ("update", "install")])
-            held = len(lines) - n
+            n, held = _count_upstream(cp)
             out(f"    {n} upstream package(s) updatable"
                 + ("" if n else " — up to date")
                 + (f"   (+{held} on hold)" if held else "")
@@ -1838,6 +1927,9 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--sync", action="store_true", help="Stage 1: rebase onto upstream")
     action.add_argument("--check", action="store_true", help="Stage 2: print the queue (read-only)")
     action.add_argument("--status", action="store_true", help="read-only overview of all update tiers")
+    action.add_argument("--pending", action="store_true",
+                       help="fast machine-readable probe (JSON): what is waiting, "
+                            "for pollers and front-ends")
     action.add_argument("--commit", action="store_true", help="Stages 3-4: build, deploy, stage kernel")
     action.add_argument("--rollback", action="store_true", help="re-pin the known-good kernel")
     action.add_argument("--clean", action="store_true",
@@ -1924,6 +2016,10 @@ def main(argv: Optional[Sequence[str]] = None, *,
                 return _park(out, "health-daemon: degraded environment — parking "
                              "with no supervisor changes (sv down to stop).")
             return EXIT_OK if outcome == HEALTHY else EXIT_KERNEL
+        if args.pending:
+            # Deliberately ahead of build_xbps(): the probe must not pay for the
+            # solver, which is what makes it cheap enough to poll.
+            return cmd_pending(config, out=out)
         if xbps is None:
             xbps = build_xbps(config)
         if args.check:

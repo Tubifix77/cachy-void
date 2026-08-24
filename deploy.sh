@@ -25,7 +25,8 @@
 # Usage:
 #   sudo ./deploy.sh [--user NAME] [--void-packages DIR] [--march ARCH]
 #                    [--jobs N] [--with-grub] [--with-schedule] [--with-branding]
-#                    [--with-networkmanager] [--no-multilib] [--brand-de LIST]
+#                    [--with-networkmanager] [--no-multilib] [--no-tray]
+#                    [--brand-de LIST]
 #                    [--hud-profile auto|full|minimal]
 #                    [--tag core|test|opt] [--simulate] [--dry-run] [--root DIR]
 #   sudo ./deploy.sh --log                 [--root DIR]
@@ -97,6 +98,9 @@ readonly PKG_WM_TRAY="pasystray udiskie cbatticon pavucontrol"
 # its own dark, un-themeable icon — never install that one).
 readonly PKG_NETWORK="NetworkManager nm-tray"
 readonly CACHY_UPDATER_GUI="/usr/local/bin/cachy-updater-gui"
+readonly CACHY_UPDATER_TRAY="/usr/local/bin/cachy-updater-tray"
+readonly CACHY_TRAY_AUTOSTART="/etc/xdg/autostart/cachy-updater-tray.desktop"
+readonly CACHY_UPDATER_ICON="/usr/share/cachy-void/branding/void-cachy-updater.svg"
 readonly BRANDING_ASSETS="/usr/share/cachy-void/branding"
 readonly CACHY_BRANDING_BIN="/usr/local/bin/cachy-branding"
 readonly CACHY_BRANDING_PLASMA="/usr/local/bin/cachy-branding-plasma"
@@ -121,6 +125,7 @@ WITH_SCHEDULE=false       # §4.9: also ENABLE the unattended cachy-void-update 
 WITH_BRANDING=false       # branding: install the void-tactical desktop toolkit + applier
 BRAND_DE=""               # branding: which desktops to brand (empty = detect, ask if >1)
 WITH_NM=false             # network: install NetworkManager + nm-tray (laptop WiFi picker)
+WITH_TRAY=true            # updater: autostart the passive tray indicator (--no-tray opts out)
 WITH_MULTILIB=true        # §3.4: enable multilib + 32-bit driver libs (--no-multilib opts out)
 HUD_PROFILE="auto"        # §3.4 MangoHud config: auto|full|minimal (minimal = legacy Optimus)
 SIMULATE=false            # WSL2/sandbox: lay down files, skip init-dependent ops
@@ -180,6 +185,7 @@ parse_args() {
             --brand-de)       BRAND_DE="${2:?--brand-de needs lxqt|plasma|all|none (comma-separated)}"; shift ;;
             --with-networkmanager) WITH_NM=true ;;
             --no-multilib)    WITH_MULTILIB=false ;;
+            --no-tray)        WITH_TRAY=false ;;
             --hud-profile)    HUD_PROFILE="${2:?--hud-profile needs auto|full|minimal}"; shift ;;
             --user)           UPDATER_USER="${2:?--user needs a value}"; shift ;;
             --void-packages)  VOID_PACKAGES="${2:?--void-packages needs a value}"; shift ;;
@@ -839,9 +845,33 @@ install_de_tools() {
 
 install_updater_gui() {
     ensure_pkg python3-PyQt5 optional
+    # Qt cannot draw an SVG without its svg image plugin, and both the window
+    # and the tray load the product icon themselves. A desktop usually pulls
+    # qt5-svg in anyway; when it has not, QIcon(...).isNull() still answers
+    # False and only the PIXMAP comes back empty, so the failure is a silent
+    # blank icon rather than an error. Optional: the fallback covers its
+    # absence, this just means the real icon is used.
+    ensure_pkg qt5-svg optional
     install_file "$SYS_DIR/bin/cachy-updater-gui" "$CACHY_UPDATER_GUI" 0755 root root
     install_file "$SYS_DIR/applications/cachy-updater.desktop" \
                  /usr/share/applications/cachy-updater.desktop 0644 root root
+    # The product icon is CORE, not branding. It used to arrive only with
+    # --with-branding while the menu entry that references it is installed
+    # always, so a core install got a menu entry (and would now get a tray)
+    # with no icon at all - the same bug class as the GUI itself once living
+    # inside install_branding. --with-branding still copies the whole asset
+    # tree over this; identical content, so the overlap is harmless.
+    install_dir "$(dirname -- "$CACHY_UPDATER_ICON")" root
+    install_file "$SRC_DIR/assets/void-cachy-updater.svg" \
+                 "$CACHY_UPDATER_ICON" 0644 root root
+    # The tray BINARY always lands (it is part of the updater product); only the
+    # AUTOSTART is opt-outable, because that is the half which changes what
+    # appears on someone's panel without being asked for.
+    install_file "$SYS_DIR/bin/cachy-updater-tray" "$CACHY_UPDATER_TRAY" 0755 root root
+    if $WITH_TRAY; then
+        install_file "$SYS_DIR/xdg/cachy-updater-tray.desktop" \
+                     "$CACHY_TRAY_AUTOSTART" 0644 root root
+    fi
 }
 
 # warn_stale_optionals — a redeploy that omits an opt-in flag leaves that
@@ -1369,6 +1399,10 @@ do_install() {
     install_gaming_userspace
 
     install_updater_gui
+    if $WITH_TRAY; then
+        log "    + tray indicator autostarted in every session (opt out: --no-tray,"
+        log "      or remove $CACHY_TRAY_AUTOSTART)"
+    fi
     install_de_tools
 
     if $WITH_BRANDING; then

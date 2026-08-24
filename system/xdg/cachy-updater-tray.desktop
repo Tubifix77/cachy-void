@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Cachy-Void updater (tray)
+Comment=Quietly notice when updates, or a kernel waiting for its first boot, need you
+# NOT gated with OnlyShowIn/NotShowIn, and that is the point. Every applier the
+# branding writes IS gated, because a look belongs to one desktop; this is the
+# product's own status surface and belongs in whichever session the user picked.
+# The bare-Openbox session reads no XDG autostart at all, so cachy-branding adds
+# its line to ~/.config/openbox/autostart instead - exactly one mechanism per
+# session, never two (the nm-tray double-icon lesson).
+Exec=cachy-updater-tray
+Icon=/usr/share/cachy-void/branding/void-cachy-updater.svg
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+Categories=System;Settings;

@@ -1726,3 +1726,125 @@ class BootPathReportTests(unittest.TestCase):
                                 grub_cfg="/boot/grub/grub.cfg"), chk)
         self.assertIn("boot check: could not read", text)
         self.assertNotIn("WARNING", text)
+
+
+class PendingProbeTests(unittest.TestCase):
+    """--pending: the cheap machine-readable probe a poller can live on.
+
+    Two properties matter more than the field list. It must NEVER exit non-zero
+    (a tray reading a non-zero code would report the updater as broken when the
+    real story is "the mirror was down"), and it must carry the *policy* in
+    `attention` so front-ends never re-derive "is this worth showing?" and drift
+    from what the window says.
+    """
+
+    def _cfg(self, tmp, **over):
+        st = grub_mod.default_state(base_series="6.12", ported_version="6.12.95_1")
+        st.update(over)
+        cfg = cli.Config(void_packages=Path("/vp"), state_dir=Path(tmp))
+        grub_mod.KernelStateStore(cfg.kernel_state_path).save(st)
+        return cfg
+
+    def _probe(self, cfg, run):
+        out = Sink()
+        rc = cli.cmd_pending(cfg, out=out, run=run)
+        return rc, json.loads(out.text())
+
+    @staticmethod
+    def _run_ok(args):
+        a = list(args)
+        if a == ["xbps-install", "-Mun"]:
+            return cp(0, "foo-1.2_3 update x86_64\nbar-2.0_1 install x86_64\n"
+                         "linux6.12-6.12.98_1 hold x86_64\n")
+        return cp(0, "")
+
+    def test_counts_actionable_updates_and_holds_separately(self):
+        cfg = self._cfg(tempfile.mkdtemp())
+        rc, d = self._probe(cfg, self._run_ok)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertEqual(d["upstream"], {"updatable": 2, "held": 1})
+        self.assertTrue(d["fresh"])
+        self.assertIn("updates", d["attention"])
+
+    def test_memory_sync_is_what_gets_run(self):
+        # -M is the whole reason this can be honest without root: it fetches the
+        # remote index into memory, so the count is fresh and nothing is written.
+        seen = []
+
+        def run(args):
+            seen.append(list(args))
+            return cp(0, "")
+        self._probe(self._cfg(tempfile.mkdtemp()), run)
+        self.assertEqual(seen[0], ["xbps-install", "-Mun"])
+
+    def test_falls_back_to_the_cache_and_says_so(self):
+        def run(args):
+            if list(args) == ["xbps-install", "-Mun"]:
+                return cp(16, "", "failed to fetch")
+            return cp(0, "foo-1.2_3 update x86_64\n")
+        rc, d = self._probe(self._cfg(tempfile.mkdtemp()), run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertFalse(d["fresh"])
+        self.assertEqual(d["upstream"]["updatable"], 1)
+        self.assertTrue(any("stale" in n for n in d["notes"]))
+
+    def test_missing_xbps_is_reported_not_raised(self):
+        def run(args):
+            raise OSError("no xbps here")
+        rc, d = self._probe(self._cfg(tempfile.mkdtemp()), run)
+        self.assertEqual(rc, cli.EXIT_OK)          # a probe never fails the caller
+        self.assertEqual(d["upstream"]["updatable"], 0)
+        self.assertNotIn("updates", d["attention"])
+        self.assertTrue(any("unavailable" in n for n in d["notes"]))
+
+    def test_staged_kernel_raises_its_own_attention_flag(self):
+        cfg = self._cfg(tempfile.mkdtemp(), state="STAGED",
+                        candidate={"kver": "6.12.103_1-cachy"},
+                        known_good={"kver": "6.12.95_1"},
+                        grub={"mode": grub_mod.MODE_EXTERNAL})
+        _, d = self._probe(cfg, self._run_ok)
+        self.assertIn("kernel-staged", d["attention"])
+        self.assertEqual(d["kernel"]["candidate"], "6.12.103_1-cachy")
+        self.assertEqual(d["kernel"]["mode"], "external")
+
+    def test_unhealthy_candidate_is_a_distinct_flag(self):
+        # A front-end paints this differently from "there are updates", so the
+        # two must never collapse into one token.
+        cfg = self._cfg(tempfile.mkdtemp(), state="CANDIDATE_UNHEALTHY",
+                        candidate={"kver": "6.12.103_1-cachy"},
+                        known_good={"kver": "6.12.95_1"})
+        _, d = self._probe(cfg, self._run_ok)
+        self.assertIn("kernel-unhealthy", d["attention"])
+        self.assertNotIn("kernel-staged", d["attention"])
+
+    def test_quiet_system_raises_no_update_flag(self):
+        # Nothing pending must mean no badge. (The BORE-pin flag is not asserted
+        # either way here: bore.lock lives outside the temp state dir, so its
+        # presence depends on the checkout, not on this probe.)
+        def run(args):
+            return cp(0, "")
+        _, d = self._probe(self._cfg(tempfile.mkdtemp()), run)
+        self.assertEqual(d["upstream"]["updatable"], 0)
+        self.assertNotIn("updates", d["attention"])
+
+    def test_unreadable_kernel_state_degrades_in_band(self):
+        cfg = cli.Config(void_packages=Path("/vp"),
+                         state_dir=Path("/nonexistent-cachy-state"))
+        rc, d = self._probe(cfg, self._run_ok)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("updates", d["attention"])   # the upstream half still works
+
+    def test_output_is_a_single_json_document(self):
+        # The contract is machine-readable: no banner, no trailing prose.
+        out = Sink()
+        cli.cmd_pending(self._cfg(tempfile.mkdtemp()), out=out, run=self._run_ok)
+        json.loads(out.text())                     # would raise on any extra text
+        self.assertEqual(out.text().count('"schema"'), 1)
+
+    def test_pending_is_wired_into_main_without_a_solver(self):
+        # If --pending ever needed the solver it would stop being cheap; passing
+        # xbps=None proves the dispatch happens before build_xbps().
+        out = Sink()
+        rc = cli.main(["--pending"], config=self._cfg(tempfile.mkdtemp()), out=out)
+        self.assertEqual(rc, cli.EXIT_OK)
+        json.loads(out.text())

@@ -68,38 +68,14 @@ Omarchy 4 was surveyed for anything adoptable (most of it is self-maintained
 desktop-replacement — disqualified by §4 by construction). Two ideas survived the
 filter, and both land in the updater — the one place where the maintenance is
 already ours and "make it more user-friendly" cannot cross the philosophy. They
-are **two features, not one**, but they share one piece of groundwork.
+were **two features, not one**, sharing one piece of groundwork; the tray half
+is built, so what follows is the snapshot half.
 
-**Shared groundwork — a fast, machine-readable status surface.** `--status` today
-is a human-readable overview that "can take a while" (the GUI shows a busy line
-for it). Both features below want a cheap
-read-only probe: pending upstream count, kernel drift, staged candidate,
-snapshot inventory — as JSON (say `--pending`), answering in a second. Single
-source of truth stays the CLI; the GUI and the tray both consume it. (The
-kernel/boot-state *readouts* this section used to list are built; what is left
-is the fast machine-readable surface, which is now this section's groundwork.)
-
-**Idea 1 — a passive "updates pending" tray presence.** Today the updater only
-speaks when opened. A small tray icon (our own PyQt code — the toolkit is already
-a dependency, so §4 does not apply) that idles, periodically probes, shows a
-quiet badge when updates are pending, and opens `cachy-updater-gui` on click.
-Facts that make it cheap, all verified:
-  - **The probe needs no root and no staleness workaround**: `xbps-install -Mun`
-    (`-M, --memory-sync`) fetches the remote index *in memory*, unprivileged,
-    ignoring the on-disk cache — a fresh dry-run update list with zero system
-    writes. `-u` respects holds, so pinned kernels never cause a stuck badge.
-    Poll every few hours; never hammer mirrors.
-  - Overlay-side pending (the §7.3 M/P/O terms) deliberately stays out of the
-    probe — those only materialize after a sync anyway; the badge says "upstream
-    has N for you", the GUI's Check remains the full truth.
-  - Sessions: one ungated XDG autostart entry (this is a product surface wanted
-    in *every* desktop — the opposite of the branding rule) covers LXQt and
-    Plasma; the bare-Openbox session runs no XDG autostart, so its line goes in
-    the branding-managed `~/.config/openbox/autostart` (tint2 already provides
-    the tray there). Heed the nm-tray lesson: exactly one autostart mechanism
-    per session, never two.
-  - Notifications (libnotify) at most once per new-updates transition; never
-    nag, never auto-open. The icon must read as void-tactical, not as alarm.
+**Groundwork already in place.** `--pending` (architecture.md §4.10) is the fast
+machine-readable probe both ideas wanted, and the tray indicator that consumed
+it first is built. What remains of this section is the snapshot half — and it can
+extend the same probe rather than inventing a second one: a snapshot inventory
+would slot into that payload beside the upstream and kernel blocks.
 
 **Idea 2 — a snapshot restore surface ("go back to before an update").** §9.5
 takes snapshots religiously; §5 documents restoring one — but as a manual

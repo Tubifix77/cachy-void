@@ -470,7 +470,8 @@ selects it by accident.
 `cachy-branding` therefore writes a minimal `~/.config/openbox/autostart` so the
 bare session is usable and on-brand without dragging in a whole DE: **xsettingsd**
 (first — see below), wallpaper (via `feh`), the Picom compositor, a **tint2
-panel**, the Conky telemetry, and — when installed — **nm-tray** — apps come from the openbox root menu or Super+Space (rofi).
+panel**, the Conky telemetry, and — when installed — **nm-tray** and the
+**updater's tray indicator** — apps come from the openbox root menu or Super+Space (rofi).
 
 **Why xsettingsd comes first:** a full desktop runs an XSETTINGS manager (LXQt
 does); a bare WM does not. Without one, Qt and GTK apps resolve **no icon theme**,
@@ -509,6 +510,18 @@ which provides the system tray it docks into; without that ordering the icon can
 silently fail to appear. This file runs **only** under the
 bare Openbox session; LXQt uses its own XDG autostart and ignores it, so nothing
 double-starts.
+
+**The updater's tray indicator is here for the same reason, with one difference
+worth noting.** `cachy-updater-tray` (architecture.md §4.10) ships an
+`/etc/xdg/autostart` entry that is deliberately **ungated** — no `OnlyShowIn`,
+which is the opposite of the rule every applier follows — because it is the
+product's own status surface rather than a look, and it belongs in whichever
+session the user picked. A bare WM still reads no XDG autostart, so its line is
+written here too, after tint2 for the same tray-ordering reason as nm-tray. That
+is exactly one start mechanism per session and never two: two would give two
+icons, which is the nm-tray finding above, learned the hard way. (The tray also
+refuses to start twice on its own, so a hand-added third entry cannot double it
+either.)
 
 The **tint2 panel is not optional polish — it's what makes the session usable.**
 Without a taskbar, a launched window can open behind another (or, on a multi-monitor
