@@ -582,16 +582,24 @@ class HeadlineTests(unittest.TestCase):
                        "    unknown — run --sync to refresh the repository list\n")
         self.assertEqual(t, "Everything is up to date")
 
-    def test_everything_at_once_reads_as_one_line(self):
+    def test_each_clause_gets_its_own_line(self):
+        """Counts and the kernel instruction answer different questions.
+
+        Run together behind a separator, the kernel line started mid-line
+        wherever the wrap happened to fall — "New" stranded at the end of the
+        counts (owner: push it down to the next line). One clause per line.
+        """
         t = self._head(self.SPLIT +
                        "    2 to rebuild, 1 to deploy\n"
                        "    kernel: ported base is old — port linux-cachy\n"
                        "    3 app(s) updatable\n")
-        for bit in ("12 package updates, 8 driver updates (4 on hold)",
-                    "2 overlay packages to rebuild", "Update kernel",
-                    "3 Flatpak app(s)"):
-            self.assertIn(bit, t)
-        self.assertEqual(t.count("·"), 3)
+        lines = t.splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(lines[0], "12 package updates, 8 driver updates (4 on hold)")
+        self.assertEqual(lines[1], "2 overlay packages to rebuild")
+        self.assertTrue(lines[2].startswith("New BORE kernel"), lines[2])
+        self.assertEqual(lines[3], "3 Flatpak app(s)")
+        self.assertNotIn("·", t)                 # the line break IS the separator
 
     def test_the_busiest_case_stays_breakable(self):
         # Every ordinary space is a legal wrap point, so a busy machine lays out

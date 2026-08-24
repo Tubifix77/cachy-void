@@ -732,7 +732,11 @@ class Updater(QWidget):
             parts.append(f"{m.group(1)} Flatpak app(s)")
 
         if parts:
-            self.headline.setText(_glue_atoms("  ·  ".join(parts)))
+            # One clause per LINE, not one flowing sentence: the counts and
+            # the kernel instruction are answers to different questions, and
+            # running them together behind a separator made the second one
+            # start mid-line wherever the wrap happened to fall.
+            self.headline.setText(_glue_atoms(chr(10).join(parts)))
             self.headline.setObjectName("headline")
         else:
             self.headline.setText("Everything is up to date")
