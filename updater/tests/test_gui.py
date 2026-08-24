@@ -499,7 +499,20 @@ class HeadlineTests(unittest.TestCase):
     def _head(self, text):
         self.w.status.setPlainText(text)
         self.w._update_pin_banner()
-        return self.w.headline.text()
+        # Clauses are glued with hard spaces so a wrap cannot land inside one;
+        # normalise them here, since these tests are about wording.
+        return self.w.headline.text().replace("\u00a0", " ")
+
+    def test_a_clause_cannot_be_broken_across_lines(self):
+        self.w.status.setPlainText(
+            "    20 upstream package(s) updatable   (+4 on hold)\n"
+            "    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
+            "(restart apps to use it)\n")
+        self.w._update_pin_banner()
+        raw = self.w.headline.text()
+        # Ordinary spaces survive ONLY as the separators between clauses.
+        self.assertEqual(raw.count(" "), raw.count("  ·  ") * 4)
+        self.assertIn("\u00a0", raw)
 
     def test_the_package_count_leads(self):
         t = self._head("[1] System (upstream Void)\n"
@@ -545,7 +558,11 @@ class HeadlineTests(unittest.TestCase):
         t = self._head("    3 upstream package(s) updatable\n"
                        "    graphics driver update: mesa 26.1.7_1 -> 26.1.8_1 "
                        "(restart apps to use it)\n")
-        self.assertIn("new mesa 26.1.8_1 — restart apps to use it", t)
+        self.assertIn("graphics driver:", t)
+        self.assertIn("mesa", t)
+        self.assertIn("26.1.8", t)
+        self.assertNotIn("26.1.8_1", t)      # the _1 revision is noise here
+        self.assertIn("restart apps to use it", t)
         self.assertNotIn("reboot", t)
 
     def test_a_kernel_module_driver_says_reboot_instead(self):
@@ -554,7 +571,9 @@ class HeadlineTests(unittest.TestCase):
         t = self._head("    3 upstream package(s) updatable\n"
                        "    graphics driver update: nvidia470 470.256.02_1 -> "
                        "470.260.00_1 (reboot to load it)\n")
-        self.assertIn("new nvidia470 470.260.00_1 — reboot to load it", t)
+        self.assertIn("graphics driver:", t)
+        self.assertIn("nvidia470", t)
+        self.assertIn("reboot to load it", t)
         self.assertNotIn("restart apps", t)
 
     def test_two_pending_drivers_are_both_named(self):
@@ -562,8 +581,9 @@ class HeadlineTests(unittest.TestCase):
                        "(restart apps to use it)\n"
                        "    graphics driver update: nvidia470 470.256.02_1 -> "
                        "470.260.00_1 (reboot to load it)\n")
-        self.assertIn("new mesa 26.1.8_1", t)
-        self.assertIn("new nvidia470 470.260.00_1", t)
+        self.assertIn("mesa", t)
+        self.assertIn("nvidia470", t)
+        self.assertEqual(t.count("graphics driver:"), 2)
 
     def test_flatpak_apps_are_included_since_update_applies_them(self):
         t = self._head("    0 upstream package(s) updatable — up to date\n"
@@ -582,7 +602,7 @@ class HeadlineTests(unittest.TestCase):
                        "(restart apps to use it)\n"
                        "    kernel: ported base is old — port linux-cachy\n")
         for bit in ("20 packages to update", "2 overlay packages to rebuild",
-                    "new mesa 26.1.8_1", "a newer BORE kernel to build"):
+                    "mesa", "a newer BORE kernel to build"):
             self.assertIn(bit, t)
         self.assertEqual(t.count("·"), 3)          # separators, not sentences
 

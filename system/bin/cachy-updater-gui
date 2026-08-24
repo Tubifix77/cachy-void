@@ -684,15 +684,15 @@ class Updater(QWidget):
                 parts.append(f"{rb} overlay package{'' if rb == 1 else 's'} to rebuild")
             elif dep:
                 parts.append(f"{dep} to deploy")
-        # Named separately, and named SPECIFICALLY. "a graphics driver update"
-        # was the first attempt and it said nothing a user did not already know
-        # (owner: "what does that mean??"). What is useful is which driver, to
-        # what version, and what has to happen before it counts — and that last
-        # part is not the same for a userspace GL stack as for a kernel module,
-        # so the CLI decides it and this lifts the answer verbatim.
+        # Named specifically, and led by WHAT IT IS. Two earlier attempts failed
+        # the same reader test: "a graphics driver update" said nothing at all,
+        # and "new mesa 26.1.8_1" assumed you know what mesa is. Leading with
+        # "graphics driver:" explains the package by position, and the package
+        # revision suffix (_1) is dropped because it is noise to a human — the
+        # detail pane below still carries the exact pkgver.
         for pkg, ver, hint in re.findall(
                 r"graphics driver update: (\S+) \S+ -> (\S+) \(([^)]+)\)", text):
-            parts.append(f"new {pkg} {ver} — {hint}")
+            parts.append(f"graphics driver: {pkg} {ver.split('_')[0]} — {hint}")
         # A kernel BUMP belongs to a different button — Update deliberately
         # leaves the kernel alone — so it is named rather than folded into the
         # package count.
@@ -703,7 +703,13 @@ class Updater(QWidget):
             parts.append(f"{m.group(1)} Flatpak app(s)")
 
         if parts:
-            self.headline.setText("  ·  ".join(parts))
+            # Wrap only BETWEEN clauses, never inside one: a line that breaks
+            # after "graphics driver:" and orphans the version reads as two
+            # unrelated fragments (owner asked for exactly this). Hard spaces
+            # inside each clause make it unbreakable; the separators keep
+            # ordinary spaces, so those are the only places a wrap can land.
+            glued = [p.replace(" ", "\u00a0") for p in parts]
+            self.headline.setText("  ·  ".join(glued))
             self.headline.setObjectName("headline")
         else:
             self.headline.setText("Everything is up to date")
