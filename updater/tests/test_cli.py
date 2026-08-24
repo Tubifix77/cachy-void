@@ -1594,3 +1594,135 @@ class HealthDaemonConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StagedCandidateReadoutTests(unittest.TestCase):
+    """§8.6 staged-candidate visibility: a kernel that is built, installed and
+    waiting for its trial boot used to appear NOWHERE in --status. The advice
+    printed with it must match the host's boot class — promising an automatic
+    return to the known-good kernel on a host that cannot do one is worse than
+    saying nothing."""
+
+    def _state(self, tmp, **over):
+        st = grub_mod.default_state(base_series="6.12", ported_version="6.12.95_1")
+        st.update(over)
+        cfg = cli.Config(void_packages=Path("/vp"), state_dir=Path(tmp))
+        grub_mod.KernelStateStore(cfg.kernel_state_path).save(st)
+        return cfg
+
+    def _report(self, cfg):
+        out = Sink()
+        cli._kernel_report(cfg, FakeXbps(), out)
+        return out.text()
+
+    def test_staged_oneshot_promises_the_automatic_return(self):
+        tmp = tempfile.mkdtemp()
+        cfg = self._state(
+            tmp, state="STAGED",
+            candidate={"kver": "6.12.103_1-cachy"},
+            known_good={"kver": "6.12.95_1"},
+            grub={"mode": grub_mod.MODE_ONESHOT})
+        t = self._report(cfg)
+        self.assertIn("kernel candidate: 6.12.103_1-cachy is staged", t)
+        self.assertIn("awaiting its trial boot", t)
+        self.assertIn("next power cycle returns to 6.12.95_1", t)
+
+    def test_staged_external_says_the_fallback_is_manual(self):
+        # The multi-boot truth: no one-shot exists here, so the honest line is
+        # "pick it yourself in the foreign menu".
+        tmp = tempfile.mkdtemp()
+        cfg = self._state(
+            tmp, state="STAGED",
+            candidate={"kver": "6.12.103_1-cachy"},
+            known_good={"kver": "6.12.95_1"},
+            grub={"mode": grub_mod.MODE_EXTERNAL})
+        t = self._report(cfg)
+        self.assertIn("is staged", t)
+        self.assertIn("foreign bootloader owns the menu", t)
+        self.assertIn("pick 6.12.95_1 there yourself", t)
+        self.assertNotIn("on its own", t)          # never promise the one-shot
+
+    def test_confirming_says_it_is_on_trial(self):
+        tmp = tempfile.mkdtemp()
+        cfg = self._state(tmp, state="CONFIRMING",
+                          candidate={"kver": "6.12.103_1-cachy"},
+                          known_good={"kver": "6.12.95_1"},
+                          grub={"mode": grub_mod.MODE_EXTERNAL})
+        self.assertIn("ON TRIAL", self._report(cfg))
+
+    def test_unhealthy_candidate_is_reported_as_frozen(self):
+        tmp = tempfile.mkdtemp()
+        cfg = self._state(tmp, state="CANDIDATE_UNHEALTHY",
+                          candidate={"kver": "6.12.103_1-cachy"},
+                          known_good={"kver": "6.12.95_1"},
+                          grub={"mode": grub_mod.MODE_EXTERNAL})
+        t = self._report(cfg)
+        self.assertIn("did NOT pass", t)
+        self.assertIn("userspace updates continue", t)
+
+    def test_tracking_state_says_nothing_about_candidates(self):
+        # No candidate in flight => no noise. The readout must not invent state.
+        tmp = tempfile.mkdtemp()
+        cfg = self._state(tmp, state="TRACKING", known_good={"kver": "6.12.95_1"})
+        self.assertNotIn("kernel candidate:", self._report(cfg))
+
+
+class BootPathReportTests(unittest.TestCase):
+    """§8.6b: after staging, say whether the kernel can actually be booted."""
+
+    def _stage(self, layout, chk):
+        import tempfile as _tf
+        cfg = cli.Config(void_packages=Path("/vp"), state_dir=Path(_tf.mkdtemp()))
+        xbps = FakeXbps(installed=["linux-cachy"],
+                        inst_ver={"linux-cachy": "6.12.103_1"},
+                        files_map={"linux-cachy": ["/boot/vmlinuz-6.12.103_1-cachy"]})
+
+        def run(args, cwd=None):
+            if list(args)[:2] == ["uname", "-r"]:
+                return cp(0, "6.12.95_1\n")
+            return cp(0, "")
+        orig = grub_mod.verify_bootable
+        seen = {}
+
+        def fake(*, layout, kver, **kw):
+            seen["kver"] = kver
+            seen["mode"] = layout.mode
+            return chk
+        grub_mod.verify_bootable = fake
+        try:
+            out = Sink()
+            rc = cli._stage_kernel(cfg, xbps, out, run, layout=layout)
+        finally:
+            grub_mod.verify_bootable = orig
+        return rc, out.text(), seen
+
+    def test_external_staging_reports_the_boot_path(self):
+        chk = grub_mod.BootCheck(grub_mod.BOOT_OK, "boot-symlink",
+                                 "a /boot symlink now points at 6.12.103_1-cachy",
+                                 hint="booting an OLDER kernel means repointing it")
+        rc, text, seen = self._stage(
+            grub_mod.BootLayout(grub_mod.MODE_EXTERNAL, "foreign"), chk)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertEqual(seen["kver"], "6.12.103_1-cachy")   # the CANDIDATE, not pkgver
+        self.assertIn("boot check: a /boot symlink now points at", text)
+        self.assertIn("repointing it", text)                 # the hint is surfaced
+
+    def test_absent_entry_is_flagged_as_a_warning(self):
+        chk = grub_mod.BootCheck(grub_mod.BOOT_ABSENT, "grub-menu",
+                                 "grub.cfg has NO boot entry for 6.12.103_1-cachy",
+                                 hint="re-run the hooks")
+        rc, text, _ = self._stage(
+            grub_mod.BootLayout(grub_mod.MODE_MANUAL_UNSAFE, "GRUB_DEFAULT not saved",
+                                grub_cfg="/boot/grub/grub.cfg"), chk)
+        self.assertIn("WARNING — boot check:", text)
+        self.assertIn("NO boot entry", text)
+
+    def test_unknown_is_not_a_warning(self):
+        # "we could not look" must never be styled like "your kernel is broken".
+        chk = grub_mod.BootCheck(grub_mod.BOOT_UNKNOWN, "grub-menu",
+                                 "could not read /boot/grub/grub.cfg")
+        rc, text, _ = self._stage(
+            grub_mod.BootLayout(grub_mod.MODE_MANUAL_UNSAFE, "GRUB_DEFAULT not saved",
+                                grub_cfg="/boot/grub/grub.cfg"), chk)
+        self.assertIn("boot check: could not read", text)
+        self.assertNotIn("WARNING", text)

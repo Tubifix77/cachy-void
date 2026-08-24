@@ -314,3 +314,114 @@ class KernelStateStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VerifyBootableTests(unittest.TestCase):
+    """§8.6b — the read-only "can this kernel actually boot?" probe.
+
+    The distinction these tests pin down: BOOT_ABSENT is a warning about the
+    system, BOOT_UNKNOWN is an admission about us. Conflating them would either
+    cry wolf on an unreadable file or stay silent on a genuinely missing entry.
+    """
+
+    def _grub_layout(self, mode=MODE_ONESHOT):
+        return BootLayout(mode, "test", grub_cfg="/boot/grub/grub.cfg",
+                          default_grub="/etc/default/grub")
+
+    def test_grub_entry_present_is_ok(self):
+        chk = grub.verify_bootable(layout=self._grub_layout(), kver="6.12.35_1",
+                                   read_text=lambda p: GRUB_CFG)
+        self.assertEqual(chk.status, grub.BOOT_OK)
+        self.assertEqual(chk.mechanism, "grub-menu")
+        self.assertEqual(chk.refs,
+                         ["gnulinux-advanced-UUID>gnulinux-6.12.35_1-advanced-UUID"])
+        self.assertEqual(chk.hint, "")          # nothing for the operator to do
+
+    def test_grub_entry_missing_warns_and_names_the_hook(self):
+        # The failure this exists to catch: kernel installed, 50-grub never ran
+        # (or /boot was not mounted), so the menu cannot offer the new kernel.
+        chk = grub.verify_bootable(layout=self._grub_layout(),
+                                   kver="6.12.103_1-cachy",
+                                   read_text=lambda p: GRUB_CFG)
+        self.assertEqual(chk.status, grub.BOOT_ABSENT)
+        self.assertIn("NO boot entry", chk.detail)
+        self.assertIn("50-grub", chk.hint)
+        self.assertIn("xbps-reconfigure", chk.hint)
+
+    def test_unreadable_grub_cfg_is_unknown_never_absent(self):
+        def boom(_p):
+            raise PermissionError(13, "Permission denied")
+        chk = grub.verify_bootable(layout=self._grub_layout(), kver="6.12.35_1",
+                                   read_text=boom)
+        self.assertEqual(chk.status, grub.BOOT_UNKNOWN)
+        self.assertIn("could not read", chk.detail)
+        self.assertNotIn("NO boot entry", chk.detail)
+
+    def test_external_with_boot_symlink_is_ok(self):
+        # The testbed's shape: a hand-made evergreen symlink the foreign menu
+        # loads. Matching is by VERSION in the target, so any operator naming
+        # convention is found — Void itself defines no such mechanism.
+        entries = ["vmlinuz-6.12.103_1-cachy", "vmlinuz-current", "config-x", "grub"]
+        links = {"/boot/vmlinuz-current": "vmlinuz-6.12.103_1-cachy"}
+
+        def readlink(p):
+            if p in links:
+                return links[p]
+            raise OSError(22, "Invalid argument")
+
+        chk = grub.verify_bootable(layout=BootLayout(grub.MODE_EXTERNAL, "test"),
+                                   kver="6.12.103_1-cachy",
+                                   listdir=lambda d: entries, readlink=readlink)
+        self.assertEqual(chk.status, grub.BOOT_OK)
+        self.assertEqual(chk.mechanism, "boot-symlink")
+        self.assertIn("vmlinuz-current -> vmlinuz-6.12.103_1-cachy", chk.detail)
+        self.assertIn("OLDER", chk.hint)        # the multi-boot truth, said out loud
+
+    def test_external_without_symlink_is_unknown_not_ok(self):
+        # No symlink: the kernel exists only under its versioned name, and a
+        # foreign menu entry naming a versioned path still boots the OLD one.
+        # We cannot see that menu, so we must not claim either outcome.
+        def readlink(_p):
+            raise OSError(22, "Invalid argument")
+        chk = grub.verify_bootable(layout=BootLayout(grub.MODE_EXTERNAL, "test"),
+                                   kver="6.12.103_1-cachy",
+                                   listdir=lambda d: ["vmlinuz-6.12.103_1-cachy"],
+                                   readlink=readlink)
+        self.assertEqual(chk.status, grub.BOOT_UNKNOWN)
+        self.assertEqual(chk.mechanism, "versioned-only")
+        self.assertIn("BEFORE rebooting", chk.hint)
+
+    def test_external_symlink_for_a_different_kernel_does_not_count(self):
+        # The stale-symlink trap: current still points at the OLD kernel, which
+        # is precisely when the user must be told to look before rebooting.
+        def readlink(p):
+            if p == "/boot/vmlinuz-current":
+                return "vmlinuz-6.12.95_1"
+            raise OSError(22, "Invalid argument")
+        chk = grub.verify_bootable(layout=BootLayout(grub.MODE_EXTERNAL, "test"),
+                                   kver="6.12.103_1-cachy",
+                                   listdir=lambda d: ["vmlinuz-current"],
+                                   readlink=readlink)
+        self.assertEqual(chk.status, grub.BOOT_UNKNOWN)
+        self.assertEqual(chk.mechanism, "versioned-only")
+
+    def test_unreadable_boot_dir_degrades_quietly(self):
+        def boom(_d):
+            raise PermissionError(13, "Permission denied")
+        chk = grub.verify_bootable(layout=BootLayout(grub.MODE_EXTERNAL, "test"),
+                                   kver="6.12.103_1-cachy",
+                                   listdir=boom, readlink=lambda p: "x")
+        self.assertEqual(chk.status, grub.BOOT_UNKNOWN)
+
+    def test_wsl_skip_verifies_nothing(self):
+        chk = grub.verify_bootable(layout=BootLayout(MODE_SKIP, "wsl"), kver="6.12.35_1")
+        self.assertEqual(chk.status, grub.BOOT_UNKNOWN)
+        self.assertEqual(chk.mechanism, "none")
+        self.assertIn("nothing to verify", chk.detail)
+
+    def test_manual_unsafe_still_checks_the_menu(self):
+        # Staging REFUSES here, but the question "is the kernel in the menu?"
+        # is still answerable and still worth answering.
+        chk = grub.verify_bootable(layout=self._grub_layout(MODE_MANUAL_UNSAFE),
+                                   kver="6.12.34_1", read_text=lambda p: GRUB_CFG)
+        self.assertEqual(chk.status, grub.BOOT_OK)

@@ -113,6 +113,19 @@ QLabel#noticeIcon {{
 }}
 QLabel#noticeText {{ color: {FG}; }}
 
+/* Informational sibling of the notice card: same shape, accent instead of
+   amber, because "a kernel is waiting for its trial boot" is news, not a
+   problem. Amber here would read as "something is wrong" and train the user
+   to ignore the colour that means exactly that. */
+QFrame#infoNotice {{
+    background: {PANEL}; border: 1px solid #333a44;
+    border-left: 3px solid {ACCENT}; border-radius: 5px;
+}}
+QFrame#infoNotice QLabel {{ background: transparent; }}
+QLabel#infoNoticeIcon {{
+    color: {ACCENT}; font-size: 18px; font-weight: bold; padding: 0 2px;
+}}
+
 QProgressBar {{ background: {PANEL}; border: none; border-radius: 3px; }}
 QProgressBar::chunk {{ background: {ACCENT}; border-radius: 3px; }}
 
@@ -301,6 +314,28 @@ class Updater(QWidget):
         nb.addWidget(self.pin_label, 1)
         nb.addWidget(self.btn_pin, 0, Qt.AlignVCenter)
         root.addWidget(self.notice)
+
+        # -- staged-kernel notice (§8.6) ---------------------------------------
+        # A kernel that is built, installed and waiting for its trial boot is a
+        # state the user is LIVING in; until now it existed only in a state file.
+        # No button belongs here on purpose: the updater never reboots anyone,
+        # so the card informs and stops. The text (including which fallback
+        # applies on this host) comes straight from --status, so the CLI stays
+        # the single source of truth.
+        self.kernel_notice = QFrame()
+        self.kernel_notice.setObjectName("infoNotice")
+        kb = QHBoxLayout(self.kernel_notice)
+        kb.setContentsMargins(12, 10, 12, 10)
+        kb.setSpacing(10)
+        kicon = QLabel("ℹ")      # U+2139: has a glyph where U+23F1 does not
+        kicon.setObjectName("infoNoticeIcon")
+        self.kernel_label = QLabel()
+        self.kernel_label.setObjectName("noticeText")
+        self.kernel_label.setWordWrap(True)
+        kb.addWidget(kicon, 0, Qt.AlignVCenter)
+        kb.addWidget(self.kernel_label, 1)
+        self.kernel_notice.hide()
+        root.addWidget(self.kernel_notice)
         self.notice.hide()
 
         # -- status overview (read-only --status output) ------------------------
@@ -592,11 +627,42 @@ class Updater(QWidget):
 
     def _update_pin_banner(self):
         """Show the §8.3a notice iff --status flagged a missing trust pin
-        (keyed on the CLI's stable "BORE pin: MISSING" marker), and the
-        rollback button iff there is a different known-good kernel to go to."""
+        (keyed on the CLI's stable "BORE pin: MISSING" marker), the rollback
+        button iff there is a different known-good kernel to go to, and the
+        staged-kernel card iff a candidate is waiting (marker: "kernel
+        candidate:")."""
         text = self.status.toPlainText()
         self.notice.setVisible("BORE pin: MISSING" in text)
         self.btn_rollback.setVisible("rollback available" in text)
+        self._update_kernel_notice(text)
+
+    def _update_kernel_notice(self, text):
+        """Lift the CLI's "kernel candidate:" lines into the info card.
+
+        Deliberately a *transcription*, not a re-derivation: the CLI already
+        decided what is true for this host's boot class (one-shot fallback vs
+        "pick it in the foreign menu"), and a second opinion computed in the GUI
+        is how the two drift apart.
+        """
+        keep = []
+        for line in text.splitlines():
+            if line.strip().startswith("kernel candidate:"):
+                keep = [line.strip()[len("kernel candidate:"):].strip()]
+            elif keep and line.startswith("      ") and line.strip():
+                keep.append(line.strip())      # the indented boot-class advice
+            elif keep:
+                break
+        if keep:
+            head = "Kernel " + keep[0]
+            # One flowing paragraph: the label word-wraps, and the boot-class
+            # advice belongs in the same breath as the kernel it applies to.
+            # The CLI's sub-lines are lowercase clauses under a bullet, so they
+            # get a sentence break here rather than being run on with a space.
+            tail = " ".join(keep[1:]).strip()
+            if tail:
+                tail = ". " + tail[0].upper() + tail[1:]
+            self.kernel_label.setText(head + tail)
+        self.kernel_notice.setVisible(bool(keep))
 
     def rollback(self):
         self._run(["--rollback"], self.out, done=lambda _c: self.check(),

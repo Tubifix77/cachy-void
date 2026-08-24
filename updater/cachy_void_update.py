@@ -252,12 +252,39 @@ def _kernel_report(config: Config, xbps, out) -> None:
         except trust.TrustConfigError as exc:
             out(f"BORE pin: bore.lock unusable ({exc})")
 
+        good = (state.get("known_good") or {}).get("kver") or ""
+        # Staged-candidate visibility (§8.6): between "kernel built" and
+        # "kernel proven" the candidate sits in the state store and appeared
+        # NOWHERE — the one kernel state a user could not see. What happens if
+        # it misbehaves depends entirely on the boot class, so say which one
+        # applies here rather than describing a rollback the host cannot do.
+        name = state.get("state") or ""
+        cand = (state.get("candidate") or {}).get("kver") or ""
+        mode = (state.get("grub") or {}).get("mode") or ""
+        if cand and name == "STAGED":
+            out(f"kernel candidate: {cand} is staged, awaiting its trial boot "
+                "— reboot when convenient (the updater never reboots you)")
+            if mode == grub.MODE_ONESHOT:
+                out(f"  if it fails to boot, the next power cycle returns to "
+                    f"{good or 'the known-good kernel'} on its own (one-shot)")
+            elif mode == grub.MODE_EXTERNAL:
+                out(f"  a foreign bootloader owns the menu: if it misbehaves, pick "
+                    f"{good or 'the known-good kernel'} there yourself")
+            elif mode:
+                out(f"  the boot default stays on {good or 'the known-good kernel'}; "
+                    "select the candidate in the menu to try it")
+        elif cand and name == "CONFIRMING":
+            out(f"kernel candidate: {cand} booted and is ON TRIAL — the confirm "
+                "service promotes it once its health battery passes")
+        elif cand and name in ("CANDIDATE_UNHEALTHY", "ROLLED_BACK"):
+            out(f"kernel candidate: {cand} did NOT pass ({name}) — the kernel path "
+                "is frozen until you acknowledge it; userspace updates continue")
+
         # Recovery visibility: if the running kernel is not the recorded
         # known-good one, say that going back is possible. The front-end keys
         # its rollback button off the exact substring "rollback available" —
         # otherwise recovery stays a CLI-only secret, which is no use to the
         # person whose kernel just misbehaved.
-        good = (state.get("known_good") or {}).get("kver") or ""
         try:
             running = os.uname().release
         except (AttributeError, OSError):
@@ -427,6 +454,26 @@ def _snapshot_services(run, service_root: str = "/var/service") -> list[str]:
     return up
 
 
+def _report_boot_path(layout, kver: str, out) -> None:
+    """§8.6b: say out loud whether the freshly installed kernel can be booted.
+
+    Read-only and never fatal — a probe that cannot look degrades to a stated
+    reason, because "we could not check" must never read as "your kernel is
+    broken". This is the step between "installed" and "bootable" that nothing
+    used to verify, and on a foreign-bootloader host it is also where the
+    multi-boot truth gets said instead of inferred.
+    """
+    try:
+        chk = grub.verify_bootable(layout=layout, kver=kver)
+    except OSError as exc:
+        out(f"boot check skipped: {exc}")
+        return
+    prefix = "WARNING — boot check" if chk.status == grub.BOOT_ABSENT else "boot check"
+    out(f"{prefix}: {chk.detail}")
+    if chk.hint:
+        out(f"  {chk.hint}")
+
+
 def _stage_kernel(config: Config, xbps, out, run, layout=None) -> int:
     """§8.6: stage the freshly deployed kernel for a one-shot trial boot.
 
@@ -444,6 +491,7 @@ def _stage_kernel(config: Config, xbps, out, run, layout=None) -> int:
             out("the new kernel is installed and may already be the GRUB "
                 "default with no pinned fallback — fix GRUB_DEFAULT before "
                 "relying on automatic rollback.")
+            _report_boot_path(layout, _kernel_release_of(xbps, KERNEL_TARGET), out)
             return EXIT_KERNEL
 
         cand_kver = _kernel_release_of(xbps, KERNEL_TARGET)
@@ -479,6 +527,7 @@ def _stage_kernel(config: Config, xbps, out, run, layout=None) -> int:
         else:
             out(f"kernel {cand_kver} staged ({res.mode}): GRUB default pinned to "
                 f"known-good {known}; reboot when convenient. NEVER auto-rebooting.")
+        _report_boot_path(layout, cand_kver, out)
         return EXIT_OK
     except grub.GrubError as exc:
         out(f"error: kernel staging failed: {exc} — the deploy itself is "

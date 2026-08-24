@@ -337,3 +337,88 @@ class ActionWiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StagedKernelCardTests(unittest.TestCase):
+    """§8.6 staged-candidate surfacing in the window (the GUI is the product).
+
+    The card TRANSCRIBES the CLI's lines rather than recomputing them: the boot
+    class decides whether the fallback is automatic or manual, the CLI already
+    knows, and a second opinion in the GUI is how the two drift apart.
+    """
+
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        loader = importlib.machinery.SourceFileLoader("cachygui", str(GUI_PATH))
+        spec = importlib.util.spec_from_loader("cachygui", loader)
+        cls.mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.mod)
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.mod.Updater._run = lambda s, a, t, **kw: None
+        self.w = self.mod.Updater()
+        self.w.show()
+
+    def tearDown(self):
+        self.w.deleteLater()
+
+    # --status renders _kernel_report at a 4-space indent, its sub-lines at 6.
+    ONESHOT = ("\n[3] Kernel (linux-cachy / BORE)\n"
+               "    BORE pin: series 6.12 pinned (BORE 6.6.3)\n"
+               "    kernel candidate: 6.12.103_1-cachy is staged, awaiting its trial "
+               "boot — reboot when convenient (the updater never reboots you)\n"
+               "      if it fails to boot, the next power cycle returns to 6.12.95_1 "
+               "on its own (one-shot)\n"
+               "    rollback available: running 6.12.95_1, known-good 6.12.95_1\n")
+    EXTERNAL = ("\n[3] Kernel (linux-cachy / BORE)\n"
+                "    kernel candidate: 6.12.103_1-cachy is staged, awaiting its trial "
+                "boot — reboot when convenient (the updater never reboots you)\n"
+                "      a foreign bootloader owns the menu: if it misbehaves, pick "
+                "6.12.95_1 there yourself\n")
+    QUIET = ("\n[3] Kernel (linux-cachy / BORE)\n"
+             "    BORE pin: series 6.12 pinned (BORE 6.6.3)\n"
+             "    kernel: in sync\n")
+
+    def test_card_hidden_before_any_status(self):
+        self.assertFalse(self.w.kernel_notice.isVisible())
+
+    def test_card_hidden_when_no_candidate_is_staged(self):
+        self.w.status.setPlainText(self.QUIET)
+        self.w._update_pin_banner()
+        self.assertFalse(self.w.kernel_notice.isVisible())
+
+    def test_card_appears_and_names_the_kernel(self):
+        self.w.status.setPlainText(self.ONESHOT)
+        self.w._update_pin_banner()
+        self.assertTrue(self.w.kernel_notice.isVisible())
+        self.assertIn("6.12.103_1-cachy", self.w.kernel_label.text())
+        # no double-saying: the card must not repeat what the CLI line states
+        text = self.w.kernel_label.text()
+        self.assertTrue(text.startswith("Kernel 6.12.103_1-cachy is staged"), text)
+        self.assertEqual(text.count("staged"), 1)
+
+    def test_card_carries_the_hosts_own_fallback_advice(self):
+        self.w.status.setPlainText(self.ONESHOT)
+        self.w._update_pin_banner()
+        self.assertIn("one-shot", self.w.kernel_label.text())
+
+        self.w.status.setPlainText(self.EXTERNAL)
+        self.w._update_pin_banner()
+        t = self.w.kernel_label.text()
+        self.assertIn("pick 6.12.95_1 there yourself", t)
+        self.assertNotIn("one-shot", t)        # never promise what this host lacks
+
+    def test_card_stops_at_the_next_unindented_line(self):
+        # The follow-on "rollback available:" line belongs to a different
+        # feature and must not be swallowed into this card.
+        self.w.status.setPlainText(self.ONESHOT)
+        self.w._update_pin_banner()
+        self.assertNotIn("rollback available", self.w.kernel_label.text())
+
+    def test_card_offers_no_button(self):
+        # The updater never reboots anyone; a button here would imply it might.
+        from PyQt5.QtWidgets import QPushButton
+        self.assertEqual(self.w.kernel_notice.findChildren(QPushButton), [])

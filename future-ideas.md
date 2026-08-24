@@ -55,33 +55,12 @@ and a fourth needs a better reason than "we could".
 
 ## 2. Updater — remaining gaps
 
-- **Staged-candidate readout.** The status pane shows the BORE pin, the
-  known-good kernel and any drift, but not "candidate X is staged, awaiting its
-  trial boot" — the one kernel state a user currently cannot see.
 - **Component toggles.** Which optional pieces get installed is `deploy.sh` flags
   today; a checkbox list (or a small TUI selector at install time) would make
   them discoverable. Note the reframing: a full graphical *installer* looks
   unnecessary now that `get.sh` reduced installation to one pasted line.
 - **A lighter "daily" mode.** Run the `-Su` + service-cycle and *prompt* before
   any long compile, instead of doing the whole build/deploy in one `--commit`.
-- **Verify the new kernel is actually bootable.** Nothing currently checks the
-  step between "kernel built and installed" and "kernel present in the boot
-  menu". On a GRUB-owning host that step is Void's own job — the `grub` package's
-  `/etc/kernel.d/post-install/50-grub` hook regenerates `grub.cfg` on every
-  kernel install, the same mechanism whose sibling `10-dkms` is proven to fire
-  for `linux-cachy` — so the updater must **not** regenerate anything (see
-  `rejected-ideas.md`). What it *can* do is confirm the outcome: after installing
-  a kernel, check that `grub.cfg` contains an entry for the new version and say
-  so, or warn if it does not. The engine already parses `grub.cfg` for §8.6
-  staging, so this is a read-only check needing no new privileges, and it catches
-  the failure modes that today leave a kernel built but unbootable with nobody
-  the wiser (a hook that errored, `/boot` not mounted at install time).
-- **Say the multi-boot truth out loud.** On a foreign-bootloader host (the
-  `external` class — a dual-boot gamer's normal case) new kernels *do* boot
-  automatically, via the evergreen `/boot/vmlinuz-current` symlink that the
-  `99-boot-symlinks` hook repoints; what is impossible is *choosing* an older one
-  without regenerating the other OS's menu. The updater should state that plainly
-  instead of leaving the user to infer it from a "bookkeeping-only" message.
 
 ### 2b. From the Omarchy 4 review (2026-08-23): two updater upgrades
 
@@ -93,10 +72,12 @@ are **two features, not one**, but they share one piece of groundwork.
 
 **Shared groundwork — a fast, machine-readable status surface.** `--status` today
 is a human-readable overview that "can take a while" (the GUI shows a busy line
-for it). Both features below, plus the staged-candidate readout above, want a
-cheap read-only probe: pending upstream count, kernel drift, staged candidate,
+for it). Both features below want a cheap
+read-only probe: pending upstream count, kernel drift, staged candidate,
 snapshot inventory — as JSON (say `--pending`), answering in a second. Single
-source of truth stays the CLI; the GUI and the tray both consume it.
+source of truth stays the CLI; the GUI and the tray both consume it. (The
+kernel/boot-state *readouts* this section used to list are built; what is left
+is the fast machine-readable surface, which is now this section's groundwork.)
 
 **Idea 1 — a passive "updates pending" tray presence.** Today the updater only
 speaks when opened. A small tray icon (our own PyQt code — the toolkit is already

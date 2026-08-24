@@ -8,8 +8,11 @@ Consolidates the kernel-side machinery the task grouped under grub.py:
   * boot-layout detection (§8.6 preflight) that degrades to manual mode on
     grubenv-hostile filesystems and *skips physical operations entirely* under
     WSL2 / any layout without a writable ``/boot/grub/grub.cfg``;
-  * deterministic GRUB menu-ref resolution (§8.6); and
-  * one-shot staging with a known-good fallback default (§8.6).
+  * deterministic GRUB menu-ref resolution (§8.6);
+  * one-shot staging with a known-good fallback default (§8.6); and
+  * read-only verification that an installed kernel can actually be booted
+    (§8.6b) — the step between "installed" and "bootable" that the boot hooks
+    own and nothing used to check.
 
 Every external interaction (subprocess, filesystem) is injectable so the whole
 module is unit-testable without a real bootloader.
@@ -326,6 +329,130 @@ def resolve_menu_ref(grub_cfg_text: str, kver: str) -> str:
         raise GrubError(
             f"expected exactly one GRUB entry for kernel {kver!r}, found {len(matches)}")
     return matches[0]
+
+
+# ==========================================================================
+# §8.6b Boot-path verification (read-only, unprivileged)
+# ==========================================================================
+# The gap this closes: between "kernel built and installed" and "kernel the
+# firmware can actually load" sits a step nothing verified. On a GRUB-owning
+# host that step is VOID's own job -- the grub package installs
+# /etc/kernel.d/post-install/50-grub, which runs `grub-mkconfig -o
+# /boot/grub/grub.cfg` on every kernel install (verified from the srcpkg; the
+# sibling 10-dkms hook is proven to fire for linux-cachy) -- so the updater must
+# NOT regenerate anything (see rejected-ideas.md). What it CAN do is check the
+# outcome and say so, which catches a hook that errored or a /boot that was not
+# mounted at install time.
+#
+# On an `external` host there is no menu of ours to inspect, and -- verified
+# against void-packages rather than assumed -- Void ships NO evergreen-symlink
+# mechanism: every /etc/kernel.d hook belongs to a bootloader (grub,
+# systemd-boot, efibootmgr, lilo, u-boot, m1n1) or to dkms, and none creates
+# /boot/vmlinuz-current. That symlink is an OPERATOR convention on multi-boot
+# hosts (this project's own testbed has a hand-written one), so the honest move
+# is to report what is observable -- does any /boot symlink now resolve to the
+# new kernel? -- and never to claim a mechanism the distro does not provide.
+BOOT_OK = "ok"            # a boot path to this kernel is demonstrably in place
+BOOT_ABSENT = "absent"    # we own the menu and the entry is NOT there -> warn
+BOOT_UNKNOWN = "unknown"  # unverifiable here; say so rather than guess
+
+
+@dataclass
+class BootCheck:
+    """Outcome of the read-only "can this kernel be booted?" probe (§8.6b)."""
+    status: str                                    # BOOT_OK | BOOT_ABSENT | BOOT_UNKNOWN
+    mechanism: str                                 # grub-menu | boot-symlink | versioned-only | none
+    detail: str                                    # what was observed
+    hint: str = ""                                 # what the OPERATOR may do; "" = nothing needed
+    refs: list[str] = field(default_factory=list)  # menu refs / symlinks found
+
+
+def _boot_symlinks_to(kver: str, boot_dir: str, listdir, readlink) -> list[str]:
+    """Names of symlinks directly under ``boot_dir`` that resolve to this kernel.
+
+    Deliberately generic: it matches on the kernel VERSION appearing in the link
+    target, so it finds any operator convention (``vmlinuz-current``,
+    ``vmlinuz-void``, ...) without hard-coding a name Void does not define.
+    """
+    found: list[str] = []
+    try:
+        names = sorted(listdir(boot_dir))
+    except OSError:
+        return found
+    for name in names:
+        path = f"{boot_dir.rstrip('/')}/{name}"
+        try:
+            target = readlink(path)
+        except OSError:
+            continue                     # not a symlink, or it vanished mid-scan
+        if kver in target and ("vmlinu" in name or "vmlinu" in target):
+            found.append(f"{name} -> {target}")
+    return found
+
+
+def verify_bootable(*, layout: BootLayout, kver: str, boot_dir: str = "/boot",
+                    read_text: Optional[Callable[[str], str]] = None,
+                    listdir: Callable[[str], Sequence[str]] = os.listdir,
+                    readlink: Callable[[str], str] = os.readlink) -> BootCheck:
+    """Confirm, read-only, that ``kver`` has a path to actually being booted.
+
+    Never mutates, never needs a privilege the updater does not already hold,
+    and never asserts more than it can observe: an unreadable ``grub.cfg`` is
+    BOOT_UNKNOWN, never BOOT_ABSENT -- "we could not look" and "it is not there"
+    are different sentences and only one of them should alarm anybody.
+    """
+    if layout.mode == MODE_SKIP:
+        return BootCheck(BOOT_UNKNOWN, "none",
+                         "no real bootloader here (WSL/virtualized) — nothing to verify")
+
+    if layout.mode == MODE_EXTERNAL:
+        links = _boot_symlinks_to(kver, boot_dir, listdir, readlink)
+        if links:
+            return BootCheck(
+                BOOT_OK, "boot-symlink",
+                f"a /boot symlink now points at {kver}: " + "; ".join(links),
+                hint=("that is the usual multi-boot arrangement — the other OS's menu "
+                      "entry loads the symlink, so this kernel boots without touching "
+                      "that bootloader. Booting an OLDER kernel means repointing the "
+                      "symlink (or adding an entry in the other OS's menu)."),
+                refs=links)
+        return BootCheck(
+            BOOT_UNKNOWN, "versioned-only",
+            f"the kernel is installed as {boot_dir.rstrip('/')}/vmlinuz-{kver}, and no "
+            "/boot symlink points at it",
+            hint=("a foreign boot manager owns the menu here, so whether it finds this "
+                  "kernel depends on how its entry is written — an entry naming a "
+                  "versioned path still loads the OLD kernel. Check that entry (or "
+                  "point a symlink such as /boot/vmlinuz-current at "
+                  f"vmlinuz-{kver}) BEFORE rebooting."))
+
+    # We own a GRUB menu (oneshot / manual / manual-unsafe): inspect the outcome.
+    if read_text is None:
+        def read_text(p):  # noqa: E306
+            with open(p, encoding="utf-8") as fh:
+                return fh.read()
+    cfg_path = layout.grub_cfg or ""
+    try:
+        cfg = read_text(cfg_path)
+    except OSError as exc:
+        return BootCheck(BOOT_UNKNOWN, "grub-menu",
+                         f"could not read {cfg_path} ({getattr(exc, 'strerror', None) or exc}) "
+                         "— cannot confirm the new kernel reached the boot menu")
+    refs = [ref for ref, eid in parse_menu_entries(cfg) if kver in eid]
+    if refs:
+        return BootCheck(BOOT_OK, "grub-menu",
+                         f"{cfg_path} has {len(refs)} boot "
+                         + ("entry" if len(refs) == 1 else "entries")
+                         + f" for {kver}", refs=refs)
+    return BootCheck(
+        BOOT_ABSENT, "grub-menu",
+        f"{cfg_path} has NO boot entry for {kver} — the kernel is installed but the "
+        "boot menu does not offer it",
+        hint=("Void's own /etc/kernel.d/post-install/50-grub hook regenerates the menu "
+              "on every kernel install, so this means it did not run or it failed (a "
+              "/boot that was not mounted does exactly this). Re-run the hooks with "
+              "`sudo xbps-reconfigure -f linux-cachy`, then check again — the updater "
+              "deliberately never regenerates the menu itself."))
 
 
 # ==========================================================================
