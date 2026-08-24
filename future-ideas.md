@@ -62,14 +62,14 @@ and a fourth needs a better reason than "we could".
 - **A lighter "daily" mode.** Run the `-Su` + service-cycle and *prompt* before
   any long compile, instead of doing the whole build/deploy in one `--commit`.
 
-### 2b. From the Omarchy 4 review (2026-08-23): two updater upgrades
+### 2b. From the Omarchy 4 review (2026-08-23): one upgrade left
 
 Omarchy 4 was surveyed for anything adoptable (most of it is self-maintained
-desktop-replacement — disqualified by §4 by construction). Two ideas survived the
-filter, and both land in the updater — the one place where the maintenance is
-already ours and "make it more user-friendly" cannot cross the philosophy. They
-were **two features, not one**, sharing one piece of groundwork; the tray half
-is built, so what follows is the snapshot half.
+desktop-replacement — disqualified by §4 by construction). Two ideas survived
+the filter, both landing in the updater — the one place where the maintenance is
+already ours and "make it more user-friendly" cannot cross the philosophy. The
+tray indicator shipped and is verified on hardware; the snapshot half shipped
+read-only. What is left is the one phase with a real hardware gate.
 
 **Groundwork already in place.** `--pending` (architecture.md §4.10) is the fast
 machine-readable probe both ideas wanted, and the tray indicator that consumed

@@ -640,6 +640,23 @@ minimal, non-package-naming set:
   making H2 structurally always-False. The boundary adds **exactly**
   `dmesg --level=emerg,alert,crit` (fixed argument, read-only); the checker
   tries unprivileged first and falls back to the grant.
+- **Update counts are split, and the split is shared.** `--status` tier [1] and
+  `--pending` both report *`N` package updates, `M` driver/firmware updates*
+  rather than one lump, because "is a driver in there?" is the question the tier
+  actually gets asked and a total cannot answer it. "Driver" is deliberately
+  wider than "GPU": a host carries CPU microcode (`intel-ucode`/`amd-ucode`),
+  audio DSP and WiFi firmware and `linux-firmware-*` blobs, any of which can
+  appear in an update. The unit stays the **package** — one mesa release ships
+  as four packages, each with a 32-bit twin, so eight is the honest count and
+  switching units to produce a prettier "1" would be its own kind of lie. Both
+  numbers come from one `upstream_counts()` helper so the window and the tray
+  cannot drift apart (they did once: 20 against 16, both defensible).
+- **Advice is printed when it becomes actionable, never before.** What to do
+  about a new graphics driver — reopen your programs for a userspace GL stack,
+  reboot for a kernel module — is emitted *after* the deploy, from a before/after
+  snapshot of the installed driver versions, so it describes what actually
+  changed. It used to ride in the pending summary, where an instruction about a
+  driver that was not installed yet earned the fair reply "use what?".
 - **`--kernel-ack`** — clears a frozen kernel state (§8.7/§8.8) after the operator says the cause is dealt with. Bookkeeping only: no package, bootloader or service is touched, and it refuses when nothing is frozen. No grant.
 - **`--snapshots`** — read-only snapshot inventory and the restore recipe for this host (§9.5b). Uses the §9.5 `btrfs subvolume list` grant and nothing more.
 - **`--pending`** — a fast, machine-readable probe (one JSON document on stdout)
@@ -935,6 +952,8 @@ Void kernel packages encode the full pkgver in the kernel release string: a boot
    - newer, same series → **BUMP_PATCHLEVEL** (automated path); revision-only bumps count — template fixes must flow;
    - `srcpkgs/linux${base_series}` missing (series EOL'd/removed) → **AWAIT_HUMAN_SERIES**.
 3. Informational only: if the `linux` meta-package now points at a newer series, log a notice. Series switching is always a human act (new BORE patch family + dotconfig review).
+
+**The checkout is not the only source, and must not be the only one consulted (normative).** Step 1 reads the template in the *local* `void-packages` checkout, which advances only when something runs a sync — so on a box that has not synced recently the check compares against a version Void shipped days ago and reports nothing. That is not hypothetical: on the testbed a nine-day-old checkout still read `6.12.103` while `linux6.12-6.12.104_1` sat in the very same `--status` output as a held package. Detection therefore **also queries the repository** (`xbps-query -R -M`: memory-synced, unprivileged, writes nothing), and reports a bump when *either* source is ahead of `ported_version`. The checkout still governs the **build** — §8.4 regenerates the template from it, and `--commit` syncs as Stage 1 — so a bump found in the repository is buildable by the time anything acts on it; the message says which source found it and how far behind the checkout is. When **neither** source can answer, that is stated too: "no newer kernel" and "could not check" are different answers and only one of them should reassure anybody.
 
 ### 8.3 BORE patch trust pipeline
 
