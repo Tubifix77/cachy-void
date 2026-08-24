@@ -61,49 +61,20 @@ and a fourth needs a better reason than "we could".
   unnecessary now that `get.sh` reduced installation to one pasted line.
 - **A lighter "daily" mode.** Run the `-Su` + service-cycle and *prompt* before
   any long compile, instead of doing the whole build/deploy in one `--commit`.
-
-### 2b. From the Omarchy 4 review (2026-08-23): one upgrade left
-
-Omarchy 4 was surveyed for anything adoptable (most of it is self-maintained
-desktop-replacement — disqualified by §4 by construction). Two ideas survived
-the filter, both landing in the updater — the one place where the maintenance is
-already ours and "make it more user-friendly" cannot cross the philosophy. The
-tray indicator shipped and is verified on hardware; the snapshot half shipped
-read-only. What is left is the one phase with a real hardware gate.
-
-**Groundwork already in place.** `--pending` (architecture.md §4.10) is the fast
-machine-readable probe both ideas wanted, and the tray indicator that consumed
-it first is built. What remains of this section is the snapshot half — and it can
-extend the same probe rather than inventing a second one: a snapshot inventory
-would slot into that payload beside the upstream and kernel blocks.
-
-**Remaining: one-click restore (Phase R2).** The read-only half is built —
-`--snapshots` and the window's Snapshots button list every snapshot, annotate the
-automatic ones with what that run actually did, and print the exact restore
-commands for the host's own layout (architecture.md §9.5b). What is left is doing
-it *for* the user on the layouts where that is safe:
-  - Needs exactly two new sudoers grants — `btrfs subvolume snapshot` (the
-    writable variant) and `btrfs subvolume set-default` — as narrow as the §9.5
-    originals, plus a confirm dialog and a reboot prompt. The safety snapshot of
-    the current root uses the grant we already have.
-  - Only where the layout permits, which the engine already decides:
-    `LAYOUT_TOPLEVEL` yes, `LAYOUT_PINNED` refuses (fstab overrides the default
-    subvolume, so it would be a silent no-op) and that refusal is already
-    implemented and tested — R2 inherits it rather than re-deriving it.
-  - **Verify on hardware before shipping it**, and the specific thing to verify
-    is named in §9.5b: on a converted root `/boot` lives inside the root tree, so
-    a restore rewinds kernels too. How the foreign GRUB's hand-written menuentry
-    resolves against a changed default subvolume must be TESTED, not deduced —
-    which makes this the one remaining §2 item with a real hardware gate.
-  - Also unbuilt: showing post-restore state ("you are running from restored
-    snapshot X") — that needs `btrfs subvolume get-default`, a third grant, so it
-    is worth deciding whether it earns one or whether the R1 recipe's warning is
-    enough.
-
-Also noted in passing during the same survey, for whoever tends the testbed: the
-`ext2_saved` subvolume (btrfs-convert's undo image) still pins pre-conversion
-blocks on the box; deleting it is the standard post-conversion cleanup once the
-btrfs root is trusted — an operator decision, not overlay business.
+- **One-click snapshot restore.** `--snapshots` prints the restore commands for
+  the host's layout (architecture.md §9.5b); doing it *for* the user is the part
+  that is not built. It needs exactly two new sudoers grants — `btrfs subvolume
+  snapshot` (the writable variant) and `btrfs subvolume set-default`, as narrow
+  as the §9.5 originals — plus a confirm dialog and a reboot prompt. Only on
+  layouts the engine already classifies `LAYOUT_TOPLEVEL`; a `subvol=`-pinned
+  root must keep refusing, because fstab overrides the default subvolume and the
+  restore would be a silent no-op. **This is the one item here with a real
+  hardware gate:** on a `btrfs-convert`ed root `/boot` lives inside the root
+  tree, so a restore rewinds kernels too, and how a foreign bootloader's
+  hand-written menuentry resolves against a changed default subvolume must be
+  tested, not deduced. A further question to settle rather than assume: showing
+  "you are running from restored snapshot X" needs `btrfs subvolume get-default`
+  — a third grant, which may or may not be worth it over the printed warning.
 
 ---
 
