@@ -1031,6 +1031,22 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
             out("    DKMS: none (or driver is not DKMS)")
     except OSError:
         pass
+    # A pending GRAPHICS DRIVER update is worth naming separately even though it
+    # rides the ordinary system update: it is the one package whose update
+    # rebuilds DKMS modules and can change what happens at the next login. The
+    # marker below is stable — the front-end keys its headline off it (owner's
+    # question: "is the GPU button an update?" — it is not, this is the answer).
+    try:
+        drv = sorted(b for b in xbps.installed()
+                     if re.fullmatch(r"nvidia\d*(-dkms)?|mesa|linux-firmware-amd", b))
+    except (XbpsError, OSError):
+        drv = []
+    if drv:
+        try:
+            if _lines(run(["xbps-install", "-un", *drv])):
+                out("    graphics driver update pending — included in Update")
+        except OSError:
+            pass
 
     out("\n[6] Flatpak apps")
     try:

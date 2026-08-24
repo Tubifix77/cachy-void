@@ -467,3 +467,108 @@ class SnapshotsButtonTests(unittest.TestCase):
 
     def test_it_is_disabled_while_a_command_runs(self):
         self.assertIn(self.w.btn_snapshots, self.w._buttons)
+
+
+class HeadlineTests(unittest.TestCase):
+    """The headline: the one line that decides whether you press Update.
+
+    It came out of the tray making a number prominent that the WINDOW kept
+    buried in a scrolling monospace pane — a strange place for the answer to
+    the window's whole question. It is a summary of the CLI's own output, never
+    a second query, so it cannot disagree with the detail printed beneath it.
+    """
+
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        loader = importlib.machinery.SourceFileLoader("cachygui", str(GUI_PATH))
+        spec = importlib.util.spec_from_loader("cachygui", loader)
+        cls.mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.mod)
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.mod.Updater._run = lambda s, a, t, **kw: None
+        self.w = self.mod.Updater()
+        self.w.show()
+
+    def tearDown(self):
+        self.w.deleteLater()
+
+    def _head(self, text):
+        self.w.status.setPlainText(text)
+        self.w._update_pin_banner()
+        return self.w.headline.text()
+
+    def test_the_package_count_leads(self):
+        t = self._head("[1] System (upstream Void)\n"
+                       "    20 upstream package(s) updatable   (+4 on hold)\n")
+        self.assertTrue(t.startswith("20 packages to update"), t)
+        self.assertIn("(4 on hold)", t)
+
+    def test_one_package_is_not_pluralised(self):
+        self.assertIn("1 package to update",
+                      self._head("    1 upstream package(s) updatable\n"))
+
+    def test_nothing_pending_says_so_plainly(self):
+        t = self._head("    0 upstream package(s) updatable — up to date\n")
+        self.assertEqual(t, "Everything is up to date")
+
+    def test_the_quiet_state_is_styled_differently(self):
+        # Calm, not accent-green: "nothing to do" should not shout like "20
+        # things to do". Qt needs a repolish for an objectName change to show.
+        self._head("    0 upstream package(s) updatable — up to date\n")
+        self.assertEqual(self.w.headline.objectName(), "headlineQuiet")
+        self._head("    3 upstream package(s) updatable\n")
+        self.assertEqual(self.w.headline.objectName(), "headline")
+
+    def test_overlay_rebuilds_are_named_separately(self):
+        # They are a different kind of work from an upstream package update,
+        # and the number of each is what makes Update's cost predictable.
+        t = self._head("    5 upstream package(s) updatable\n"
+                       "    2 to rebuild, 1 to deploy\n")
+        self.assertIn("2 overlay packages to rebuild", t)
+
+    def test_a_kernel_bump_is_named_because_it_is_a_different_button(self):
+        # Update deliberately leaves the kernel alone, so folding this into the
+        # package count would misdescribe what pressing Update does.
+        t = self._head("    3 upstream package(s) updatable\n"
+                       "    kernel: upstream linux6.12 is at 6.12.110_1; ported "
+                       "base is 6.12.103_1 — port linux-cachy (§2.6/§8.4).\n")
+        self.assertIn("a newer BORE kernel to build", t)
+
+    def test_a_graphics_driver_update_is_called_out(self):
+        # It rides the ordinary update, but it is the one that rebuilds DKMS
+        # and can change what happens at the next login (owner asked whether
+        # the GPU button was an update — it is not; this is where that shows).
+        t = self._head("    3 upstream package(s) updatable\n"
+                       "    graphics driver update pending — included in Update\n")
+        self.assertIn("a graphics driver update", t)
+
+    def test_flatpak_apps_are_included_since_update_applies_them(self):
+        t = self._head("    0 upstream package(s) updatable — up to date\n"
+                       "    2 app(s) updatable\n")
+        self.assertIn("2 Flatpak app(s)", t)
+
+    def test_zero_flatpak_apps_add_nothing(self):
+        t = self._head("    0 upstream package(s) updatable — up to date\n"
+                       "    0 app(s) updatable — up to date\n")
+        self.assertEqual(t, "Everything is up to date")
+
+    def test_everything_at_once_reads_as_one_line(self):
+        t = self._head("    20 upstream package(s) updatable   (+4 on hold)\n"
+                       "    2 to rebuild, 1 to deploy\n"
+                       "    graphics driver update pending — included in Update\n"
+                       "    kernel: ported base is old — port linux-cachy\n")
+        for bit in ("20 packages to update", "2 overlay packages to rebuild",
+                    "a graphics driver update", "a newer BORE kernel to build"):
+            self.assertIn(bit, t)
+        self.assertEqual(t.count("·"), 3)          # separators, not sentences
+
+    def test_a_degraded_status_does_not_invent_a_number(self):
+        # "unknown — xbps-install unavailable" must not read as "up to date"
+        # with a fake count attached; absent data yields no claim.
+        t = self._head("[1] System (upstream Void)\n"
+                       "    unknown — run --sync to refresh the repository list\n")
+        self.assertEqual(t, "Everything is up to date")

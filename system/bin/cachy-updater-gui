@@ -30,6 +30,7 @@ without --with-branding). The palette is the brand and is dark by definition, so
 it is applied unconditionally — one appearance everywhere, no env dependency.
 """
 import os
+import re
 import shutil
 import sys
 import time
@@ -112,6 +113,11 @@ QLabel#noticeIcon {{
     color: {WARN}; font-size: 20px; font-weight: bold; padding: 0 2px;
 }}
 QLabel#noticeText {{ color: {FG}; }}
+
+/* The headline answers the only question this window exists for: should I
+   press Update? So it is the largest text in the pane, on purpose. */
+QLabel#headline {{ color: {ACCENT}; font-size: 15px; font-weight: bold; }}
+QLabel#headlineQuiet {{ color: {FG_DIM}; font-size: 15px; }}
 
 /* Informational sibling of the notice card: same shape, accent instead of
    amber, because "a kernel is waiting for its trial boot" is news, not a
@@ -350,7 +356,17 @@ class Updater(QWidget):
         # a window left open a long time.
         meta = QHBoxLayout()
         meta.setSpacing(8)
-        meta.addStretch(1)
+        # The headline: the single fact that decides whether you press Update.
+        # It used to exist only as the first line of a scrolling monospace dump,
+        # which is a strange place to keep the answer to the window's whole
+        # question — the TRAY made that number prominent and the window did not
+        # (owner's observation). Left of the re-check row, so it sits directly
+        # above the detail it summarises and is read first.
+        self.headline = QLabel("")
+        self.headline.setObjectName("headline")
+        self.headline.setWordWrap(True)
+        meta.addWidget(self.headline, 1)
+        meta.addStretch(0)
         self.checked_at = QLabel("")
         self.checked_at.setObjectName("subtitle")
         self.btn_check = QPushButton("Re-check for updates")
@@ -644,7 +660,54 @@ class Updater(QWidget):
         text = self.status.toPlainText()
         self.notice.setVisible("BORE pin: MISSING" in text)
         self.btn_rollback.setVisible("rollback available" in text)
+        self._update_headline(text)
         self._update_kernel_notice(text)
+
+    def _update_headline(self, text):
+        """Summarise --status into one line: what is waiting, and nothing else.
+
+        Reads the CLI's own output rather than re-querying, for the same reason
+        the kernel card does — one source of truth, and no way for the headline
+        and the detail beneath it to disagree.
+        """
+        parts = []
+        m = re.search(r"(\d+) upstream package\(s\) updatable", text)
+        n = int(m.group(1)) if m else 0
+        if n:
+            held = re.search(r"\(\+(\d+) on hold\)", text)
+            parts.append(f"{n} package{'' if n == 1 else 's'} to update"
+                         + (f" ({held.group(1)} on hold)" if held else ""))
+        m = re.search(r"(\d+) to rebuild, (\d+) to deploy", text)
+        if m:
+            rb, dep = int(m.group(1)), int(m.group(2))
+            if rb:
+                parts.append(f"{rb} overlay package{'' if rb == 1 else 's'} to rebuild")
+            elif dep:
+                parts.append(f"{dep} to deploy")
+        # Named separately because it is the update most likely to matter at the
+        # next login (it rebuilds DKMS modules), even though Update applies it
+        # like any other package.
+        if "graphics driver update pending" in text:
+            parts.append("a graphics driver update")
+        # A kernel BUMP belongs to a different button — Update deliberately
+        # leaves the kernel alone — so it is named rather than folded into the
+        # package count.
+        if "port linux-cachy" in text:
+            parts.append("a newer BORE kernel to build")
+        m = re.search(r"(\d+) app\(s\) updatable", text)
+        if m and int(m.group(1)):
+            parts.append(f"{m.group(1)} Flatpak app(s)")
+
+        if parts:
+            self.headline.setText("  ·  ".join(parts))
+            self.headline.setObjectName("headline")
+        else:
+            self.headline.setText("Everything is up to date")
+            self.headline.setObjectName("headlineQuiet")
+        # Qt re-reads the stylesheet for a widget only when its style is
+        # repolished; changing objectName alone changes nothing visible.
+        self.headline.style().unpolish(self.headline)
+        self.headline.style().polish(self.headline)
 
     def _update_kernel_notice(self, text):
         """Lift the CLI's "kernel candidate:" lines into the info card.
