@@ -969,20 +969,17 @@ fi
 # The configs themselves come from cachy-branding's SHARED half (apply_conky), not
 # its LXQt half. That was a real gap once - a Plasma-only box had nothing to start -
 # so the only reason to skip now is conky not being installed.
+# The launcher itself belongs to the SHARED half (cachy-branding's apply_conky),
+# because the race it solves is not Plasma's: every desktop applies a monitor
+# layout a few seconds into the session, and a conky that starts before that
+# anchors its top_right panel to a geometry which then disappears. This applier
+# used to write its own copy with a fixed `sleep 8` — and lost the race anyway
+# on 2026-08-25, with the telemetry panel relocated to the LEFT of the screen.
 CONKY_LAUNCH="$SHARE/cachy-void/conky-start.sh"
 if [ -f "$CFG/conky/conky.conf" ] && command -v conky >/dev/null 2>&1; then
-    mkdir -p "$SHARE/cachy-void"
-    {
-        printf '#!/bin/sh\n'
-        printf '# started by the Cachy-Void Plasma applier; safe to run twice.\n'
-        printf 'pgrep -x conky >/dev/null 2>&1 && exit 0\n'
-        printf 'sleep 8\n'
-        printf 'env LC_CTYPE=C.UTF-8 conky -c "$HOME/.config/conky/conky.conf" &\n'
-        printf '[ -f "$HOME/.config/conky/conky-system.conf" ] && \\\n'
-        printf '    env LC_CTYPE=C.UTF-8 conky -c "$HOME/.config/conky/conky-system.conf" &\n'
-        printf 'exit 0\n'
-    } > "$CONKY_LAUNCH"
-    chmod 0755 "$CONKY_LAUNCH"
+    if [ ! -x "$CONKY_LAUNCH" ]; then
+        warn "conky launcher missing ($CONKY_LAUNCH) — run cachy-branding to write it"
+    fi
     {
         printf '[Desktop Entry]\n'
         printf 'Type=Application\n'
