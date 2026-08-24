@@ -80,7 +80,10 @@ class WatchdogTests(unittest.TestCase):
 
     def test_three_consecutive_failures_trip_rollback(self):
         rb = mock.Mock(return_value=0)
-        d = _daemon(self.tmp, FakeChecker([report(False)]), rollback=rb)
+        d = _daemon(self.tmp, FakeChecker([report(False)]), rollback=rb,
+                    state="STAGED",
+                    candidate={"pkgver": "6.12.103_1",
+                               "kver": "6.12.103_1-cachy"})
         outcome = d.run_loop(max_ticks=10)
         self.assertEqual(outcome, TRIPPED)
         rb.assert_called_once_with()                     # fired exactly once
@@ -93,10 +96,62 @@ class WatchdogTests(unittest.TestCase):
         # fail, fail, PASS (reset), fail, fail, fail -> trips on the 6th tick
         seq = [report(False), report(False), report(True),
                report(False), report(False), report(False)]
-        d = _daemon(self.tmp, FakeChecker(seq), rollback=rb)
+        d = _daemon(self.tmp, FakeChecker(seq), rollback=rb,
+                    state="STAGED",
+                    candidate={"pkgver": "6.12.103_1",
+                               "kver": "6.12.103_1-cachy"})
         self.assertEqual(d.run_loop(max_ticks=10), TRIPPED)
         rb.assert_called_once()
         self.assertEqual(d.checker.calls, 6)
+
+    def test_no_candidate_means_a_health_warning_not_a_kernel_verdict(self):
+        """The bug this guard exists for, reproduced from the real log.
+
+        A laptop's WiFi drops for 90 seconds on an ordinary day: three
+        consecutive H4 failures with nothing staged. That must NOT be recorded
+        as a failed kernel candidate, because §8.8 lists CANDIDATE_UNHEALTHY
+        only as a transition out of STAGED/CONFIRMING, and landing there
+        freezes the kernel path (§8 preamble) over a dropped network.
+        """
+        rb = mock.Mock(return_value=0)
+        d = _daemon(self.tmp, FakeChecker([report(False)]), rollback=rb,
+                    state="TRACKING", candidate=None)
+        outcome = d.run_loop(max_ticks=10)
+        self.assertEqual(outcome, HEALTHY)         # keeps watching, never exits
+        rb.assert_not_called()                     # and never drives the bootloader
+        self.assertEqual(d.state_store.load()["state"], "TRACKING")
+
+    def test_the_warning_is_said_once_per_episode_not_every_tick(self):
+        # Resetting the counter is what stops a flapping laptop from filling
+        # the log with the same warning every 30 seconds.
+        lines = []
+        d = _daemon(self.tmp, FakeChecker([report(False)]),
+                    state="TRACKING", candidate=None)
+        d.out = lines.append
+        d.run_loop(max_ticks=9)                    # 9 ticks, trip_after=3
+        warnings = [l for l in lines if l.startswith("health warning:")]
+        self.assertEqual(len(warnings), 3)         # once per run of three
+        self.assertIn("NOT a kernel verdict", warnings[0])
+
+    def test_a_stale_staged_state_without_a_candidate_still_does_not_trip(self):
+        # The wreckage the old bug left behind: state says STAGED/UNHEALTHY but
+        # candidate is null. Both halves of the guard are needed.
+        rb = mock.Mock(return_value=0)
+        d = _daemon(self.tmp, FakeChecker([report(False)]), rollback=rb,
+                    state="STAGED", candidate=None)
+        self.assertEqual(d.run_loop(max_ticks=10), HEALTHY)
+        rb.assert_not_called()
+
+    def test_health_telemetry_is_still_recorded_while_warning(self):
+        # The warning path must not cost the telemetry: the health block is
+        # what a user reads afterwards to see the machine was actually fine.
+        d = _daemon(self.tmp, FakeChecker([report(False)]),
+                    state="TRACKING", candidate=None)
+        d.run_loop(max_ticks=4)
+        health = d.state_store.load()["health"]
+        self.assertFalse(health["ok"])
+        self.assertTrue(health["checks"])          # the per-check detail survives
+        self.assertGreaterEqual(health["consecutive_failures"], 1)
 
     def test_all_healthy_never_trips(self):
         rb = mock.Mock(return_value=0)
@@ -234,7 +289,10 @@ class ExternalModeTests(unittest.TestCase):
     def test_trip_without_active_rollback_records_and_tells(self):
         rollback = mock.Mock(return_value=0)
         d = _daemon(self.tmp, FakeChecker([report(False)]),
-                    rollback=rollback, active_rollback=False)
+                    rollback=rollback, active_rollback=False,
+                    state="STAGED",
+                    candidate={"pkgver": "6.12.103_1",
+                               "kver": "6.12.103_1-cachy"})
         outcome = d.run_loop(max_ticks=10)
         self.assertEqual(outcome, TRIPPED)
         rollback.assert_not_called()                          # never drives grub

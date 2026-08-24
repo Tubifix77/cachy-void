@@ -147,11 +147,44 @@ class HealthDaemon:
                          f"{report.failures()}")
             self._record(report, consecutive)
             if consecutive >= self.cfg.trip_after:
-                self._trip(consecutive)
-                return TRIPPED
+                # A trip is a verdict on a KERNEL CANDIDATE, and §8.8 lists
+                # CANDIDATE_UNHEALTHY only as a transition out of STAGED or
+                # CONFIRMING. But this loop runs on every boot forever, so
+                # treating any run of failures as a kernel verdict mislabels an
+                # ordinary blip on a stable system AND freezes the kernel path
+                # (§8 preamble) with nothing staged to be unhealthy about.
+                # Found on real hardware: a laptop's WiFi dropping for 90s
+                # parked the state machine in CANDIDATE_UNHEALTHY with
+                # candidate=null while all five checks were green, and H4 fails
+                # transiently on most days of a laptop's life.
+                if self._candidate_in_trial():
+                    self._trip(consecutive)
+                    return TRIPPED
+                self.out(f"health warning: {consecutive} consecutive failures "
+                         f"({report.failures()}) — no kernel candidate is in "
+                         "flight, so this is a health warning and NOT a kernel "
+                         "verdict; the kernel state is left untouched (§8.8). "
+                         "The health block in the state store is the record.")
+                consecutive = 0      # say it once per episode, keep watching
             ticks += 1
             self.sleep(self.cfg.interval_s)
         return HEALTHY
+
+    def _candidate_in_trial(self) -> bool:
+        """Is a kernel candidate actually on trial right now?
+
+        The guard that makes a trip a *kernel* verdict rather than a general
+        health complaint. Both halves matter: the state must be STAGED or
+        CONFIRMING **and** a candidate must exist, because a state file can
+        carry the former without the latter (which is exactly the wreckage the
+        old unguarded trip left behind).
+        """
+        try:
+            state = self.state_store.load()
+        except OSError:
+            return False
+        return (state.get("state") in ("STAGED", "CONFIRMING")
+                and bool((state.get("candidate") or {}).get("kver")))
 
     def _trip(self, consecutive: int) -> int:
         self._set_state(_health.UNHEALTHY)

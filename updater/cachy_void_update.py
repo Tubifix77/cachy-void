@@ -277,9 +277,20 @@ def _kernel_report(config: Config, xbps, out) -> None:
         elif cand and name == "CONFIRMING":
             out(f"kernel candidate: {cand} booted and is ON TRIAL — the confirm "
                 "service promotes it once its health battery passes")
-        elif cand and name in ("CANDIDATE_UNHEALTHY", "ROLLED_BACK"):
-            out(f"kernel candidate: {cand} did NOT pass ({name}) — the kernel path "
-                "is frozen until you acknowledge it; userspace updates continue")
+        elif name in FROZEN_STATES:
+            # Note the missing `cand and` guard: requiring a candidate here is
+            # how a frozen kernel path stayed INVISIBLE on real hardware. The
+            # freeze is the thing worth reporting, and it can outlive (or never
+            # have had) a candidate at all.
+            if cand:
+                out(f"kernel candidate: {cand} did NOT pass ({name}) — the kernel "
+                    "path is frozen until you acknowledge it; userspace updates "
+                    "continue")
+            else:
+                out(f"kernel path FROZEN ({name}) with no candidate recorded — "
+                    "most likely a health blip was logged as a kernel failure. "
+                    "Userspace updates are unaffected.")
+            out("  resume kernel updates with:  cachy-void-update --kernel-ack")
 
         # Recovery visibility: if the running kernel is not the recorded
         # known-good one, say that going back is possible. The front-end keys
@@ -702,8 +713,11 @@ def cmd_pending(config: Config, out=print, run=_run) -> int:
                              "mode": (state.get("grub") or {}).get("mode") or None}
         if cand and name == "STAGED":
             payload["attention"].append("kernel-staged")
-        elif cand and name in ("CANDIDATE_UNHEALTHY", "ROLLED_BACK"):
-            payload["attention"].append("kernel-unhealthy")
+        elif name in FROZEN_STATES:
+            # Same correction as the human readout: the freeze is reportable on
+            # its own, with or without a candidate to blame it on.
+            payload["attention"].append("kernel-frozen" if not cand
+                                        else "kernel-unhealthy")
         series = state.get("base_series") or ""
         if config.kernel_enable and series:
             try:
@@ -824,6 +838,102 @@ def cmd_snapshots(config: Config, out=print, run=_run) -> int:
     return EXIT_OK
 
 
+# States that freeze the kernel path until a human says "I have dealt with it"
+# (§8.8's last row). Userspace updates continue throughout — only kernel work
+# waits — but there was no way to leave them: the spec names
+# `cachy-void-update kernel ack` and the CLI never grew it, so a box that landed
+# in one was stuck short of hand-editing JSON. Found the hard way on real
+# hardware, where a dropped WiFi connection parked a perfectly healthy laptop in
+# CANDIDATE_UNHEALTHY.
+FROZEN_STATES = ("CANDIDATE_UNHEALTHY", "ROLLED_BACK", "AWAIT_HUMAN_SERIES",
+                 "AWAIT_HUMAN_TEMPLATE", "AWAIT_HUMAN_PATCH", "AWAIT_HUMAN_BUILD",
+                 "HALT_HASH_MISMATCH")
+
+
+def cmd_kernel_ack(config: Config, out=print, *, assume_yes: bool = False,
+                   ask=input) -> int:
+    """§8.8 — acknowledge a frozen kernel state and return to TRACKING.
+
+    Deliberately does nothing else: it does not install, remove, re-stage or
+    touch a bootloader. It says what is frozen and why that matters, archives
+    any candidate into ``history`` so the episode is not simply erased, and
+    clears the freeze. Confirmed, because "the thing that went wrong is dealt
+    with" is a claim only the operator can make.
+    """
+    store = grub.KernelStateStore(config.kernel_state_path)
+    try:
+        state = store.load()
+    except (OSError, ValueError) as exc:
+        out(f"error: cannot read kernel state: {exc}")
+        return EXIT_KERNEL
+    name = state.get("state") or ""
+    if name not in FROZEN_STATES:
+        out(f"kernel state is {name or 'unset'} — nothing to acknowledge "
+            "(this command only clears a frozen state).")
+        return EXIT_OK
+
+    cand = (state.get("candidate") or {}).get("kver")
+    out(f"kernel state: {name}")
+    if cand:
+        out(f"  candidate in flight: {cand}")
+    else:
+        # The exact shape of the watchdog bug: a freeze with nothing frozen.
+        out("  no candidate is recorded, so this freeze is not about a kernel "
+            "that failed — most likely a health blip was recorded as one by a "
+            "watchdog older than this version.")
+    health = state.get("health") or {}
+    if health:
+        out(f"  last health check: ok={health.get('ok')} "
+            f"at {health.get('ts') or 'unknown'}")
+        failed = [k for k, v in (health.get("checks") or {}).items() if not v]
+        if failed:
+            out(f"  failing checks: {', '.join(sorted(failed))}")
+    out("  while frozen, KERNEL work is paused; userspace updates are unaffected.")
+    out("Acknowledging returns the kernel path to TRACKING. Nothing is installed, "
+        "removed, or re-staged.")
+
+    if not assume_yes:
+        try:
+            reply = ask("Acknowledge and resume kernel updates? [y/N] ")
+        except EOFError:
+            reply = ""
+        if (reply or "").strip().lower() not in ("y", "yes"):
+            out("left frozen — nothing changed.")
+            return EXIT_OK
+
+    if cand:
+        hist = list(state.get("history") or [])
+        hist.append({"state": name, "candidate": state.get("candidate"),
+                     "acked": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        state["history"] = hist
+    state["candidate"] = None
+    state["staged_boot_id"] = None
+    state["state"] = "TRACKING"
+    try:
+        store.save(state)
+    except OSError as exc:
+        out(f"error: could not write kernel state: {exc}")
+        return EXIT_KERNEL
+    out("kernel state -> TRACKING; kernel updates resume with the next run.")
+    return EXIT_OK
+
+
+def _march_label(config: Config) -> str:
+    """" / x86-64-v2" read from the build profile, or "" when unknown.
+
+    The header used to hard-code v3 and printed that on a v2 machine — a small
+    lie, but in the one pane whose whole job is telling the truth about this
+    box. The march lives in void-packages' etc/conf (§1.1), which is where the
+    build actually gets it from.
+    """
+    try:
+        text = (config.void_packages / "etc" / "conf").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    m = re.search(r"-march=([A-Za-z0-9_-]+)", text)
+    return f" / {m.group(1)}" if m else ""
+
+
 def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
     """Read-only overview of every update tier — the 'what's pending' view.
 
@@ -861,7 +971,7 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
     except OSError:
         out("    unknown — xbps-install unavailable")
 
-    out("\n[2] Performance overlay (rebuilt at -O3 / x86-64-v3)")
+    out(f"\n[2] Performance overlay (rebuilt at -O3{_march_label(config)})")
     try:
         plan = build_queue(xbps, config.targets, config.blacklist,
                            config.repo_strs, always_build=_always_build(config))
@@ -2030,6 +2140,9 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--sync", action="store_true", help="Stage 1: rebase onto upstream")
     action.add_argument("--check", action="store_true", help="Stage 2: print the queue (read-only)")
     action.add_argument("--status", action="store_true", help="read-only overview of all update tiers")
+    action.add_argument("--kernel-ack", dest="kernel_ack", action="store_true",
+                       help="§8.8: acknowledge a frozen kernel state "
+                            "(CANDIDATE_UNHEALTHY etc.) and resume kernel updates")
     action.add_argument("--snapshots", action="store_true",
                        help="list pre-deploy snapshots and how to restore one "
                             "on this host (read-only)")
@@ -2122,6 +2235,8 @@ def main(argv: Optional[Sequence[str]] = None, *,
                 return _park(out, "health-daemon: degraded environment — parking "
                              "with no supervisor changes (sv down to stop).")
             return EXIT_OK if outcome == HEALTHY else EXIT_KERNEL
+        if args.kernel_ack:
+            return cmd_kernel_ack(config, out=out, assume_yes=args.yes)
         if args.snapshots:
             # No solver either: the inventory is a btrfs list plus a journal read.
             return cmd_snapshots(config, out=out)

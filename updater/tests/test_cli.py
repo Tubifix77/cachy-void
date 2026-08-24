@@ -1993,3 +1993,196 @@ class SnapshotCommandTests(unittest.TestCase):
             Path.read_text = real
         self.assertEqual(rc, cli.EXIT_OK)
         self.assertIn("Cachy-Void — snapshots", out.text())
+
+
+class KernelAckTests(unittest.TestCase):
+    """§8.8 — the escape from a frozen kernel path.
+
+    This exists because a real laptop reached CANDIDATE_UNHEALTHY (a dropped
+    WiFi connection, no kernel staged) and there was no way out: the spec names
+    `cachy-void-update kernel ack` and the CLI never grew it. So the tests care
+    that it clears the freeze, that it does NOTHING else, and that it refuses to
+    pretend when there is nothing frozen.
+    """
+
+    def _cfg(self, **over):
+        tmp = tempfile.mkdtemp()
+        st = grub_mod.default_state(base_series="6.12", ported_version="6.12.95_1")
+        st.update(over)
+        cfg = cli.Config(void_packages=Path("/vp"), state_dir=Path(tmp))
+        grub_mod.KernelStateStore(cfg.kernel_state_path).save(st)
+        return cfg
+
+    def _state(self, cfg):
+        return grub_mod.KernelStateStore(cfg.kernel_state_path).load()
+
+    def test_the_real_world_case_clears_with_no_candidate(self):
+        # Exactly the state found on the box: frozen, healthy, nothing staged.
+        cfg = self._cfg(state="CANDIDATE_UNHEALTHY", candidate=None,
+                        known_good={"kver": "6.12.103_1-cachy"},
+                        health={"ok": True, "checks": {"H4_network": True},
+                                "ts": "2026-08-24T23:39:46Z",
+                                "consecutive_failures": 0})
+        out = Sink()
+        rc = cli.cmd_kernel_ack(cfg, out=out, assume_yes=True)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertEqual(self._state(cfg)["state"], "TRACKING")
+        self.assertIn("no candidate is recorded", out.text())
+
+    def test_it_names_the_freeze_and_says_userspace_is_unaffected(self):
+        cfg = self._cfg(state="CANDIDATE_UNHEALTHY", candidate=None)
+        out = Sink()
+        cli.cmd_kernel_ack(cfg, out=out, assume_yes=True)
+        t = out.text()
+        self.assertIn("CANDIDATE_UNHEALTHY", t)
+        self.assertIn("userspace updates are unaffected", t)
+
+    def test_a_real_candidate_is_archived_not_erased(self):
+        # The episode is history worth keeping; silently dropping it would make
+        # a repeat failure look like a first one.
+        cand = {"pkgver": "6.12.103_1", "kver": "6.12.103_1-cachy"}
+        cfg = self._cfg(state="CANDIDATE_UNHEALTHY", candidate=cand)
+        cli.cmd_kernel_ack(cfg, out=Sink(), assume_yes=True)
+        st = self._state(cfg)
+        self.assertEqual(st["state"], "TRACKING")
+        self.assertIsNone(st["candidate"])
+        self.assertEqual(len(st["history"]), 1)
+        self.assertEqual(st["history"][0]["candidate"], cand)
+        self.assertEqual(st["history"][0]["state"], "CANDIDATE_UNHEALTHY")
+
+    def test_it_refuses_to_pretend_when_nothing_is_frozen(self):
+        cfg = self._cfg(state="TRACKING")
+        out = Sink()
+        rc = cli.cmd_kernel_ack(cfg, out=out, assume_yes=True)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("nothing to acknowledge", out.text())
+        self.assertEqual(self._state(cfg)["state"], "TRACKING")
+
+    def test_a_staged_candidate_is_not_something_to_acknowledge(self):
+        # STAGED is a normal, in-flight state — clearing it would discard a
+        # kernel that is simply waiting for its trial boot.
+        cfg = self._cfg(state="STAGED",
+                        candidate={"kver": "6.12.103_1-cachy"})
+        cli.cmd_kernel_ack(cfg, out=Sink(), assume_yes=True)
+        self.assertEqual(self._state(cfg)["state"], "STAGED")
+
+    def test_every_frozen_state_is_clearable(self):
+        for name in cli.FROZEN_STATES:
+            cfg = self._cfg(state=name)
+            cli.cmd_kernel_ack(cfg, out=Sink(), assume_yes=True)
+            self.assertEqual(self._state(cfg)["state"], "TRACKING", name)
+
+    def test_declining_the_prompt_changes_nothing(self):
+        cfg = self._cfg(state="CANDIDATE_UNHEALTHY", candidate=None)
+        out = Sink()
+        rc = cli.cmd_kernel_ack(cfg, out=out, assume_yes=False, ask=lambda _p: "n")
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("left frozen", out.text())
+        self.assertEqual(self._state(cfg)["state"], "CANDIDATE_UNHEALTHY")
+
+    def test_a_closed_stdin_is_treated_as_no(self):
+        def eof(_p):
+            raise EOFError
+        cfg = self._cfg(state="CANDIDATE_UNHEALTHY")
+        cli.cmd_kernel_ack(cfg, out=Sink(), assume_yes=False, ask=eof)
+        self.assertEqual(self._state(cfg)["state"], "CANDIDATE_UNHEALTHY")
+
+    def test_it_installs_removes_and_stages_nothing(self):
+        # An ack is bookkeeping. If it ever needs a subprocess, that is a
+        # different command with a different confirmation.
+        cfg = self._cfg(state="CANDIDATE_UNHEALTHY",
+                        known_good={"kver": "6.12.103_1-cachy"})
+        before = self._state(cfg)
+        cli.cmd_kernel_ack(cfg, out=Sink(), assume_yes=True)
+        after = self._state(cfg)
+        self.assertEqual(after["known_good"], before["known_good"])
+        self.assertEqual(after["ported_version"], before["ported_version"])
+        self.assertEqual(after["base_series"], before["base_series"])
+
+    def test_it_is_wired_into_main(self):
+        cfg = self._cfg(state="CANDIDATE_UNHEALTHY")
+        out = Sink()
+        rc = cli.main(["--kernel-ack", "--yes"], config=cfg, out=out)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertEqual(self._state(cfg)["state"], "TRACKING")
+
+
+class FrozenStateVisibilityTests(unittest.TestCase):
+    """A frozen kernel path must be VISIBLE, with or without a candidate.
+
+    The original readout required a candidate to say anything, so the box that
+    prompted all this reported a clean bill of health while its kernel path was
+    frozen — the failure mode being fixed, not a hypothetical.
+    """
+
+    def _cfg(self, **over):
+        tmp = tempfile.mkdtemp()
+        st = grub_mod.default_state(base_series="6.12", ported_version="6.12.95_1")
+        st.update(over)
+        cfg = cli.Config(void_packages=Path("/vp"), state_dir=Path(tmp))
+        grub_mod.KernelStateStore(cfg.kernel_state_path).save(st)
+        return cfg
+
+    def test_status_reports_a_freeze_that_has_no_candidate(self):
+        cfg = self._cfg(state="CANDIDATE_UNHEALTHY", candidate=None,
+                        known_good={"kver": "6.12.103_1-cachy"})
+        out = Sink()
+        cli._kernel_report(cfg, FakeXbps(), out)
+        t = out.text()
+        self.assertIn("FROZEN", t)
+        self.assertIn("--kernel-ack", t)
+        self.assertIn("Userspace updates are unaffected", t)
+
+    def test_status_still_names_the_candidate_when_there_is_one(self):
+        cfg = self._cfg(state="CANDIDATE_UNHEALTHY",
+                        candidate={"kver": "6.12.103_1-cachy"},
+                        known_good={"kver": "6.12.95_1"})
+        out = Sink()
+        cli._kernel_report(cfg, FakeXbps(), out)
+        t = out.text()
+        self.assertIn("6.12.103_1-cachy did NOT pass", t)
+        self.assertIn("--kernel-ack", t)
+
+    def test_pending_flags_a_candidateless_freeze_distinctly(self):
+        # A front-end paints "a kernel failed" differently from "the path is
+        # frozen for no visible reason", so the tokens stay distinct.
+        cfg = self._cfg(state="CANDIDATE_UNHEALTHY", candidate=None)
+        out = Sink()
+        cli.cmd_pending(cfg, out=out, run=lambda a: cp(0, ""))
+        d = json.loads(out.text())
+        self.assertIn("kernel-frozen", d["attention"])
+        self.assertNotIn("kernel-unhealthy", d["attention"])
+
+    def test_pending_flags_a_real_unhealthy_candidate_as_before(self):
+        cfg = self._cfg(state="CANDIDATE_UNHEALTHY",
+                        candidate={"kver": "6.12.103_1-cachy"})
+        out = Sink()
+        cli.cmd_pending(cfg, out=out, run=lambda a: cp(0, ""))
+        d = json.loads(out.text())
+        self.assertIn("kernel-unhealthy", d["attention"])
+
+    def test_a_healthy_tracking_box_flags_neither(self):
+        cfg = self._cfg(state="TRACKING")
+        out = Sink()
+        cli.cmd_pending(cfg, out=out, run=lambda a: cp(0, ""))
+        d = json.loads(out.text())
+        self.assertNotIn("kernel-frozen", d["attention"])
+        self.assertNotIn("kernel-unhealthy", d["attention"])
+
+
+class MarchLabelTests(unittest.TestCase):
+    """The overlay tier used to hard-code x86-64-v3 and printed it on a v2 box —
+    a small lie, in the one pane whose whole job is telling the truth."""
+
+    def test_it_reads_the_real_march_from_the_build_profile(self):
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "etc").mkdir()
+        (tmp / "etc" / "conf").write_text(
+            'XBPS_CFLAGS="-march=x86-64-v2 -mtune=generic -O3"\n', encoding="utf-8")
+        cfg = cli.Config(void_packages=tmp, state_dir=Path(tempfile.mkdtemp()))
+        self.assertEqual(cli._march_label(cfg), " / x86-64-v2")
+
+    def test_an_unreadable_profile_says_nothing_rather_than_guessing(self):
+        cfg = cli.Config(void_packages=Path("/nonexistent-vp"),
+                         state_dir=Path(tempfile.mkdtemp()))
+        self.assertEqual(cli._march_label(cfg), "")
