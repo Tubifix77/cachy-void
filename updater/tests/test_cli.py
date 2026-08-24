@@ -2375,17 +2375,19 @@ class DriverSplitTests(unittest.TestCase):
         self.assertIn("2 package update(s), 1 driver/firmware update(s)", out.text())
 
 
-class StaleCheckoutTests(unittest.TestCase):
-    """"No kernel news" must not be able to mean "nobody has looked".
+class KernelBumpDetectionTests(unittest.TestCase):
+    """Where the "a new kernel exists" check actually looks.
 
-    The kernel bump check compares against the linux template in the LOCAL
-    void-packages checkout, which only a sync refreshes — unlike tier [1], which
-    memory-syncs the binary repo every time and is always current. On the
-    testbed that checkout was nine days old and still read 6.12.103 while Void
-    had shipped 6.12.104, so the "Update kernel" prompt was silently absent.
+    It used to look ONLY at the linux template in the local void-packages
+    checkout, which advances only when something runs a sync. On the testbed
+    that checkout was nine days old and still read 6.12.103, so the check said
+    nothing — while linux6.12 6.12.104_1 sat in the very same --status output
+    as a held package. The owner asked whether the fix made it look in the
+    right place. It does now: the REPOSITORY is asked too, and the repository
+    is never stale.
     """
 
-    def _cfg(self, age_days=None, template="6.12.103"):
+    def _cfg(self, age_days=None, template="6.12.103", ported="6.12.103_1"):
         import os
         import time as _t
         tmp = Path(tempfile.mkdtemp())
@@ -2399,36 +2401,87 @@ class StaleCheckoutTests(unittest.TestCase):
             fh.write_text("x\n", encoding="utf-8")
             when = _t.time() - age_days * 86400
             os.utime(fh, (when, when))
-        state_dir = Path(tempfile.mkdtemp())
-        cfg = cli.Config(void_packages=tmp, state_dir=state_dir)
-        st = grub_mod.default_state(base_series="6.12", ported_version="6.12.103_1")
+        cfg = cli.Config(void_packages=tmp, state_dir=Path(tempfile.mkdtemp()))
+        st = grub_mod.default_state(base_series="6.12", ported_version=ported)
         grub_mod.KernelStateStore(cfg.kernel_state_path).save(st)
         return cfg
 
-    def _report(self, cfg):
+    @staticmethod
+    def _repo(version):
+        """A run() that answers the repository query with `version` (or fails)."""
+        def run(args, cwd=None):
+            a = list(args)
+            if a[:3] == ["xbps-query", "-R", "-M"]:
+                if version is None:
+                    return cp(1, "", "no repo")
+                return cp(0, f"linux6.12-{version}\n")
+            return cp(0, "")
+        return run
+
+    def _report(self, cfg, version):
         out = Sink()
-        cli._kernel_report(cfg, FakeXbps(), out)
+        cli._kernel_report(cfg, FakeXbps(), out, run=self._repo(version))
         return out.text()
 
-    def test_a_stale_checkout_is_disclosed_when_there_is_no_bump(self):
-        t = self._report(self._cfg(age_days=9))
-        self.assertIn("9 days ago", t)
-        self.assertIn("--sync", t)
-
-    def test_a_fresh_checkout_stays_quiet(self):
-        # Nothing to say: the check is current and found nothing.
-        t = self._report(self._cfg(age_days=0.5))
-        self.assertNotIn("days ago", t)
-
-    def test_a_real_bump_is_reported_instead_of_the_age(self):
-        # When the checkout DID see something, the age is irrelevant noise.
-        t = self._report(self._cfg(age_days=9, template="6.12.104"))
+    def test_the_repository_reveals_a_bump_the_checkout_cannot_see(self):
+        # THE bug, reproduced: stale checkout, newer kernel in the repository.
+        t = self._report(self._cfg(age_days=9), "6.12.104_1")
+        self.assertIn("Void is shipping linux6.12 6.12.104_1", t)
         self.assertIn("port linux-cachy", t)
-        self.assertNotIn("days ago", t)
 
-    def test_an_unknowable_age_says_nothing_rather_than_guessing(self):
-        t = self._report(self._cfg(age_days=None))
-        self.assertNotIn("days ago", t)
+    def test_it_says_the_checkout_has_not_caught_up(self):
+        # Honest about WHY the two disagree, so the next step makes sense.
+        t = self._report(self._cfg(age_days=9), "6.12.104_1")
+        self.assertIn("checkout here is 9 days old", t)
+        self.assertIn("Update syncs it", t)
 
-    def test_the_age_helper_reports_minus_one_when_it_cannot_tell(self):
-        self.assertEqual(cli._checkout_age_days("/nonexistent-void-packages"), -1.0)
+    def test_the_repository_is_queried_with_a_memory_sync(self):
+        # -M is what makes it current without root and without touching state.
+        seen = []
+
+        def run(args, cwd=None):
+            seen.append(list(args))
+            return cp(0, "linux6.12-6.12.104_1\n")
+        cli._kernel_report(self._cfg(age_days=9), FakeXbps(), Sink(), run=run)
+        self.assertIn(["xbps-query", "-R", "-M", "-p", "pkgver", "linux6.12"], seen)
+
+    def test_nothing_newer_anywhere_stays_quiet(self):
+        t = self._report(self._cfg(age_days=0.5), "6.12.103_1")
+        self.assertNotIn("port linux-cachy", t)
+        self.assertNotIn("days old", t)
+
+    def test_an_older_repository_version_is_not_a_bump(self):
+        # A box ahead of the repo (locally ported further) must not be told to
+        # port backwards.
+        t = self._report(self._cfg(age_days=9, ported="6.12.110_1"), "6.12.104_1")
+        self.assertNotIn("port linux-cachy", t)
+
+    def test_a_fresh_checkout_that_already_knows_reports_from_the_template(self):
+        # When the checkout HAS caught up, the original path reports it and the
+        # repository note is not needed.
+        t = self._report(self._cfg(age_days=0.2, template="6.12.104"), "6.12.104_1")
+        self.assertIn("upstream linux6.12 is at 6.12.104_1", t)
+        self.assertNotIn("Void is shipping", t)
+
+    def test_neither_source_available_admits_it(self):
+        # "No newer kernel" and "I could not check" are different answers, and
+        # only one of them should reassure anybody.
+        t = self._report(self._cfg(age_days=9), None)
+        self.assertIn("could not query the repository", t)
+        self.assertIn("9 days old", t)
+
+    def test_a_failed_repo_query_with_a_fresh_checkout_stays_quiet(self):
+        t = self._report(self._cfg(age_days=0.5), None)
+        self.assertEqual(t.count("could not query"), 0)
+
+    def test_the_version_parser_handles_the_real_output(self):
+        self.assertEqual(
+            cli.upstream_series_version("6.12", self._repo("6.12.104_1")),
+            "6.12.104_1")
+        self.assertEqual(
+            cli.upstream_series_version("6.12", self._repo(None)), "")
+
+    def test_the_parser_survives_junk(self):
+        def run(args, cwd=None):
+            return cp(0, "not-a-pkgver\n")
+        self.assertEqual(cli.upstream_series_version("6.12", run), "")

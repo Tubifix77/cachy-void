@@ -226,6 +226,36 @@ def _always_build(config: Config) -> list[str]:
         return []
 
 
+def upstream_series_version(series: str, run) -> str:
+    """The linux<series> version Void is offering RIGHT NOW, or "".
+
+    Read from the REPOSITORY index with -M (memory sync), not from the local
+    void-packages checkout. The checkout only advances when something runs a
+    sync, so a box that has not synced recently cannot see a kernel Void
+    shipped days ago — which is exactly what the testbed hit: a nine-day-old
+    checkout still reading 6.12.103 while 6.12.104 sat in the very same
+    --status output as a held package. The repository is always current for the
+    cost of one unprivileged index fetch, so detection asks it too.
+
+    The checkout still governs the BUILD (§8.4 regenerates the template from
+    it), and Update's first step is a sync — so a bump found here is buildable
+    by the time anything acts on it.
+    """
+    try:
+        cp = run(["xbps-query", "-R", "-M", "-p", "pkgver", f"linux{series}"])
+    except OSError:
+        return ""
+    if cp.returncode != 0:
+        return ""
+    token = (cp.stdout or "").strip().splitlines()
+    if not token:
+        return ""
+    try:
+        return split_pkgver(token[0].strip())[1]
+    except (ValueError, KeyError, ParseError):
+        return ""   # a repo that answers something unparseable is a no-answer
+
+
 def _checkout_age_days(void_packages) -> float:
     """Days since the void-packages checkout last fetched, or -1 if unknowable.
 
@@ -241,7 +271,7 @@ def _checkout_age_days(void_packages) -> float:
     return -1.0
 
 
-def _kernel_report(config: Config, xbps, out) -> None:
+def _kernel_report(config: Config, xbps, out, run=_run) -> None:
     """§8.2 bump classification — informational (template regen §8.4 is a
     human step for now). Never fails the run."""
     if not config.kernel_enable:
@@ -334,18 +364,34 @@ def _kernel_report(config: Config, xbps, out) -> None:
             out(f"kernel: tracked series linux{series} is gone upstream — "
                 "human decision required (§8.2).")
         else:
-            # Silence here is ambiguous, and that ambiguity hid a real bump: this
-            # check compares against the linux template in the LOCAL
-            # void-packages checkout, which only a sync refreshes. On the testbed
-            # that checkout was nine days old and still said 6.12.103 while Void
-            # had shipped 6.12.104 — so "no kernel news" actually meant "nobody
-            # has looked recently". Tier [1] memory-syncs the binary repo and is
-            # always current; this one cannot, so it says how old it is instead.
-            age = _checkout_age_days(config.void_packages)
-            if age >= 2:
-                out(f"kernel: no newer version in a void-packages checkout last "
-                    f"refreshed {int(age)} days ago — Update (or --sync) "
-                    "refreshes this check.")
+            # The checkout said nothing — but the checkout is only as current as
+            # the last sync, so ASK THE REPOSITORY, which is never stale. This is
+            # the fix for the bug the owner surfaced: a nine-day-old checkout hid
+            # linux6.12 6.12.104 that was sitting in the same --status output.
+            ported = state.get("ported_version", "")
+            repo_ver = upstream_series_version(series, run)
+            newer = False
+            if repo_ver and ported:
+                try:
+                    newer = xbps.vercmp(repo_ver, ported) > 0
+                except (XbpsError, OSError):
+                    newer = False
+            if newer:
+                out(f"kernel: Void is shipping linux{series} {repo_ver}; ported "
+                    f"base is {ported} — port linux-cachy (§2.6/§8.4).")
+                age = _checkout_age_days(config.void_packages)
+                if age >= 1:
+                    out(f"  (found in the repository; the void-packages checkout "
+                        f"here is {int(age)} days old and has not caught up — "
+                        "Update syncs it as its first step.)")
+            elif not repo_ver:
+                # Could not ask either source: say so rather than implying "no".
+                age = _checkout_age_days(config.void_packages)
+                if age >= 2:
+                    out(f"kernel: could not query the repository, and the "
+                        f"void-packages checkout here is {int(age)} days old — "
+                        "run Update (or --sync) before trusting this as 'no "
+                        "newer kernel'.")
     except (grub.GrubError, XbpsError, OSError) as exc:
         out(f"warning: kernel bump check skipped: {exc}")
 
@@ -1088,7 +1134,7 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
         rc = EXIT_QUERY
 
     out("\n[3] Kernel (linux-cachy / BORE)")
-    _kernel_report(config, xbps, out=lambda m: out("    " + m))
+    _kernel_report(config, xbps, out=lambda m: out("    " + m), run=run)
 
     out("\n[4] Maintenance / cleanup")
     try:
