@@ -394,11 +394,20 @@ class Updater(QWidget):
             "Never removes kernels.")
         self.btn_gpu = QPushButton("GPU / drivers")
         self.btn_gpu.setToolTip("Detected card, driver status, DKMS health (read-only)")
+        # Snapshots were taken before every update from the start, and there was
+        # no way to SEE them here - a safety net nobody can find is reached for
+        # only after it was needed. Read-only: it lists them and prints the
+        # restore commands for this machine; it never restores anything itself.
+        self.btn_snapshots = QPushButton("Snapshots")
+        self.btn_snapshots.setToolTip(
+            "Snapshots taken before past updates, what each one was for, and "
+            "how to go back to one on this machine (read-only)")
         actions.addWidget(self.btn_update)
         actions.addWidget(self.btn_kernel)
         actions.addWidget(self.btn_rollback)
         actions.addStretch(1)
         actions.addWidget(self.btn_clean)
+        actions.addWidget(self.btn_snapshots)
         actions.addWidget(self.btn_gpu)
         root.addLayout(actions)
         self.btn_rollback.hide()
@@ -450,12 +459,13 @@ class Updater(QWidget):
         self.btn_kernel.clicked.connect(self.update_kernel)
         self.btn_clean.clicked.connect(self.clean)
         self.btn_gpu.clicked.connect(self.gpu)
+        self.btn_snapshots.clicked.connect(self.snapshots)
         self.btn_pin.clicked.connect(self.pin_bore)
         self.btn_rollback.clicked.connect(self.rollback)
 
         self._buttons = (self.btn_check, self.btn_update, self.btn_kernel,
-                         self.btn_clean, self.btn_gpu, self.btn_pin,
-                         self.btn_rollback)
+                         self.btn_clean, self.btn_gpu, self.btn_snapshots,
+                         self.btn_pin, self.btn_rollback)
         self.check()  # populate on open
 
     # -- process plumbing -------------------------------------------------
@@ -757,6 +767,13 @@ class Updater(QWidget):
     def gpu(self):
         self._run(["--gpu"], self.out,   # read-only advisory, no confirm
                   activity="Reading GPU / driver state…")
+
+    def snapshots(self):
+        # Read-only, so no confirm - and deliberately NOT a one-click restore:
+        # changing which subvolume the machine boots is a decision, and this
+        # shows the commands so the person whose machine it is makes it.
+        self._run(["--snapshots"], self.out,
+                  activity="Reading snapshots…")
 
 
 def main():

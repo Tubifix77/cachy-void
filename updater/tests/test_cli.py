@@ -1848,3 +1848,148 @@ class PendingProbeTests(unittest.TestCase):
         rc = cli.main(["--pending"], config=self._cfg(tempfile.mkdtemp()), out=out)
         self.assertEqual(rc, cli.EXIT_OK)
         json.loads(out.text())
+
+
+class SnapshotCommandTests(unittest.TestCase):
+    """--snapshots: make the safety net visible, and never touch it.
+
+    The point of this command is that a net nobody can find is only reached for
+    after it was needed. So the tests care about two things: that each snapshot
+    is ANNOTATED with what that run actually did (a list of subvolume names tells
+    a user nothing about which one to go back to), and that nothing here mutates
+    anything — the restore commands are printed for a human to run.
+    """
+
+    LISTING = (
+        "ID 309 gen 3904 top level 281 path .cachy-snapshots/deploy-20260811T011412Z\n"
+        "ID 377 gen 4818 top level 281 path .cachy-snapshots/deploy-20260813T180630Z\n"
+        "ID 380 gen 5795 top level 281 path .cachy-snapshots/de-trial-plasma-20260820T002346Z\n")
+
+    TESTBED_FSTAB = "UUID=785e634b / btrfs defaults 0 0\n"
+
+    def _cfg(self, journals=None):
+        tmp = Path(tempfile.mkdtemp())
+        logs = tmp / "log"
+        for run_id, data in (journals or {}).items():
+            d = logs / f"run-{run_id}"
+            d.mkdir(parents=True)
+            (d / "journal.json").write_text(json.dumps(data), encoding="utf-8")
+        logs.mkdir(parents=True, exist_ok=True)
+        return cli.Config(void_packages=Path("/vp"), state_dir=tmp, log_root=logs,
+                          snapshot_dir="/.cachy-snapshots", snapshot_subvol="/")
+
+    def _run_ok(self, args):
+        a = list(args)
+        if a[:4] == ["sudo", "btrfs", "subvolume", "list"]:
+            return cp(0, self.LISTING)
+        return cp(0, "")
+
+    def _out(self, cfg, run=None, fstab=None):
+        """Run the command with /etc/fstab faked, since the recipe depends on it."""
+        real = Path.read_text
+        text = self.TESTBED_FSTAB if fstab is None else fstab
+
+        def fake(self, *a, **kw):
+            if str(self) == "/etc/fstab":
+                return text
+            return real(self, *a, **kw)
+        out = Sink()
+        Path.read_text = fake
+        try:
+            rc = cli.cmd_snapshots(cfg, out=out, run=run or self._run_ok)
+        finally:
+            Path.read_text = real
+        return rc, out.text()
+
+    def test_lists_every_snapshot_with_its_age_and_purpose(self):
+        rc, t = self._out(self._cfg())
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("deploy-20260811T011412Z", t)
+        self.assertIn("de-trial-plasma-20260820T002346Z", t)
+        self.assertIn("taken before trying a desktop (plasma)", t)
+        self.assertIn("automatic, taken just before an update", t)
+
+    def test_non_automatic_snapshots_are_marked_as_kept(self):
+        # Only deploy-* is ever pruned; saying so stops a user assuming their
+        # hand-made bookmark will survive on its own.
+        _, t = self._out(self._cfg())
+        line = [l for l in t.splitlines() if "only automatic ones are pruned" in l]
+        self.assertTrue(line)
+
+    def test_a_deploy_snapshot_is_annotated_from_its_journal(self):
+        cfg = self._cfg({"20260811T011412Z": {
+            "schema": 1, "phase": "done",
+            "deploy_bins": ["openbox", "mesa", "gamemode"], "failure": None}})
+        _, t = self._out(cfg)
+        self.assertIn("3 overlay packages deployed (openbox, mesa, gamemode)", t)
+
+    def test_an_upstream_only_run_says_so_rather_than_nothing(self):
+        cfg = self._cfg({"20260811T011412Z": {
+            "schema": 1, "phase": "done", "deploy_bins": [], "failure": None}})
+        _, t = self._out(cfg)
+        self.assertIn("upstream-only update (no overlay rebuild)", t)
+
+    def test_a_failed_run_is_flagged_because_that_changes_the_choice(self):
+        cfg = self._cfg({"20260813T180630Z": {
+            "schema": 1, "phase": "failed", "deploy_bins": ["qt5"],
+            "failure": {"pkg": "qt5", "exit": 40}}})
+        _, t = self._out(cfg)
+        self.assertIn("run FAILED on qt5", t)
+
+    def test_a_missing_journal_is_simply_unannotated(self):
+        _, t = self._out(self._cfg())          # no journals at all
+        self.assertIn("deploy-20260811T011412Z", t)
+        self.assertNotIn("overlay package", t)
+
+    def test_the_recipe_is_for_this_host_not_a_doc_pointer(self):
+        _, t = self._out(self._cfg())
+        self.assertIn("sudo btrfs subvolume set-default", t)
+        self.assertIn("pre-restore-", t)       # the current root is saved first
+        self.assertIn("sudo reboot", t)
+        self.assertIn("set-default 5", t)      # and the way back
+
+    def test_a_pinned_layout_refuses_with_a_reason(self):
+        _, t = self._out(self._cfg(),
+                         fstab="UUID=abc / btrfs rw,subvol=@ 0 1\n")
+        self.assertNotIn("sudo btrfs subvolume set-default /", t)
+        self.assertIn("silently ignored", t)
+
+    def test_it_says_out_loud_that_it_ran_nothing(self):
+        _, t = self._out(self._cfg())
+        self.assertIn("only ever reads", t)
+
+    def test_it_issues_no_command_beyond_the_granted_list(self):
+        seen = []
+
+        def run(args):
+            seen.append(list(args))
+            return cp(0, self.LISTING)
+        self._out(self._cfg(), run=run)
+        self.assertEqual(seen, [["sudo", "btrfs", "subvolume", "list", "-o",
+                                 "/.cachy-snapshots"]])
+
+    def test_no_snapshots_explains_rather_than_printing_an_empty_list(self):
+        _, t = self._out(self._cfg(), run=lambda a: cp(0, ""))
+        self.assertIn("none found", t)
+        self.assertIn("btrfs root", t)
+
+    def test_a_denied_listing_does_not_fail_the_command(self):
+        rc, t = self._out(self._cfg(), run=lambda a: cp(1, "", "denied"))
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("none found", t)
+
+    def test_snapshots_is_wired_into_main_without_a_solver(self):
+        real = Path.read_text
+
+        def fake(self, *a, **kw):
+            if str(self) == "/etc/fstab":
+                return SnapshotCommandTests.TESTBED_FSTAB
+            return real(self, *a, **kw)
+        Path.read_text = fake
+        try:
+            out = Sink()
+            rc = cli.main(["--snapshots"], config=self._cfg(), out=out)
+        finally:
+            Path.read_text = real
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("Cachy-Void — snapshots", out.text())

@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from engine.ddre import build_queue, topo_order, CycleError, MappingError  # noqa: E402
 from engine.journal import Journal, crash_report  # noqa: E402
 from engine.xbps import Xbps, XbpsError, ParseError, split_pkgver  # noqa: E402
-from engine.atomicio import sweep_tmp  # noqa: E402
+from engine.atomicio import read_json, sweep_tmp  # noqa: E402
 from engine.health import HealthChecker  # noqa: E402
 from engine import health as _health_mod  # noqa: E402
 from engine.health_daemon import HealthDaemon, DaemonConfig, DEGRADED, HEALTHY  # noqa: E402
@@ -718,6 +718,109 @@ def cmd_pending(config: Config, out=print, run=_run) -> int:
         payload["notes"].append(f"kernel state unreadable: {exc}")
 
     out(json.dumps(payload, indent=2, sort_keys=True))
+    return EXIT_OK
+
+
+def _deploy_annotation(config: Config, run_id: str) -> str:
+    """What the run behind a `deploy-*` snapshot actually did, from its journal.
+
+    Annotate, never dump (§4.10's habit): a list of subvolume names tells a user
+    nothing about which one to go back to, whereas "3 packages deployed" and
+    "this run FAILED" is the thing they are actually trying to remember. The
+    journal is witness-only (§7.6) and read strictly for display here.
+    """
+    try:
+        data = read_json(config.log_root / f"run-{run_id}" / "journal.json")
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    bins = [b for b in (data.get("deploy_bins") or []) if b]
+    phase = data.get("phase") or ""
+    bits = []
+    if bins:
+        shown = ", ".join(bins[:4]) + (", …" if len(bins) > 4 else "")
+        bits.append(f"{len(bins)} overlay package{'' if len(bins) == 1 else 's'} "
+                    f"deployed ({shown})")
+    elif phase == "done":
+        bits.append("upstream-only update (no overlay rebuild)")
+    if phase == "failed":
+        fail = data.get("failure") or {}
+        bits.append(f"run FAILED{' on ' + fail['pkg'] if fail.get('pkg') else ''}")
+    elif phase and phase != "done":
+        bits.append(f"run left at phase '{phase}'")
+    return "; ".join(bits)
+
+
+_SNAP_KIND_TEXT = {
+    snapshot.KIND_DEPLOY: "automatic, taken just before an update",
+    snapshot.KIND_MANUAL: "taken by hand",
+    snapshot.KIND_TRIAL: "taken before trying a desktop",
+    snapshot.KIND_OTHER: "unrecognised name",
+}
+
+
+def cmd_snapshots(config: Config, out=print, run=_run) -> int:
+    """§9.5b — show the safety net, and how to use it on THIS machine.
+
+    Read-only by construction: it lists snapshots through the grant §9.5 already
+    holds and prints the restore commands for the host's actual layout without
+    running any of them. Restoring a root filesystem is a decision, and the
+    person whose machine it is gets to make it with the commands in front of
+    them.
+    """
+    out("Cachy-Void — snapshots")
+    out("=" * 46)
+    snap_dir = config.snapshot_dir
+    try:
+        snaps = snapshot.list_snapshots(snap_dir=snap_dir, run=run)
+    except OSError as exc:
+        out(f"    cannot list snapshots: {exc}")
+        return EXIT_OK
+    if not snaps:
+        out(f"    none found under {snap_dir}")
+        out("    (pre-deploy snapshots need a btrfs root and the §9.5 snapshot "
+            "subvolume, which deploy.sh creates)")
+        return EXIT_OK
+
+    out(f"\n{len(snaps)} snapshot(s) under {snap_dir}, newest first:")
+    for s in snaps:
+        age = snapshot.age_text(s.stamp)
+        head = f"  {s.name}"
+        meta = _SNAP_KIND_TEXT.get(s.kind, "")
+        if s.label:
+            meta += f" ({s.label})"
+        out(f"{head}")
+        out(f"      {age + ' — ' if age else ''}{meta}"
+            + ("" if s.prunable else "   [kept: only automatic ones are pruned]"))
+        if s.run_id:
+            note = _deploy_annotation(config, s.run_id)
+            if note:
+                out(f"      {note}")
+
+    # The recipe, for this host and no other.
+    try:
+        fstab = Path("/etc/fstab").read_text(encoding="utf-8")
+    except OSError as exc:
+        out(f"\ncannot read /etc/fstab ({exc}) — no restore recipe offered")
+        return EXIT_OK
+    layout = snapshot.detect_restore_layout(fstab)
+    newest = next((s for s in snaps if s.kind == snapshot.KIND_DEPLOY), snaps[0])
+    plan = snapshot.restore_recipe(layout=layout, snapshot=newest,
+                                   snap_dir=snap_dir, mount=config.snapshot_subvol)
+    out(f"\nGoing back to one of these ({layout.detail}):")
+    if plan.supported:
+        out(f"\n  Shown for {newest.name} — substitute any name from the list above.")
+        for step in plan.steps:
+            out(f"    $ {step}")
+        if plan.undo:
+            out(f"\n  Changed your mind after rebooting:")
+            out(f"    $ {plan.undo}")
+    out("")
+    for n in plan.notes:
+        out(f"  * {n}")
+    out("")
+    out("  Nothing above was run: this command only ever reads.")
     return EXIT_OK
 
 
@@ -1927,6 +2030,9 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--sync", action="store_true", help="Stage 1: rebase onto upstream")
     action.add_argument("--check", action="store_true", help="Stage 2: print the queue (read-only)")
     action.add_argument("--status", action="store_true", help="read-only overview of all update tiers")
+    action.add_argument("--snapshots", action="store_true",
+                       help="list pre-deploy snapshots and how to restore one "
+                            "on this host (read-only)")
     action.add_argument("--pending", action="store_true",
                        help="fast machine-readable probe (JSON): what is waiting, "
                             "for pollers and front-ends")
@@ -2016,6 +2122,9 @@ def main(argv: Optional[Sequence[str]] = None, *,
                 return _park(out, "health-daemon: degraded environment — parking "
                              "with no supervisor changes (sv down to stop).")
             return EXIT_OK if outcome == HEALTHY else EXIT_KERNEL
+        if args.snapshots:
+            # No solver either: the inventory is a btrfs list plus a journal read.
+            return cmd_snapshots(config, out=out)
         if args.pending:
             # Deliberately ahead of build_xbps(): the probe must not pay for the
             # solver, which is what makes it cheap enough to poll.

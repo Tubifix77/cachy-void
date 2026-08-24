@@ -689,7 +689,7 @@ a new icon on someone's panel is not something to do silently.
 - **Failed install (exit 51):** XBPS transactions are per-run atomic at the package level. Run `xbps-pkgdb -a` to verify pkgdb integrity, then `sudo xbps-install -Su` from upstream mirrors to converge to a consistent state. The upstream binary always exists as the fallback for every overlay package.
 - **Bad kernel:** boot the previous kernel from the GRUB menu (it is always still installed, §2.5), then `vkpurge rm <bad-ver>` and rebuild. If the overlay repo itself is suspect, `sudo xbps-install -f linux<series>` from upstream restores a stock kernel.
 - **Nuke the overlay entirely:** remove `/etc/xbps.d/00-cachy-overlay.conf`, then `sudo xbps-install -Suf` of the affected targets from upstream mirrors. The base system was never anything but stock Void — this always converges.
-- **Roll back a bad userland deploy (btrfs hosts):** if pre-deploy snapshots are enabled (§9.5), restore the pre-deploy snapshot — `sudo btrfs subvolume set-default <id> <mount>` then reboot, or select it via grub-btrfs. A convenience over the always-converges path above, never a replacement for it.
+- **Roll back a bad userland deploy (btrfs hosts):** if pre-deploy snapshots are enabled (§9.5), restore the pre-deploy snapshot — `sudo btrfs subvolume set-default <id> <mount>` then reboot, or select it via grub-btrfs. A convenience over the always-converges path above, never a replacement for it. **Run `cachy-void-update --snapshots` (or the window's Snapshots button) first:** it lists what snapshots exist and what each update actually did, and prints the exact commands for this host's layout — including whether set-default works here at all (§9.5b).
 
 ---
 
@@ -1263,3 +1263,22 @@ New exit codes (extends §4.8 / §7.8):
 | 54 | pre-deploy snapshot command failed | untouched (aborted before deploy) |
 
 Deliverables (extends §6): the `[snapshot]` block in `updater.toml`; the three btrfs grants in `system/sudoers.d/cachy-void`; the snapshot logic in `engine/` (naturally `journal.py`-adjacent, but it writes no control state). grub-btrfs is an optional operator install, not a cachy-void dependency.
+
+### 9.5b Snapshot inventory & restore recipe (read-only)
+
+§9.5 takes the snapshots; this makes them **visible and usable**. A safety net nobody can find is one that gets reached for only after it was needed, and the runbook in §5 — correct as it is — lives in a document, not in the product. `--snapshots` (and the window's **Snapshots** button) lists what exists and prints the exact restore commands for the host it is running on. It executes none of them.
+
+Read-only by construction: the listing uses the `btrfs subvolume list` grant §9.5 already holds, and the layout comes from an unprivileged read of `/etc/fstab`. **No new privilege is added by this section.** Snapshot times come from the snapshot *name* rather than `btrfs subvolume show` (not in the grant) — names are UTC stamps by construction, so the information is already there.
+
+**Annotate, never dump.** A list of subvolume names cannot answer the only question that matters under stress: *which one do I want?* So each `deploy-*` entry is joined to its run's journal via the shared `run_id` (`deploy-<run_id>` ↔ `run-<run_id>/journal.json`, §7.6) and carries what that run actually did — the overlay packages it deployed, "upstream-only update", or **`run FAILED on <pkg>`**, which is precisely the entry a user is likely looking for. Snapshots that are not `deploy-*` are labelled with what they were taken *for* (`manual-*`, `de-trial-*` from `cachy-de-trial`) and marked **kept**, because `_prune` only ever removes `deploy-*` and letting someone assume otherwise about their own bookmark would be a lie of omission.
+
+**The recipe is host-specific, and refusing is a valid outcome.** Whether a restore is even possible is decided from fstab, because `btrfs subvolume set-default` is documented to be overridden by an explicit mount option:
+
+- **No `subvol=`/`subvolid=` on the root entry** (the layout a `btrfs-convert`ed root has — root *is* the top-level tree): a restore is four commands, and they are printed. In order: snapshot the **current** root first (so the restore is reversible in both directions), make a **writable** copy of the chosen read-only snapshot (setting a `-r` subvolume as default yields an unwritable root), `set-default` that copy **by path** (btrfs-progs accepts a path or an id; a path spares the user transcribing an id onto their root filesystem), then reboot — `set-default` takes effect on next mount. The undo is always printed alongside: `btrfs subvolume set-default 5 /`.
+- **A pinned `subvol=@` root** (the §9.1 recommended layout): **refused with the reason.** fstab wins over the default subvolume, so the restore would be a silent no-op and the machine would boot exactly what it booted before. The honest alternatives are named — edit fstab deliberately, use a snapshot-aware bootloader such as grub-btrfs, or mount the snapshot read-only and copy files out, which is often what was actually wanted. Rewriting fstab is **not** something this project does on someone's behalf.
+- **A non-btrfs root:** nothing is offered.
+
+Two consequences of a restore are stated up front rather than discovered afterwards: the snapshot directory will look **empty** from the restored root (nested subvolumes are not part of a snapshot — everything is still there, reachable by mounting `subvolid=5`), and where `/boot` lives **inside** the root tree (again, the converted layout) a restore **rewinds kernels and initramfs too**, so a bootloader entry naming a kernel that only exists in the current root will stop working.
+
+*A one-click restore is deliberately not part of this section.* It would need two further grants (`subvolume snapshot` without `-r`, and `set-default`) and, more to the point, changing which subvolume a machine boots is a decision — this shows the commands so the person whose machine it is makes it.
+

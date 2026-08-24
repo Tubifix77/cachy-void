@@ -77,38 +77,28 @@ it first is built. What remains of this section is the snapshot half — and it 
 extend the same probe rather than inventing a second one: a snapshot inventory
 would slot into that payload beside the upstream and kernel blocks.
 
-**Idea 2 — a snapshot restore surface ("go back to before an update").** §9.5
-takes snapshots religiously; §5 documents restoring one — but as a manual
-runbook. The affordance belongs in the GUI, next to (and clearly distinct from)
-"Boot known-good kernel": that button re-pins a *kernel*; this feature restores
-*userland*. Never reuse the word "rollback" across the two. Phased, because the
-privilege story differs per filesystem layout:
-  - **Phase R1 — see and understand (no new privileges).** A Snapshots pane:
-    list via the already-granted `btrfs subvolume list`, showing every snapshot
-    (`deploy-*`, `manual-*`, `de-trial-*` — prune only ever touches `deploy-*`),
-    its age, and — the annotate-never-dump touch — what the matching journal
-    run_id says that update *did* ("36 pkgs incl. mesa, firefox"). Then detect
-    the host's layout and render the exact §5 restore recipe for THIS machine,
-    not a generic doc pointer.
-  - **Phase R2 — one-click restore, where the layout permits (opt-in, spec
-    §4.1/§9.5 amendment).** On a root with no `subvol=` pin in fstab (the
-    btrfs-convert testbed is exactly this: root = top-level ID 5, fstab mounts
-    the bare UUID), restore is two commands: writable snapshot of the chosen
-    read-only one, then `btrfs subvolume set-default`, then a user-confirmed
-    reboot. Needs exactly two new sudoers grants: `btrfs subvolume snapshot`
-    (writable variant) and `btrfs subvolume set-default` — as narrow as the §9.5
-    originals. Take a `-r` safety snapshot of the current root first (already
-    granted), so restore itself is undoable. On the §9.1 `@` layout, fstab's
-    `subvol=@` ignores set-default and the honest move is Phase R1's recipe
-    (the snapper-style rename-swap needs mount+mv grants — too wide; refuse
-    rather than widen).
-  - **Verify-before-ship items**, named now so nobody assumes: (1) on the
-    converted testbed `/boot` lives *inside* the root tree (unlike §9.1 where
-    it is outside the `@` subvol), so a restore also rewinds `/boot` content —
-    how the foreign GRUB's hand-written menuentry resolves paths against a
-    changed default subvolume must be tested, not deduced; (2) post-restore
-    state must be visible ("running from restored snapshot X", get-default ≠ 5)
-    with cleanup guidance, or the box quietly accumulates mystery subvolumes.
+**Remaining: one-click restore (Phase R2).** The read-only half is built —
+`--snapshots` and the window's Snapshots button list every snapshot, annotate the
+automatic ones with what that run actually did, and print the exact restore
+commands for the host's own layout (architecture.md §9.5b). What is left is doing
+it *for* the user on the layouts where that is safe:
+  - Needs exactly two new sudoers grants — `btrfs subvolume snapshot` (the
+    writable variant) and `btrfs subvolume set-default` — as narrow as the §9.5
+    originals, plus a confirm dialog and a reboot prompt. The safety snapshot of
+    the current root uses the grant we already have.
+  - Only where the layout permits, which the engine already decides:
+    `LAYOUT_TOPLEVEL` yes, `LAYOUT_PINNED` refuses (fstab overrides the default
+    subvolume, so it would be a silent no-op) and that refusal is already
+    implemented and tested — R2 inherits it rather than re-deriving it.
+  - **Verify on hardware before shipping it**, and the specific thing to verify
+    is named in §9.5b: on a converted root `/boot` lives inside the root tree, so
+    a restore rewinds kernels too. How the foreign GRUB's hand-written menuentry
+    resolves against a changed default subvolume must be TESTED, not deduced —
+    which makes this the one remaining §2 item with a real hardware gate.
+  - Also unbuilt: showing post-restore state ("you are running from restored
+    snapshot X") — that needs `btrfs subvolume get-default`, a third grant, so it
+    is worth deciding whether it earns one or whether the R1 recipe's warning is
+    enough.
 
 Also noted in passing during the same survey, for whoever tends the testbed: the
 `ext2_saved` subvolume (btrfs-convert's undo image) still pins pre-conversion

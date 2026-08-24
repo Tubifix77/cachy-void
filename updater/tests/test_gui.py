@@ -422,3 +422,48 @@ class StagedKernelCardTests(unittest.TestCase):
         # The updater never reboots anyone; a button here would imply it might.
         from PyQt5.QtWidgets import QPushButton
         self.assertEqual(self.w.kernel_notice.findChildren(QPushButton), [])
+
+
+class SnapshotsButtonTests(unittest.TestCase):
+    """The Snapshots button: read-only, and deliberately NOT a restore button.
+
+    Restoring a root filesystem is a decision, so the window shows the commands
+    and stops. If this ever becomes one-click it needs a confirm dialog and a
+    privilege story it does not have today.
+    """
+
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        loader = importlib.machinery.SourceFileLoader("cachygui", str(GUI_PATH))
+        spec = importlib.util.spec_from_loader("cachygui", loader)
+        cls.mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.mod)
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.calls = []
+        self.mod.Updater._run = lambda s, args, target, **kw: self.calls.append(
+            (list(args), kw))
+        self.w = self.mod.Updater()
+        self.w.show()
+        self.calls.clear()          # drop the constructor's opening check()
+
+    def tearDown(self):
+        self.w.deleteLater()
+
+    def test_the_button_is_always_visible(self):
+        # Unlike rollback (revealed only when there is somewhere to go), the
+        # snapshot list is worth reaching before anything has gone wrong.
+        self.assertTrue(self.w.btn_snapshots.isVisible())
+
+    def test_it_runs_the_read_only_action_with_no_confirm(self):
+        self.w.snapshots()
+        self.assertEqual(len(self.calls), 1)
+        args, kw = self.calls[0]
+        self.assertEqual(args, ["--snapshots"])
+        self.assertNotIn("confirm", kw)      # nothing to confirm: it only reads
+
+    def test_it_is_disabled_while_a_command_runs(self):
+        self.assertIn(self.w.btn_snapshots, self.w._buttons)
