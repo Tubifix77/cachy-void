@@ -36,13 +36,23 @@ So the real cost of a desktop is **discovery**, and it scales with how much the
 desktop assumes: Openbox assumed nothing and needed everything; Plasma provided
 everything its own way and assumed systemd. Budget login cycles, not lines.
 
-- **XFCE** is the most plausible next one — `xfconf-query` is a clean config
-  mechanism and the dual-boot Debian on the test laptop runs XFCE, so its *look* can
-  be studied there. But it would still need installing on the Void side to develop
-  against, exactly as Plasma did. That part is at least safe and reversible now:
-  wrap it in `cachy-de-trial`.
-- **GTK/GNOME is the lowest priority.** It resists theming, ships its own network
-  applet, and its users are the least likely to want a Qt-shaped look.
+- **GTK/GNOME is the only one left, and the lowest priority.** It resists
+  theming, ships its own network applet, and its users are the least likely to
+  want a Qt-shaped look. Wrap it in `cachy-de-trial` as Xfce was.
+
+**What Xfce actually cost, now that it is done** — worth reading before starting
+GNOME, because it revises the estimate above. The offline half was cheap and
+mostly correct: xfconf is a clean mechanism, and Arc-Dark shipping its own
+`xfwm4/` decorations meant no bitmap titlebars to author. The expensive half was
+everything only a screen shows, and it arrived as a *stream of small wrong
+details* rather than one big problem: a grey menu icon that was the wallpaper
+motif instead of the brand mark, a dock launcher missing the `items` array that
+makes a launcher work, an icon theme whose cache hid every alias, three grip
+lines that took three diagnoses (not the panel lock, not separator style — the
+tasklist's own `show-handle`), a tray missing volume and media because Xfce has
+no plugin for either, and a display layout Xfce restores at login that silently
+put the whole desktop on a closed laptop panel. None of that was findable
+offline. Budget login cycles and an owner looking at it, exactly as §1 says.
 
 **Rules for any of them** (unchanged, and they are what keep this from sprawling):
 never install a desktop, never override a user's own theme, and an unrecognised

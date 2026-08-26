@@ -777,6 +777,57 @@ Still unverified: whether the panel repaints on a background-colour change
 without a restart. No panel restart is issued either way — a stale colour until
 the next login costs far less than restarting a bar someone is working in.
 
+**What the live session added (2026-08-26).** Everything above was settled
+offline; this is what only a screen could tell us, and it is most of the work.
+
+- **The panel needs editing, not just recolouring.** The owner compared Xfce
+  against LXQt and asked for six changes, so this applier does something the
+  others do not: it edits Xfce's panel layout. Removed — the workspace switcher,
+  the username (`actions`) button, and the dock's separators. Added — the
+  Cachy-Void updater in the dock. Changed — the menu button to the brand mark
+  with no label, and both bars locked. Removing an Xfce plugin is **two** steps
+  (reset the plugin *and* rewrite `/panels/panel-N/plugin-ids`); miss the array
+  and the bar keeps a gap, which is why there is a `panel_drop` helper.
+  Panel-1's separators are kept and merely made transparent: one carries the
+  `expand` flag that right-aligns the tray and clock.
+- **A launcher needs its `items` array.** Creating the launcher directory and
+  the `.desktop` renders a generic gear that does nothing. And idempotency has
+  to **repair** rather than skip, or a box that ran the broken version stays
+  broken forever.
+- **The panel loads an absolute-path PNG but not the SVG**, so the dock icon is
+  rendered once to PNG — the same treatment the wallpaper already gets.
+- **An icon theme with an `icon-theme.cache` is read from the cache.** Aliases
+  were correct on disk and completely invisible until
+  `gtk-update-icon-cache -f -t` ran. Verify with a real
+  `Gtk.IconTheme.lookup_icon()`, which names the exact file it chose.
+- **Three grip lines, three diagnoses.** Not an unlocked panel
+  (`position-locked` already true), not a separator style — the **tasklist's**
+  own `show-handle`, which defaults on. Read a plugin's properties instead of
+  reasoning about what a widget looks like.
+- **Xfce's panel has no volume or removable-media plugin**, so its tray looked
+  sparse beside LXQt's. It starts `pasystray` and `udiskie -t` instead, exactly
+  as the bare-Openbox session does, one XFCE-gated autostart each.
+- **The tray icon was a race, not a theme problem.** XDG autostart fires
+  `cachy-updater-tray` at the same moment as the panel that *provides* the tray;
+  it found none and exited 0 as designed, silently, for the whole session. It now
+  waits for the tray. LXQt and Plasma had been winning that race by luck.
+- **Xfce restores its own display layout at login** (its `displays` channel), so
+  a transient `xrandr` is discarded. On the testbed that put the entire desktop
+  on a closed laptop panel and read as "the branding was removed". Persisting a
+  monitor layout is **box-local** configuration and deliberately stays out of
+  `deploy.sh`.
+
+**And one bug in the shared half that only two desktops at once could expose.**
+`cachy-branding` imported the whole environment of any running `lxqt-session`,
+overwriting the caller's `DISPLAY`, `DBUS_SESSION_BUS_ADDRESS` and
+`XDG_CURRENT_DESKTOP`. Testing Xfce in a nested session *beside* LXQt meant every
+xfconf write went to LXQt's bus, the wallpaper was set for the wrong monitor
+name, the applier's own session gate refused to act — and it reported success
+throughout. The import now happens only when the process has no session of its
+own. This had been latent since Plasma, invisible because those two were never
+running simultaneously: an argument for testing desktops side by side rather
+than logging between them.
+
 ## 6. Scope & rules
 
 - **Opt-in overlay, never forced** — ship as config files the user *chooses* to apply (or
