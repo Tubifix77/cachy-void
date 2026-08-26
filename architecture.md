@@ -669,12 +669,28 @@ minimal, non-package-naming set:
   the answer is current with no root and no on-disk cache write; if the mirror
   is unreachable it falls back to the cache and says so (`fresh: false`).
   **Policy travels with the data:** the payload carries an `attention` array of
-  stable tokens (`updates`, `kernel-staged`, `kernel-unhealthy`,
-  `bore-pin-missing`) so a front-end renders a decision rather than re-deriving
-  one from raw counts and drifting from what the window says. Deliberately
-  *not* probed: the overlay queue (it only materialises after a `--sync`, and
-  computing it is the cost being avoided) and Flatpak (a remote query per
-  remote). The probe never exits non-zero — degradations are reported in band,
+  stable tokens (`updates`, `kernel-port`, `kernel-staged`, `kernel-unhealthy`,
+  `kernel-frozen`, `bore-pin-missing`) so a front-end renders a decision rather
+  than re-deriving one from raw counts and drifting from what the window says.
+  The vocabulary is **enumerated in code** as `ATTENTION_TOKENS`, and a test
+  asserts it equals the tray's `REASON_TEXT`: a front-end filters tokens it does
+  not recognise, so an unworded token is not a visible bug but a front-end that
+  silently says nothing about something real. That went wrong twice — a
+  `kernel-frozen` the CLI emitted and nobody worded, and a portable kernel with
+  no token at all while the window's own headline announced one — and neither
+  produced a failure anywhere. Hence the assertion.
+  **`kernel-port` is normative and shares its predicate with `--status`.**
+  Whether a newer kernel can be ported is decided once, in
+  `kernel_port_available()`, which asks the cheap source first (the
+  void-packages checkout, a local file read) and the repository only when the
+  checkout has nothing to say — costing at most one extra unprivileged index
+  query. It returns the *source* along with the verdict, because the human
+  report words the two differently ("upstream linux6.12 is at X" versus "Void is
+  shipping X", plus the checkout-age note that explains why the repository knew
+  first). Duplicating that logic is what let the tray stay quiet about kernels
+  while `--status` reported them. Deliberately *not* probed: the overlay queue
+  (it only materialises after a `--sync`, and computing it is the cost being
+  avoided) and Flatpak (a remote query per remote). The probe never exits non-zero — degradations are reported in band,
   because a poller reading a non-zero code would report the updater as broken
   when the real story is a mirror being down.
 
@@ -695,7 +711,21 @@ whichever session the user chose), plus a line in the branding-managed
 `~/.config/openbox/autostart`, since a bare WM reads no XDG autostart —
 **exactly one mechanism per session**, which is the nm-tray double-icon lesson.
 A second copy exits rather than duplicating, and a box with no system tray at
-all exits 0 rather than erroring. `deploy.sh --no-tray` skips the autostart
+all exits 0 rather than erroring.
+
+**Refreshed by event, not only by timer.** The single-instance lock is a
+`QLocalSocket`, and it doubles as a refresh channel: after any command that
+changes system state, and once more on close if this session changed anything,
+the GUI connects and writes the keyword `refresh`, and the tray re-runs its own
+probe. Without it a three-hour cadence means the tray goes on advertising the
+updates it just watched being installed — observed exactly that way, an
+82-package run followed by a window the user closed and a badge that did not
+move. What crosses the socket is deliberately a **poke, not a payload**: the
+tray re-probes rather than trusting counts handed to it, so there is still one
+source of truth for what it shows. Read-only commands do not poke (a `--status`
+refresh would cost the tray a pointless re-probe), a dry run is not a change,
+and a poke with no tray listening is silent — no tray is the ordinary case on a
+bare WM, not an error. The timer remains the backstop. `deploy.sh --no-tray` skips the autostart
 (the binary still installs); the install run says so out loud, because putting
 a new icon on someone's panel is not something to do silently.
 

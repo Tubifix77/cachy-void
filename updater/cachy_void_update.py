@@ -23,6 +23,7 @@ userspace updates (§8 preamble).
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
 import pathlib
@@ -350,48 +351,36 @@ def _kernel_report(config: Config, xbps, out, run=_run) -> None:
         if good and running and good != running:
             out(f"rollback available: running {running}, known-good {good}")
 
-        tpath = config.void_packages / "srcpkgs" / f"linux{series}" / "template"
-        text = tpath.read_text(encoding="utf-8") if tpath.exists() else None
-        ev, tmpl = grub.classify_bump(
-            series_template_text=text,
-            ported_version=state.get("ported_version", ""),
-            vercmp=xbps.vercmp)
-        if ev == grub.EV_BUMP_PATCHLEVEL:
-            out(f"kernel: upstream linux{series} is at {tmpl}; ported base is "
-                f"{state.get('ported_version') or '<none>'} — port linux-cachy "
-                "(§2.6/§8.4).")
-        elif ev == grub.EV_AWAIT_HUMAN_SERIES:
+        # The drift verdict itself lives in kernel_port_available(), shared
+        # with --pending. It used to live only here, which is why the tray
+        # never mentioned a kernel port while this report did.
+        v = kernel_port_available(config, state, run, xbps.vercmp)
+        if v.event == grub.EV_AWAIT_HUMAN_SERIES:
             out(f"kernel: tracked series linux{series} is gone upstream — "
                 "human decision required (§8.2).")
-        else:
-            # The checkout said nothing — but the checkout is only as current as
-            # the last sync, so ASK THE REPOSITORY, which is never stale. This is
-            # the fix for the bug the owner surfaced: a nine-day-old checkout hid
-            # linux6.12 6.12.104 that was sitting in the same --status output.
-            ported = state.get("ported_version", "")
-            repo_ver = upstream_series_version(series, run)
-            newer = False
-            if repo_ver and ported:
-                try:
-                    newer = xbps.vercmp(repo_ver, ported) > 0
-                except (XbpsError, OSError):
-                    newer = False
-            if newer:
-                out(f"kernel: Void is shipping linux{series} {repo_ver}; ported "
-                    f"base is {ported} — port linux-cachy (§2.6/§8.4).")
-                age = _checkout_age_days(config.void_packages)
-                if age >= 1:
-                    out(f"  (found in the repository; the void-packages checkout "
-                        f"here is {int(age)} days old and has not caught up — "
-                        "Update syncs it as its first step.)")
-            elif not repo_ver:
-                # Could not ask either source: say so rather than implying "no".
-                age = _checkout_age_days(config.void_packages)
-                if age >= 2:
-                    out(f"kernel: could not query the repository, and the "
-                        f"void-packages checkout here is {int(age)} days old — "
-                        "run Update (or --sync) before trusting this as 'no "
-                        "newer kernel'.")
+        elif v.available and v.source == "checkout":
+            out(f"kernel: upstream linux{series} is at {v.upstream_version}; "
+                f"ported base is {v.ported_version or '<none>'} — port "
+                "linux-cachy (§2.6/§8.4).")
+        elif v.available:
+            # The repository answered where the checkout could not: say so, and
+            # say how far behind the checkout is, since that is the reason.
+            out(f"kernel: Void is shipping linux{series} {v.upstream_version}; "
+                f"ported base is {v.ported_version} — port linux-cachy "
+                "(§2.6/§8.4).")
+            age = _checkout_age_days(config.void_packages)
+            if age >= 1:
+                out(f"  (found in the repository; the void-packages checkout "
+                    f"here is {int(age)} days old and has not caught up — "
+                    "Update syncs it as its first step.)")
+        elif not v.upstream_version:
+            # Could not ask either source: say so rather than implying "no".
+            age = _checkout_age_days(config.void_packages)
+            if age >= 2:
+                out(f"kernel: could not query the repository, and the "
+                    f"void-packages checkout here is {int(age)} days old — "
+                    "run Update (or --sync) before trusting this as 'no "
+                    "newer kernel'.")
     except (grub.GrubError, XbpsError, OSError) as exc:
         out(f"warning: kernel bump check skipped: {exc}")
 
@@ -819,6 +808,13 @@ def cmd_pending(config: Config, out=print, run=_run) -> int:
     Check remains the whole truth. **Flatpak** is skipped for the same reason
     (a remote query per remote).
 
+    One thing was omitted by accident rather than by design, and is now here:
+    whether a newer kernel is available to PORT. --status reported it and this
+    probe did not, so the window's headline read "New BORE kernel" beside a
+    silent tray. It costs at most one extra unprivileged repository query (only
+    when the local checkout has nothing to say), which a three-hourly poll can
+    afford far more easily than it can afford being wrong.
+
     Never fails: a probe that exits non-zero would read as "the updater is
     broken". Degradations are reported *in band* (``fresh``, ``notes``) and the
     exit code stays EXIT_OK. ``attention`` carries the policy so a front-end
@@ -840,7 +836,7 @@ def cmd_pending(config: Config, out=print, run=_run) -> int:
             payload["notes"].append("remote index unreachable; counts are from "
                                     "the on-disk cache and may be stale")
         if n:
-            payload["attention"].append("updates")
+            payload["attention"].append(ATTN_UPDATES)
 
     # Kernel: read the state store directly — no solver, no subprocess.
     try:
@@ -852,12 +848,12 @@ def cmd_pending(config: Config, out=print, run=_run) -> int:
                              "known_good": good or None,
                              "mode": (state.get("grub") or {}).get("mode") or None}
         if cand and name == "STAGED":
-            payload["attention"].append("kernel-staged")
+            payload["attention"].append(ATTN_KERNEL_STAGED)
         elif name in FROZEN_STATES:
             # Same correction as the human readout: the freeze is reportable on
             # its own, with or without a candidate to blame it on.
-            payload["attention"].append("kernel-frozen" if not cand
-                                        else "kernel-unhealthy")
+            payload["attention"].append(ATTN_KERNEL_FROZEN if not cand
+                                        else ATTN_KERNEL_UNHEALTHY)
         series = state.get("base_series") or ""
         if config.kernel_enable and series:
             try:
@@ -867,7 +863,31 @@ def cmd_pending(config: Config, out=print, run=_run) -> int:
                 pinned = False
             payload["kernel"]["bore_pin"] = "pinned" if pinned else "missing"
             if not pinned:
-                payload["attention"].append("bore-pin-missing")
+                payload["attention"].append(ATTN_BORE_PIN_MISSING)
+        # A newer kernel to port is news the tray never carried: --status
+        # reported it and the probe did not, so the window said "New BORE
+        # kernel" while the icon sat quiet. Same helper as the human
+        # readout, so the two cannot disagree again.
+        if config.kernel_enable:
+            def _vercmp(a, b):
+                # Same delegation as Xbps.vercmp (0 equal / 1 a>b / 255 a<b),
+                # without dragging a whole Xbps into a probe that needs nothing
+                # else from it.
+                cp = run(["xbps-uhelper", "cmpver", a, b])
+                rc = cp.returncode
+                if rc == 0:
+                    return 0
+                if rc == 1:
+                    return 1
+                if rc in (255, -1):
+                    return -1
+                raise XbpsError(f"unexpected cmpver exit {rc}")
+
+            v = kernel_port_available(config, state, run, _vercmp)
+            payload["kernel"]["port_available"] = bool(v.available)
+            if v.available:
+                payload["kernel"]["upstream_version"] = v.upstream_version
+                payload["attention"].append(ATTN_KERNEL_PORT)
     except (grub.GrubError, OSError, ValueError) as exc:
         payload["notes"].append(f"kernel state unreadable: {exc}")
 
@@ -988,6 +1008,86 @@ def cmd_snapshots(config: Config, out=print, run=_run) -> int:
 FROZEN_STATES = ("CANDIDATE_UNHEALTHY", "ROLLED_BACK", "AWAIT_HUMAN_SERIES",
                  "AWAIT_HUMAN_TEMPLATE", "AWAIT_HUMAN_PATCH", "AWAIT_HUMAN_BUILD",
                  "HALT_HASH_MISMATCH")
+
+# ---------------------------------------------------------------------------
+# The `attention` vocabulary of --pending. Named constants rather than string
+# literals scattered through cmd_pending, because the whole contract with a
+# front-end is this list: the CLI decides WHAT deserves attention, the front-end
+# only decides how to word it. A token no front-end knows is worse than no
+# token, since the tray filters unknown reasons out silently — which is exactly
+# how "kernel-frozen" came to be emitted by the CLI and displayed by nobody.
+# test_tray.py asserts this set and the tray's REASON_TEXT are the same set.
+ATTN_UPDATES = "updates"
+ATTN_KERNEL_STAGED = "kernel-staged"
+ATTN_KERNEL_UNHEALTHY = "kernel-unhealthy"
+ATTN_KERNEL_FROZEN = "kernel-frozen"
+ATTN_KERNEL_PORT = "kernel-port"
+ATTN_BORE_PIN_MISSING = "bore-pin-missing"
+ATTENTION_TOKENS = frozenset({
+    ATTN_UPDATES, ATTN_KERNEL_STAGED, ATTN_KERNEL_UNHEALTHY,
+    ATTN_KERNEL_FROZEN, ATTN_KERNEL_PORT, ATTN_BORE_PIN_MISSING,
+})
+
+
+PortVerdict = collections.namedtuple(
+    "PortVerdict", "available upstream_version ported_version source event")
+
+
+def kernel_port_available(config: "Config", state: dict, run, vercmp) -> PortVerdict:
+    """(available, upstream_ver, ported_ver) — the §2.6/§8.4 drift verdict.
+
+    ONE implementation, shared by the human report and the machine probe. It
+    was not shared before, and the consequence was a tray that never mentioned
+    a kernel port while the window's own headline said "New BORE kernel": the
+    same class of split-brain as the tray saying 20 packages beside a window
+    saying 16, and found the same way — the owner noticed the two disagreeing.
+
+    Two sources in order of cost. The void-packages checkout is a local file
+    read and free, so it is asked first. If it says nothing, the REPOSITORY is
+    asked, because the checkout is only as current as the last sync — the case
+    that hid linux6.12 6.12.104 behind a nine-day-old checkout. That second
+    question costs one unprivileged index fetch, which is why --pending's
+    docstring now names it: a three-hourly poll can afford it, and the
+    alternative is a tray permanently silent about kernels.
+
+    A series that has vanished upstream is deliberately NOT "a port available":
+    it is a human decision (§8.2), and it already has its own frozen state.
+
+    ``vercmp`` is passed in rather than reached for: the report path already
+    holds an ``Xbps`` instance, while --pending deliberately holds none, and
+    both must reach the same verdict. Neither may compare versions itself
+    (invariant: comparisons delegate to ``xbps-uhelper cmpver``).
+
+    ``source`` is part of the verdict because the human report says different
+    things depending on who answered — "upstream linux6.12 is at X" for the
+    checkout, "Void is shipping X" plus a checkout-age note for the repository.
+    Sharing the predicate must not flatten that; a reader who is told the
+    repository knew first also learns their checkout is behind.
+    """
+    series = state.get("base_series") or ""
+    ported = state.get("ported_version", "") or ""
+    if not series:
+        return PortVerdict(False, "", ported, "", "")
+    try:
+        tpath = config.void_packages / "srcpkgs" / f"linux{series}" / "template"
+        text = tpath.read_text(encoding="utf-8") if tpath.exists() else None
+        ev, tmpl = grub.classify_bump(series_template_text=text,
+                                      ported_version=ported,
+                                      vercmp=vercmp)
+    except (grub.GrubError, XbpsError, OSError, ValueError):
+        return PortVerdict(False, "", ported, "", "")
+    if ev == grub.EV_BUMP_PATCHLEVEL:
+        return PortVerdict(True, tmpl, ported, "checkout", ev)
+    if ev == grub.EV_AWAIT_HUMAN_SERIES:
+        return PortVerdict(False, "", ported, "", ev)
+    repo_ver = upstream_series_version(series, run)
+    if repo_ver and ported:
+        try:
+            if vercmp(repo_ver, ported) > 0:
+                return PortVerdict(True, repo_ver, ported, "repository", ev)
+        except (XbpsError, OSError):
+            pass
+    return PortVerdict(False, repo_ver, ported, "", ev)
 
 
 def cmd_kernel_ack(config: Config, out=print, *, assume_yes: bool = False,

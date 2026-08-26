@@ -43,7 +43,25 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+try:
+    from PyQt5.QtNetwork import QLocalSocket
+except ImportError:                          # pragma: no cover - PyQt5 without QtNetwork
+    QLocalSocket = None
+
 CLI = shutil.which("cachy-void-update") or "/usr/local/bin/cachy-void-update"
+
+# The tray's instance-lock socket, reused as a refresh channel. Both literals
+# are duplicated in cachy-updater-tray on purpose -- these are two standalone
+# scripts, not a package -- and test_tray.py asserts the pair still matches.
+TRAY_SOCKET = "cachy-updater-tray"
+TRAY_POKE = b"refresh"
+
+# Commands after which the tray's view of the world is stale. Read-only probes
+# are excluded: a poke makes the tray spend ~15s re-running --pending, which is
+# worth it after an update and pure waste after a --status refresh.
+MUTATING_ARGS = frozenset({
+    "--commit", "--clean", "--rollback", "--pin-bore", "--kernel-ack",
+})
 ICON = "/usr/share/cachy-void/branding/void-cachy-updater.svg"
 
 # --- canonical void-tactical palette (branding.md §2 — single source of truth) --
@@ -554,7 +572,8 @@ class Updater(QWidget):
                 self._busy(False)
                 self._activity(None)
         self.proc.errorOccurred.connect(_on_error)
-        self.proc.finished.connect(lambda code, _st: self._finished(target, code, done))
+        self.proc.finished.connect(
+            lambda code, _st: self._finished(target, code, done, args))
         self.proc.start(CLI, args)
 
     def _append_tail(self, target, text):
@@ -589,12 +608,56 @@ class Updater(QWidget):
                 self._clear_on_output = False
             self._append_tail(target, chunk.rstrip("\n"))
 
-    def _finished(self, target, code, done):
+    def _finished(self, target, code, done, args=()):
         self._busy(False)
         self._activity(None)
         self._append_tail(target, f"\n— done (exit {code}) —")
+        if self._was_mutating(args):
+            self._mutated = True
+            self._poke_tray()
         if done:
             done(code)
+
+    @staticmethod
+    def _was_mutating(args):
+        """Did that command change the system? A dry run never does."""
+        args = list(args or ())
+        if "--dry-run" in args or "-n" in args:
+            return False
+        return any(a in MUTATING_ARGS for a in args)
+
+    @staticmethod
+    def _poke_tray():
+        """Tell the tray to re-probe. Silent when there is no tray.
+
+        Without this the tray kept advertising 82 pending packages after the
+        update that installed them, until its own poll came round -- the owner
+        hit exactly that, having quit the window in between. A poll interval is
+        the wrong instrument for an event the GUI already knows about.
+
+        Failure here is never worth a word: no tray running (a bare WM, or the
+        user quit it) is the ordinary case, not an error, and the tray's own
+        timer remains the backstop either way.
+        """
+        if QLocalSocket is None:
+            return
+        try:
+            sock = QLocalSocket()
+            sock.connectToServer(TRAY_SOCKET)
+            if not sock.waitForConnected(300):
+                return
+            sock.write(TRAY_POKE)
+            sock.waitForBytesWritten(300)
+            sock.disconnectFromServer()
+        except Exception:
+            pass
+
+    def closeEvent(self, event):
+        """One last poke on the way out, but only if this session changed
+        something -- an open-and-close with no action leaves the tray alone."""
+        if getattr(self, "_mutated", False):
+            self._poke_tray()
+        super().closeEvent(event)
 
     def _sync_then(self, commit_args, *, confirm, activity):
         """Stage 1 (--sync: rebase void-packages) before a commit, as one click.

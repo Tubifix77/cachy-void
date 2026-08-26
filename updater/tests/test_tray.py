@@ -227,5 +227,146 @@ class TrayLogicTests(unittest.TestCase):
             self.assertEqual(offenders, [], f"tray must not invoke {flag}")
 
 
+
+GUI_PATH = pathlib.Path(__file__).resolve().parents[2] / "system" / "bin" / "cachy-updater-gui"
+
+
+def _load(name, path):
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+class RefreshChannelTests(unittest.TestCase):
+    """The GUI telling the tray that the world changed.
+
+    The bug this closes was reported from the desk, not from a log: the updater
+    installed 82 packages, the owner quit the window, and the tray went on
+    advertising 82 pending until its own poll came round. A poll interval is the
+    wrong instrument for an event the GUI already knows about.
+
+    The channel is the tray's instance-lock socket, which until now had nothing
+    listening on it -- it existed only so a second tray could notice the first
+    and exit. What travels down it is a keyword, never a count: the tray re-runs
+    its own --pending probe, so it still has exactly one source for what it
+    displays. That matters more than it sounds. The last time a front-end
+    accepted numbers from elsewhere, the tray said 20 and the window said 16.
+    """
+
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+        cls.tray_mod = _load("cachytray_ch", TRAY_PATH)
+        cls.gui_mod = _load("cachygui_ch", GUI_PATH)
+
+    def test_the_two_scripts_agree_on_the_socket_and_the_keyword(self):
+        # Two standalone scripts, so the literals are duplicated by necessity.
+        # A rename on one side would not break anything visibly -- it would just
+        # quietly restore the stale-tooltip bug -- so it gets asserted instead.
+        self.assertEqual(self.gui_mod.TRAY_SOCKET, self.tray_mod.SOCKET_NAME)
+        self.assertEqual(self.gui_mod.TRAY_POKE, self.tray_mod.POKE)
+
+    def test_a_state_changing_command_pokes(self):
+        was = self.gui_mod.Updater._was_mutating
+        for args in (["--commit", "--yes", "--no-kernel"],
+                     ["--commit", "--yes"],
+                     ["--clean", "--yes"],
+                     ["--rollback"],
+                     ["--kernel-ack"],
+                     ["--pin-bore", "--yes"]):
+            self.assertTrue(was(args), args)
+
+    def test_a_read_only_command_does_not(self):
+        # --status runs on every refresh and on every window open; poking there
+        # would have the tray re-probe for ~15s to learn nothing changed.
+        was = self.gui_mod.Updater._was_mutating
+        for args in (["--status"], ["--check"], ["--pending"], ["--snapshots"],
+                     ["--sync"], ["--gpu"]):
+            self.assertFalse(was(args), args)
+
+    def test_a_preview_is_not_a_change(self):
+        was = self.gui_mod.Updater._was_mutating
+        self.assertFalse(was(["--pin-bore", "--dry-run"]))
+        self.assertFalse(was(["--clean", "-n"]))
+
+    def test_the_poke_actually_arrives_over_the_socket(self):
+        """End to end over a real QLocalServer -- the wiring, not just the flags.
+
+        Both halves have been individually plausible and jointly broken before,
+        which is what an integration test is for.
+        """
+        from PyQt5.QtNetwork import QLocalServer
+
+        QLocalServer.removeServer(self.tray_mod.SOCKET_NAME)
+        server = QLocalServer()
+        self.assertTrue(server.listen(self.tray_mod.SOCKET_NAME),
+                        "could not listen on the test socket")
+        received = []
+
+        def _on_connection():
+            sock = server.nextPendingConnection()
+            self.assertIsNotNone(sock)
+            if sock.waitForReadyRead(1000):
+                received.append(bytes(sock.readAll()).strip())
+            sock.disconnectFromServer()
+
+        server.newConnection.connect(_on_connection)
+        try:
+            # a static method on purpose: it touches no widget state, so the
+            # channel can be exercised without building a window
+            self.gui_mod.Updater._poke_tray()
+            self.app.processEvents()
+            self.assertEqual(received, [self.tray_mod.POKE])
+        finally:
+            server.close()
+            QLocalServer.removeServer(self.tray_mod.SOCKET_NAME)
+
+    def test_poking_with_no_tray_listening_is_silent(self):
+        from PyQt5.QtNetwork import QLocalServer
+        QLocalServer.removeServer(self.tray_mod.SOCKET_NAME)
+        # must not raise: no tray running is the ordinary case, not an error
+        self.gui_mod.Updater._poke_tray()
+
+
+class AttentionVocabularyTests(unittest.TestCase):
+    """The CLI's `attention` tokens and the tray's wording must be one set.
+
+    summary() drops reasons it does not recognise -- deliberately, so a newer
+    CLI cannot make an older tray print raw slugs. The cost is that a token
+    nobody worded is invisible rather than broken, and that has now happened
+    twice: `kernel-frozen` was emitted and never displayed, and a portable
+    kernel had no token at all while the window announced one. Neither showed
+    up as a failure anywhere; both were found by a person noticing silence.
+
+    So the contract gets asserted instead of documented. This is the same test
+    in spirit as the socket-literal check above: two files that must agree, and
+    no runtime symptom when they stop agreeing.
+    """
+
+    def test_the_cli_and_the_tray_know_the_same_reasons(self):
+        import importlib
+        import sys
+        root = pathlib.Path(__file__).resolve().parents[1]
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        cli = importlib.import_module("cachy_void_update")
+        tray = _load("cachytray_vocab", TRAY_PATH)
+        self.assertEqual(set(cli.ATTENTION_TOKENS), set(tray.REASON_TEXT),
+                         "a token exists on one side only: the tray would say "
+                         "nothing about it, silently")
+
+    def test_warnings_are_a_subset_of_known_reasons(self):
+        tray = _load("cachytray_vocab2", TRAY_PATH)
+        self.assertTrue(set(tray.REASON_IS_WARNING) <= set(tray.REASON_TEXT))
+
+    def test_news_is_not_dressed_as_a_fault(self):
+        # An available kernel is something you may want, not something wrong.
+        tray = _load("cachytray_vocab3", TRAY_PATH)
+        self.assertNotIn("kernel-port", tray.REASON_IS_WARNING)
+
 if __name__ == "__main__":
     unittest.main()

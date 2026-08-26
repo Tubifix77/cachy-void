@@ -47,6 +47,11 @@ CLI = "cachy-void-update"
 GUI = "cachy-updater-gui"
 ICON_PATH = "/usr/share/cachy-void/branding/void-cachy-updater.svg"
 SOCKET_NAME = "cachy-updater-tray"
+# The one word the GUI sends down that socket to ask for a re-probe.
+# cachy-updater-gui carries the same two literals; test_tray.py asserts
+# the two files still agree, because a silent rename here would not
+# break anything visibly -- it would just make the tray stale again.
+POKE = b"refresh"
 # The ONLY CLI invocation this program makes. Named, so a test can assert
 # it: the tray must never grow an action that changes the system.
 PROBE_ARGS = ["--pending"]
@@ -73,15 +78,25 @@ TRAY_WAIT_S = 90
 # Human wording for each machine-readable reason the CLI can report. Keeping the
 # mapping here, rather than sentences in the JSON, keeps the contract between the
 # CLI and any front-end down to a short list of stable tokens.
+# Every token --pending can emit must appear here. Unknown reasons are filtered
+# out silently by summary(), so a missing line is not a visible bug -- it is a
+# tray that quietly says nothing about something real. That is exactly what
+# happened twice: "kernel-frozen" was emitted by the CLI and worded by nobody,
+# and a kernel available to port had no token at all while the window's own
+# headline announced it. test_tray.py now asserts this set equals the CLI's.
 REASON_TEXT = {
     "updates": "system updates are available",
+    "kernel-port": "a newer BORE kernel is available to build",
     "kernel-staged": "a new kernel is waiting for its first boot",
     "kernel-unhealthy": "a kernel candidate did not pass its health check",
+    "kernel-frozen": "kernel updates are paused pending a look — see the updater",
     "bore-pin-missing": "kernel updates are paused — the BORE patch needs approval",
 }
 # Amber rather than green: these two mean "something needs you", not "there is
 # something new". Everything else is ordinary news and gets the accent.
-REASON_IS_WARNING = {"kernel-unhealthy", "bore-pin-missing"}
+REASON_IS_WARNING = {"kernel-unhealthy", "kernel-frozen", "bore-pin-missing"}
+# kernel-port is deliberately NOT a warning: a kernel you could build is
+# news, not a fault, and amber for news is how an indicator gets ignored.
 
 
 def interval_ms() -> int:
@@ -330,6 +345,33 @@ def main() -> int:
 
     tray = Tray(app)
     tray.show()
+
+    # The instance-lock socket doubles as a refresh channel. Nothing else was
+    # listening on it: it existed only so a second tray could detect the first
+    # and exit. The GUI now connects and writes "refresh" after it changes
+    # system state, which is the missing signal behind a real complaint --
+    # the updater finished an 82-package run, the user quit it, and the tray
+    # went on advertising 82 until its next poll.
+    #
+    # Deliberately a poke and not a payload: the tray re-runs its own --pending
+    # probe rather than trusting numbers handed to it by another process, so
+    # there is still exactly one source of truth for what it displays. Anything
+    # that is not the keyword is ignored, which is also what the bare
+    # instance-probe looks like (it connects and aborts without writing).
+    server = getattr(claim_single_instance, "server", None)
+    if server is not None:
+        def _on_connection():
+            sock = server.nextPendingConnection()
+            if sock is None:
+                return
+            def _read():
+                if bytes(sock.readAll()).strip() == POKE:
+                    tray.check()
+                sock.disconnectFromServer()
+            sock.readyRead.connect(_read)
+            sock.disconnected.connect(sock.deleteLater)
+        server.newConnection.connect(_on_connection)
+
     return app.exec_()
 
 
