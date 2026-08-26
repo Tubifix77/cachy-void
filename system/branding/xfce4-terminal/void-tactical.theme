@@ -1,0 +1,21 @@
+[Scheme]
+# Cachy-Void "void-tactical" for xfce4-terminal (branding.md §5.13).
+#
+# The same One Dark-family palette the qterminal scheme carries, so a user who
+# meets both terminals meets one palette. Key names and file format are
+# xfce4-terminal's own, read from its stock schemes in
+# /usr/share/xfce4/terminal/colorschemes/ — which is also where this must be
+# installed, because that directory is the only place the terminal looks. A
+# per-user copy is not offered in its dialog, exactly as with qterminal.
+#
+# The applier ALSO writes these colours into the user's terminalrc, so the look
+# is applied rather than merely offered in a preferences window. This file is
+# what makes it selectable (and re-selectable) by name.
+Name=Cachy-Void (void-tactical)
+ColorForeground=#abb2bf
+ColorBackground=#1b1d1e
+ColorCursor=#478061
+ColorBold=#abb2bf
+ColorBoldUseDefault=FALSE
+ColorPalette=#1b1d1e;#e06c75;#98c379;#e5c07b;#61afef;#c678dd;#56b6c2;#abb2bf;#5c6370;#e06c75;#98c379;#e5c07b;#61afef;#c678dd;#56b6c2;#ffffff
+TabActivityColor=#967940

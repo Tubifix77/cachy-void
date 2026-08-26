@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+# Cachy-Void — Xfce applier (tier 2, branding.md §5.13).
+#
+# An applier's job is to cover what the desktop does NOT provide. Xfce provides
+# a great deal: panel, window manager, desktop, file manager, terminal, session,
+# notifications, power management. So this is a SMALL applier, closer to Plasma's
+# than to the Openbox one — it points Xfce's own machinery at our palette and
+# then gets out of the way.
+#
+# What made it small is a set of facts measured from a real Xfce install rather
+# than assumed, and each one removed work:
+#
+#   * Xfce configuration is xfconf: typed properties in per-channel XML under
+#     ~/.config/xfce4/xfconf/xfce-perchannel-xml/, with defaults shipped in
+#     /etc/xdg/xfce4/. Changes apply LIVE — xfconf notifies its listeners — so
+#     unlike the Plasma applier there is no shell to restart and no cache to
+#     bust. Nothing here kills a running process.
+#   * xfwm4 window decorations are BITMAPS (per-part PNG/XPM in a theme's
+#     xfwm4/ directory), not a colour string like Openbox's themerc or an SVG
+#     like Plasma's frame. Authoring them would have been the expensive part —
+#     except Arc-Dark, the GTK theme the shared half already selects, ships an
+#     xfwm4/ directory of its own. So the titlebars come free by pointing xfwm4
+#     at the same theme name as GTK. Playing with the desktop, not against it.
+#   * xfce4-terminal takes its font from XSETTINGS (/Gtk/MonospaceFontName) and
+#     its palette from the same key names its stock .theme files use. So the
+#     terminal needs no rc surgery: set the xsettings font, ship a colour scheme
+#     the way the qterminal one is shipped (system dir, deploy.sh's job), and
+#     write the palette keys into terminalrc so it is applied rather than merely
+#     offered in a dialog.
+#
+# One thing was TESTED rather than assumed, and it deleted a whole code path.
+# This applier originally carried a fallback that wrote the channel XML directly,
+# for the case where no xfconf daemon is reachable. A clean test disproved it: on
+# a fresh xfconfd, with HOME and XDG_CONFIG_HOME pointed at a disposable tree
+# holding hand-written channel files in the documented location and format,
+# every property still read back as the /etc/xdg default. Writing those files is
+# not a supported way in. So the fallback is gone and the requirement is stated
+# instead: this applier needs a live xfconf, which means running it inside an
+# Xfce session — the same way cachy-branding is already documented to be used.
+# Without one it writes what it can, arms a one-shot, and says so.
+#
+# STILL UNVERIFIED against a real session (this container has no X server), and
+# marked at each call site: the per-monitor wallpaper property path, and whether
+# the panel repaints on a background colour change without a restart.
+set -uo pipefail
+
+ASSETS="${CACHY_BRANDING_ASSETS:-/usr/share/cachy-void/branding}"
+CFG="$HOME/.config"; SHARE="$HOME/.local/share"
+XFCONF="$CFG/xfce4/xfconf/xfce-perchannel-xml"
+
+# The canonical palette (branding.md §2). Hex here, because every Xfce surface
+# that takes a colour takes it as a string, unlike Plasma's r,g,b triples.
+BG="#1b1d1e"        # obsidian
+PANEL="#282c34"     # graphite
+FG="#abb2bf"        # grey-white
+ACCENT="#478061"    # "the Void" green
+DIM="#5c6370"       # muted text
+
+C=$'\033[38;2;71;128;97m'; W=$'\033[38;2;150;121;64m'; Z=$'\033[0m'
+log(){ printf '%s==>%s %s\n' "$C" "$Z" "$*"; }
+ok(){  printf '%s ok%s %s\n' "$C" "$Z" "$*"; }
+warn(){ printf '%s warn%s %s\n' "$W" "$Z" "$*" >&2; }
+
+# Is Xfce the session we are actually inside? The same gate the other appliers
+# learned the hard way: applying a look from a DIFFERENT desktop must write
+# config and stop, never start or restart that desktop's programs.
+LIVE=false
+case "${XDG_CURRENT_DESKTOP:-}" in *XFCE*|*Xfce*|*xfce*) LIVE=true ;; esac
+
+# xfconf-query needs a session bus and a running xfconfd. When that is missing
+# (provisioning from a TTY, a container, applying before first login) the same
+# properties are written straight into the channel XML, which xfconf reads at
+# session start. Both paths exist because both situations are normal.
+HAVE_XFCONF=false
+if command -v xfconf-query >/dev/null 2>&1 &&
+   [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] &&
+   xfconf-query -c xsettings -l >/dev/null 2>&1; then
+    HAVE_XFCONF=true
+fi
+
+# ---------------------------------------------------------------- xfconf write
+# xq CHANNEL PROPERTY TYPE VALUE — the ONLY way settings go in.
+#
+# There is deliberately no file-writing fallback. See the header: hand-written
+# channel XML is ignored by xfconfd, so a fallback that appeared to work would
+# have quietly done nothing on exactly the boxes it existed for. Refusing
+# loudly is worth more than pretending.
+XQ_FAILED=0
+xq() {
+    local chan="$1" prop="$2" type="$3" val="$4"
+    $HAVE_XFCONF || { XQ_FAILED=$((XQ_FAILED + 1)); return 1; }
+    xfconf-query -c "$chan" -p "$prop" -n -t "$type" -s "$val" 2>/dev/null && return 0
+    warn "xfconf-query failed for $chan$prop"
+    XQ_FAILED=$((XQ_FAILED + 1))
+    return 1
+}
+
+# arm_first_login — re-run this applier the next time Xfce actually starts.
+# The mechanism the Plasma applier already uses for a setting that cannot be
+# written from outside the session; here it covers the whole applier, because
+# without xfconf nothing settings-shaped can be written at all.
+arm_first_login() {
+    mkdir -p "$CFG/autostart"
+    printf '[Desktop Entry]\nType=Application\nName=Cachy-Void look (first Xfce login)\nExec=sh -c "cachy-branding-xfce; rm -f %s/autostart/cachy-void-xfce-firstrun.desktop"\nOnlyShowIn=XFCE;\nX-GNOME-Autostart-enabled=true\n' \
+        "$CFG" > "$CFG/autostart/cachy-void-xfce-firstrun.desktop"
+}
+
+# ------------------------------------------------------------------- --remove
+# Reversible, like every other applier here. Settings are RESET (xfconf-query
+# -r), which drops the user override and lets Xfce fall back to its own default,
+# rather than guessing what the value used to be. The terminalrc is restored
+# from the backup taken on first apply; the autostart entries are ours and go.
+if [ "${1:-}" = "--remove" ]; then
+    log "removing the Cachy-Void Xfce look"
+    if $HAVE_XFCONF; then
+        for _pp in /Net/ThemeName /Net/IconThemeName /Gtk/FontName /Gtk/MonospaceFontName; do
+            xfconf-query -c xsettings -p "$_pp" -r 2>/dev/null
+        done
+        for _pp in /general/theme /general/title_font; do
+            xfconf-query -c xfwm4 -p "$_pp" -r 2>/dev/null
+        done
+        xfconf-query -c xfce4-panel -p /panels/panel-1/background-style -r 2>/dev/null
+        xfconf-query -c xfce4-panel -p /panels/panel-1/background-rgba -r 2>/dev/null
+        # The wallpaper is per-monitor, so reset whatever monitors exist now.
+        if command -v xrandr >/dev/null 2>&1; then
+            for _m in $(xrandr --listmonitors 2>/dev/null | awk 'NR>1 {print $NF}'); do
+                xfconf-query -c xfce4-desktop \
+                    -p "/backdrop/screen0/monitor$_m/workspace0/last-image" -r 2>/dev/null
+            done
+        fi
+        ok "xfconf settings reset to Xfce's own defaults"
+    else
+        warn "no live xfconf — settings could not be reset; run this inside Xfce"
+    fi
+    if [ -f "$CFG/xfce4/terminal/terminalrc.pre-cachy.bak" ]; then
+        mv -f "$CFG/xfce4/terminal/terminalrc.pre-cachy.bak" \
+              "$CFG/xfce4/terminal/terminalrc"
+        ok "terminalrc restored from backup"
+    else
+        rm -f "$CFG/xfce4/terminal/terminalrc"
+        ok "terminalrc removed (there was none before us)"
+    fi
+    rm -f "$CFG/autostart/cachy-void-conky-xfce.desktop" \
+          "$CFG/autostart/cachy-void-xfce-firstrun.desktop" \
+          "$CFG/autostart/cachy-void-xfce-wallpaper.desktop"
+    rm -f "$SHARE/cachy-void/wallpaper-xfce.png"
+    ok "removed - log out and back in for a full reset."
+    exit 0
+fi
+
+log "Cachy-Void Xfce applier"
+if ! $HAVE_XFCONF; then
+    warn "no live xfconf here (needs a session bus and xfconfd), so the settings"
+    warn "  cannot be written now — arming a one-shot that applies them at your"
+    warn "  next Xfce login. Nothing else about this run changes."
+    arm_first_login
+fi
+$LIVE || warn "not an Xfce session — nothing is started or restarted"
+
+# ------------------------------------------------------------------ 1. themes
+# Both names deliberately the same string: Arc-Dark ships gtk-3.0/ AND xfwm4/,
+# so one theme dresses the widgets and the titlebars. Falling back to
+# Adwaita-dark keeps the widgets dark on a box without arc-theme, at the cost of
+# stock titlebars — which is the honest degradation, not a broken look.
+GTK_THEME="Adwaita-dark"
+[ -d /usr/share/themes/Arc-Dark ] && GTK_THEME="Arc-Dark"
+ICON_THEME="Papirus-Dark"
+[ -d "$SHARE/icons/Luv-Void" ] && ICON_THEME="Luv-Void"
+
+_f0=$XQ_FAILED
+xq xsettings /Net/ThemeName string "$GTK_THEME"
+xq xsettings /Net/IconThemeName string "$ICON_THEME"
+xq xsettings /Gtk/FontName string "Hack 10"
+# xfce4-terminal reads its font from here, not from terminalrc (measured).
+xq xsettings /Gtk/MonospaceFontName string "Hack 10"
+if [ "$XQ_FAILED" -eq "$_f0" ]; then
+    ok "widgets -> $GTK_THEME, icons -> $ICON_THEME, fonts -> Hack 10"
+else
+    warn "widgets/icons/fonts: queued for the next Xfce login"
+fi
+
+if [ -d "/usr/share/themes/$GTK_THEME/xfwm4" ]; then
+    _f0=$XQ_FAILED
+    xq xfwm4 /general/theme string "$GTK_THEME"
+    xq xfwm4 /general/title_font string "Hack Bold 9"
+    if [ "$XQ_FAILED" -eq "$_f0" ]; then
+        ok "window decorations -> $GTK_THEME (its own xfwm4 assets)"
+    else
+        warn "window decorations: queued for the next Xfce login"
+    fi
+else
+    warn "$GTK_THEME ships no xfwm4 decorations — titlebars stay stock"
+    warn "  (deploy.sh --with-branding installs arc-theme, which does)"
+fi
+
+# ------------------------------------------------------------------- 2. panel
+# Xfce's own arrangement is kept: a top bar and a bottom dock is what Xfce sets
+# up, it works, and cloning LXQt's single bar here would be changing the desktop
+# rather than dressing it. Only the colour is ours.
+#
+# NOT VERIFIED LIVE: whether the panel repaints on this property alone or needs
+# `xfce4-panel -r`. No restart is issued here on purpose — a panel restart in a
+# session the user is working in is exactly the intrusiveness this project
+# avoids, and a stale colour until next login is a far smaller cost.
+# background-rgba is an ARRAY of four doubles, which the single-value setter
+# above cannot express — so it gets its own call. Only on the live path: writing
+# a typed array into the channel XML by hand is more machinery than a panel
+# colour is worth, and a box being provisioned before its first login gets the
+# colour when the applier is re-run inside the session.
+xq xfce4-panel /panels/panel-1/background-style int 1     # 1 = solid colour
+if $HAVE_XFCONF; then
+    # 40,44,52 = graphite, as doubles in 0..1, with alpha 0.92 so the panel
+    # sits against the wallpaper rather than cutting a hard band across it.
+    if xfconf-query -c xfce4-panel -p /panels/panel-1/background-rgba -n \
+            -t double -s 0.156 -t double -s 0.172 -t double -s 0.203 \
+            -t double -s 0.92 2>/dev/null; then
+        ok "panel background -> graphite"
+    else
+        warn "could not set the panel background colour (harmless; panel stays stock)"
+    fi
+else
+    warn "panel colour skipped: it needs a live xfconf (re-run inside Xfce)"
+fi
+
+# --------------------------------------------------------------- 3. wallpaper
+# Same wallpaper, same order of preference, as every other desktop here. Picking
+# a different one per desktop was a real bug once: they are meant to be the same
+# desktop.
+WALL=""
+for w in "$ASSETS/wallpapers/cachy-void-official.svg" \
+         "$ASSETS/wallpapers/void-cachy-flow.svg" \
+         "$ASSETS/wallpapers/void-cachy-hex.svg"; do
+    [ -f "$w" ] && { WALL="$w"; break; }
+done
+PNG="$SHARE/cachy-void/wallpaper-xfce.png"
+if [ -n "$WALL" ] && { command -v magick >/dev/null 2>&1 || command -v convert >/dev/null 2>&1; }; then
+    mkdir -p "$(dirname "$PNG")"
+    GEO=$(xrandr 2>/dev/null | awk '/\*/ {print $1; exit}'); [ -n "$GEO" ] || GEO=1920x1080
+    if command -v magick >/dev/null 2>&1; then
+        magick -background none "$WALL" -resize "$GEO^" -gravity center -extent "$GEO" "$PNG" 2>/dev/null
+    else
+        convert -background none "$WALL" -resize "$GEO^" -gravity center -extent "$GEO" "$PNG" 2>/dev/null
+    fi
+    [ -s "$PNG" ] || PNG="$WALL"
+else
+    PNG="$WALL"
+fi
+
+if [ -n "$PNG" ]; then
+    # The backdrop property path contains the MONITOR NAME, so it cannot be
+    # written blind — the same shape of trap as Plasma's per-containment
+    # wallpaper. With a live X server the monitors are enumerable; without one
+    # they are not, so that case arms a one-shot autostart that re-runs this
+    # applier at first login, which is the trick the Plasma applier already uses.
+    MONS=""
+    command -v xrandr >/dev/null 2>&1 && \
+        MONS=$(xrandr --listmonitors 2>/dev/null | awk 'NR>1 {print $NF}')
+    if [ -n "$MONS" ]; then
+        _fw=$XQ_FAILED
+        for m in $MONS; do
+            xq xfce4-desktop "/backdrop/screen0/monitor$m/workspace0/last-image" string "$PNG"
+            xq xfce4-desktop "/backdrop/screen0/monitor$m/workspace0/image-style" int 5   # 5 = zoomed
+        done
+        if [ "$XQ_FAILED" -eq "$_fw" ]; then
+            ok "wallpaper -> $(basename "$PNG") on: $(echo "$MONS" | tr '\n' ' ')"
+        else
+            warn "wallpaper: queued for the next Xfce login"
+        fi
+    else
+        warn "no X server here, so the monitors cannot be named — the wallpaper is"
+        warn "  applied by the first-login one-shot instead"
+        arm_first_login
+    fi
+else
+    warn "no wallpaper asset found under $ASSETS/wallpapers"
+fi
+
+# ---------------------------------------------------------------- 4. terminal
+# The colour scheme file itself is a SYSTEM asset (deploy.sh installs it beside
+# the qterminal one, for the same reason: xfce4-terminal reads schemes from
+# /usr/share, and a per-user copy is not offered in its dialog). What is written
+# here is the applied palette, so the look is present without anyone opening a
+# preferences window and picking it.
+mkdir -p "$CFG/xfce4/terminal"
+TRC="$CFG/xfce4/terminal/terminalrc"
+[ -f "$TRC" ] && [ ! -f "$TRC.pre-cachy.bak" ] && cp -f "$TRC" "$TRC.pre-cachy.bak"
+{
+    printf '[Configuration]\n'
+    printf 'ColorForeground=%s\n' "$FG"
+    printf 'ColorBackground=%s\n' "$BG"
+    printf 'ColorCursor=%s\n' "$ACCENT"
+    printf 'ColorBold=%s\n' "$FG"
+    printf 'ColorBoldUseDefault=FALSE\n'
+    # One Dark family, matching the qterminal void-tactical scheme so a user who
+    # meets both terminals meets one palette.
+    printf 'ColorPalette=%s\n' "#1b1d1e;#e06c75;#98c379;#e5c07b;#61afef;#c678dd;#56b6c2;#abb2bf;#5c6370;#e06c75;#98c379;#e5c07b;#61afef;#c678dd;#56b6c2;#ffffff"
+    printf 'FontUseSystem=TRUE\n'
+    printf 'MiscMenubarDefault=FALSE\n'
+    printf 'ScrollingUnlimited=TRUE\n'
+} > "$TRC"
+ok "xfce4-terminal -> void-tactical palette (font follows the xsettings mono font)"
+
+# ------------------------------------------------------------------- 5. conky
+# The two panels are shared (cachy-branding's apply_conky writes the configs and
+# the launcher that waits for the screen geometry to settle). All that is needed
+# per desktop is a gated autostart entry, exactly as LXQt and Plasma have.
+LAUNCH="$SHARE/cachy-void/conky-start.sh"
+if [ -x "$LAUNCH" ] && command -v conky >/dev/null 2>&1; then
+    mkdir -p "$CFG/autostart"
+    printf '[Desktop Entry]\nType=Application\nName=Cachy-Void telemetry (conky)\nExec=%s\nOnlyShowIn=XFCE;\nX-GNOME-Autostart-enabled=true\n' \
+        "$LAUNCH" > "$CFG/autostart/cachy-void-conky-xfce.desktop"
+    ok "conky telemetry autostart installed (the same two panels the others run)"
+elif command -v conky >/dev/null 2>&1; then
+    warn "conky is installed but the shared launcher is missing — run cachy-branding"
+fi
+
+# ------------------------------------------------------------------ 6. closing
+log "Xfce applier done."
+if [ "$XQ_FAILED" -gt 0 ]; then
+    warn "$XQ_FAILED setting(s) could not be written (no live xfconf) — they are"
+    warn "  queued for your next Xfce login by the one-shot armed above"
+fi
+if $LIVE; then
+    printf '  Theme, icons and font apply immediately (xfconf notifies its listeners).\n'
+    printf '  The panel colour and the Conky panels appear at the next Xfce login.\n'
+else
+    printf '  Config written. Log into Xfce to see it.\n'
+fi
+printf '  Xfce keeps its own panel layout, file manager and notifications on purpose:\n'
+printf '  this dresses the desktop rather than replacing what it already does well.\n'

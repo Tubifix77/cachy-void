@@ -43,7 +43,7 @@ TABLE='
 lxqt|LXQt|lxqt|2|lxqt-session|lxqt.desktop|LXQt
 plasma|KDE Plasma|plasma|2|plasmashell,startplasma-x11,startplasma-wayland|plasma.desktop,plasmax11.desktop,plasmawayland.desktop|KDE,plasma
 openbox|Openbox (bare session)|lxqt|2|openbox|openbox.desktop|Openbox,OPENBOX
-xfce|Xfce|-|1|xfce4-session|xfce.desktop|XFCE
+xfce|Xfce|xfce|2|xfce4-session|xfce.desktop|XFCE
 gnome|GNOME|-|1|gnome-shell|gnome.desktop,gnome-xorg.desktop|GNOME
 mate|MATE|-|1|mate-session|mate.desktop|MATE
 cinnamon|Cinnamon|-|1|cinnamon-session|cinnamon.desktop|X-Cinnamon,Cinnamon

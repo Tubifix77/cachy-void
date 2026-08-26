@@ -104,6 +104,7 @@ readonly CACHY_UPDATER_ICON="/usr/share/cachy-void/branding/void-cachy-updater.s
 readonly BRANDING_ASSETS="/usr/share/cachy-void/branding"
 readonly CACHY_BRANDING_BIN="/usr/local/bin/cachy-branding"
 readonly CACHY_BRANDING_PLASMA="/usr/local/bin/cachy-branding-plasma"
+readonly CACHY_BRANDING_XFCE="/usr/local/bin/cachy-branding-xfce"
 readonly CACHY_DE_DETECT="/usr/local/bin/cachy-de-detect"
 readonly CACHY_DE_TRIAL="/usr/local/bin/cachy-de-trial"
 readonly BRANDING_TARGETS="/etc/cachy-void/branding-targets"
@@ -817,11 +818,26 @@ install_branding() {
                 cp -f "$dst/qterminal/void-tactical.colorscheme" "$qcs/color-schemes/" \
                     && ok "qterminal void-tactical scheme -> $qcs/color-schemes"; break; }
         done
+        # xfce4-terminal, same story: it reads colour schemes ONLY from its system
+        # dir, so the scheme goes there and the Xfce applier writes the palette
+        # into the user's terminalrc so it is applied rather than merely offered.
+        if [ -d /usr/share/xfce4/terminal/colorschemes ] &&
+           [ -f "$dst/xfce4-terminal/void-tactical.theme" ]; then
+            cp -f "$dst/xfce4-terminal/void-tactical.theme" \
+                  /usr/share/xfce4/terminal/colorschemes/ \
+                && ok "xfce4-terminal void-tactical scheme installed"
+        fi
+        # Arc-Dark is what makes Xfce cheap: it ships gtk-3.0/ AND xfwm4/, so one
+        # theme dresses the widgets and the titlebars, and no bitmap window
+        # decorations have to be authored. Optional — without it the widgets fall
+        # back to Adwaita-dark and the titlebars stay stock, which the applier says.
+        ensure_pkg arc-theme optional
     fi
     ensure_pkg "$PKG_XSETTINGSD" optional
     for _t in $PKG_WM_TRAY; do ensure_pkg "$_t" optional; done
     install_file "$SYS_DIR/bin/cachy-branding" "$CACHY_BRANDING_BIN" 0755 root root
     install_file "$SYS_DIR/bin/cachy-branding-plasma" "$CACHY_BRANDING_PLASMA" 0755 root root
+    install_file "$SYS_DIR/bin/cachy-branding-xfce" "$CACHY_BRANDING_XFCE" 0755 root root
     write_branding_targets
     install_greeter        # SDDM login screen (system-level; needs root, done here)
     log "branding toolkit installed — apply the look by running (as your user): cachy-branding"

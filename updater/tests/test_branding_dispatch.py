@@ -73,6 +73,38 @@ class BrandingDispatchTests(unittest.TestCase):
         self.assertIn("apply_lxqt", out)
         self.assertIn("cachy-branding-plasma", out)
 
+    def test_xfce_hands_off_to_its_own_applier(self):
+        # A separate executable for the same reason Plasma's is: adding an
+        # applier must not be able to regress a desktop that already works.
+        self.desktop("xfce4-session")
+        out = self.sh().stdout
+        self.assertIn("would brand: xfce", out)
+        self.assertIn("cachy-branding-xfce", out)
+        self.assertNotIn("apply_lxqt", out)
+        self.assertNotIn("cachy-branding-plasma", out)
+        self.assertHomeUntouched()
+
+    def test_xfce_only_does_not_drag_the_other_desktops_along(self):
+        self.desktop("lxqt-session", "plasmashell", "xfce4-session")
+        out = self.sh("--desktop", "xfce").stdout
+        self.assertIn("cachy-branding-xfce", out)
+        self.assertNotIn("apply_lxqt", out)
+        self.assertNotIn("cachy-branding-plasma", out)
+
+    def test_all_three_desktops_can_be_targeted_at_once(self):
+        self.desktop("lxqt-session", "plasmashell", "xfce4-session")
+        out = self.sh().stdout
+        for applier in ("apply_lxqt", "cachy-branding-plasma", "cachy-branding-xfce"):
+            self.assertIn(applier, out)
+
+    def test_the_shared_half_still_runs_for_xfce_alone(self):
+        # Tier-1 assets are not Plasma's or LXQt's — an Xfce-only box gets the
+        # icons, the Kvantum skin, the wallpaper and the Conky configs too.
+        self.desktop("xfce4-session")
+        out = self.sh().stdout
+        self.assertIn("apply_shared", out)
+        self.assertIn("apply_conky", out)     # the dry run must list it too
+
     def test_plasma_only_does_not_write_lxqt_config(self):
         """The whole point of the split: a Plasma-only target must not drag the
         LXQt session appliers along with it."""
@@ -127,8 +159,9 @@ class BrandingDispatchTests(unittest.TestCase):
     # --- guidance for desktops we do not brand ---------------------------
     def test_unsupported_desktop_gets_pointers_not_silence(self):
         """A tier-1 desktop applies the shared assets and nothing else, which looks
-        like 'it did nothing' unless we say what happened and where the assets are."""
-        self.desktop("xfce4-session")
+        like 'it did nothing' unless we say what happened and where the assets are.
+        MATE stands in for that class now that Xfce has its own applier."""
+        self.desktop("mate-session")
         out = self.sh().stdout
         self.assertIn("no Cachy-Void applier", out)
         self.assertIn("branding.md", out)          # where the palette lives
@@ -148,7 +181,7 @@ class BrandingDispatchTests(unittest.TestCase):
 
     def test_guidance_only_names_paths_that_exist(self):
         """It must not advertise an icon theme or wallpaper dir that is not there."""
-        self.desktop("xfce4-session")
+        self.desktop("mate-session")
         out = self.sh().stdout
         self.assertNotIn("icon theme", out)        # nothing in this temp HOME yet
         (self.home / ".local/share/icons/Luv-Void").mkdir(parents=True)

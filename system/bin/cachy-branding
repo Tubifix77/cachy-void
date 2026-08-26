@@ -161,11 +161,12 @@ if [ -z "$TARGETS" ]; then
         TARGETS="lxqt"; TARGET_SOURCE="fallback (no detector, no recorded choice)"
     fi
 fi
-DO_LXQT=false; DO_PLASMA=false
+DO_LXQT=false; DO_PLASMA=false; DO_XFCE=false
 for _t in $TARGETS; do
     case "$_t" in
         lxqt|openbox) DO_LXQT=true ;;
         plasma)       DO_PLASMA=true ;;
+        xfce)         DO_XFCE=true ;;
         *) warn "unknown branding target '$_t' - ignored" ;;
     esac
 done
@@ -173,6 +174,7 @@ done
 if [ "${1:-}" = "--remove" ]; then
     log "restoring pre-branding config from backups"
     command -v cachy-branding-plasma >/dev/null 2>&1 && cachy-branding-plasma --remove
+    command -v cachy-branding-xfce >/dev/null 2>&1 && cachy-branding-xfce --remove
     for f in "$CFG"/lxqt/lxqt.conf "$CFG"/lxqt/session.conf "$CFG"/lxqt/panel.conf \
              "$CFG"/Kvantum/kvantum.kvconfig "$CFG"/openbox/rc.xml \
              "$CFG"/lxqt/lxqt-powermanagement.conf "$CFG"/gtk-3.0/settings.ini \
@@ -1355,12 +1357,16 @@ if $DRY_RUN; then
     printf '  assets        : %s\n' "$([ -d "$ASSETS" ] && echo "$ASSETS" || echo "MISSING ($ASSETS) - a real run would stop here")"
     printf '\n  appliers that would run:\n'
     printf '    %-26s %s\n' "apply_shared" "always (Kvantum, icons, terminal, folders, wallpaper)"
+    printf '    %-26s %s\n' "apply_conky" "always (both telemetry panels + the settle-wait launcher)"
     if $DO_LXQT; then
         printf '    %-26s %s\n' "apply_openbox_session" "openbox titlebars + the bare session"
         printf '    %-26s %s\n' "apply_lxqt" "panel theme, appearance, top bar, Plank, picom/rofi/conky"
     fi
     if $DO_PLASMA; then
         printf '    %-26s %s\n' "cachy-branding-plasma" "$(command -v cachy-branding-plasma >/dev/null 2>&1 && echo 'colours, Kvantum bridge, Konsole, panel, dock' || echo 'NOT INSTALLED')"
+    fi
+    if $DO_XFCE; then
+        printf '    %-26s %s\n' "cachy-branding-xfce" "$(command -v cachy-branding-xfce >/dev/null 2>&1 && echo 'xfconf: theme, xfwm4 titlebars, panel, wallpaper, terminal' || echo 'NOT INSTALLED')"
     fi
     case "$SHELL_CHOICE" in
         bash|zsh) printf '    %-26s %s\n' "apply_shell" "$SHELL_CHOICE (opt-in)" ;;
@@ -1396,6 +1402,16 @@ if $DO_PLASMA; then
         cachy-branding-plasma || warn "the Plasma applier reported a problem"
     else
         warn "plasma is a branding target but cachy-branding-plasma is not installed"
+    fi
+fi
+
+# ============================================================ Xfce applier
+if $DO_XFCE; then
+    if command -v cachy-branding-xfce >/dev/null 2>&1; then
+        log "handing over to the Xfce applier"
+        cachy-branding-xfce || warn "the Xfce applier reported a problem"
+    else
+        warn "xfce is a branding target but cachy-branding-xfce is not installed"
     fi
 fi
 

@@ -696,6 +696,63 @@ desktop broke my machine".
 
 ---
 
+### 5.13 Xfce — the cheapest applier so far, and why
+
+Xfce provides a panel, a window manager, a desktop, a file manager, a terminal, a
+session manager, notifications and power management. So its applier is the
+smallest here: it points Xfce's own machinery at the palette and stops. Xfce
+keeps its own panel layout, file manager and notification daemon on purpose —
+cloning LXQt's single bar would be *changing* the desktop rather than dressing
+it, which is the opposite of the rule that made the Plasma work land well.
+
+**Three measured facts made it cheap.** Each was read off a real Xfce install
+(209 packages in the WSL Void sandbox) rather than assumed, and each deleted
+work that had been budgeted:
+
+- **Configuration is xfconf** — typed properties, defaults shipped under
+  `/etc/xdg/xfce4/`, user state in
+  `~/.config/xfce4/xfconf/xfce-perchannel-xml/`. Changes apply **live**: xfconf
+  notifies its listeners, so unlike the Plasma applier there is no shell to
+  restart and no cache to bust. **Nothing in this applier kills a process.**
+- **xfwm4 window decorations are bitmaps** — per-part PNG/XPM inside a theme's
+  `xfwm4/` directory, not a colour string like Openbox's `themerc` nor an SVG
+  like Plasma's frame. Authoring them would have been the expensive half. But
+  **Arc-Dark — already the GTK theme the shared half selects — ships its own
+  `xfwm4/` directory**, so pointing xfwm4 at the same theme name as GTK dresses
+  the titlebars for free. Playing with the desktop, not against it. Without
+  arc-theme the widgets fall back to Adwaita-dark and the titlebars stay stock;
+  the applier says so rather than pretending.
+- **xfce4-terminal takes its font from XSETTINGS** (`/Gtk/MonospaceFontName`)
+  and its palette from the same keys its stock `.theme` files use. So the
+  terminal needs no rc surgery: set the xsettings font, ship a colour scheme
+  into `/usr/share/xfce4/terminal/colorschemes/` (`deploy.sh`'s job — the same
+  system-dir-only constraint qterminal has, §5.10), and write the palette into
+  the user's `terminalrc` so the look is *applied* rather than merely offered in
+  a preferences dialog.
+
+**One fallback was built, tested, and deleted.** The applier originally carried a
+path that wrote the channel XML directly, for boxes with no xfconf daemon
+reachable. A clean test disproved it: with a fresh `xfconfd`, `HOME` and
+`XDG_CONFIG_HOME` pointed at a disposable tree holding hand-written channel
+files in the documented location and format, **every property still read back as
+the `/etc/xdg` default**. Writing those files is not a supported way in, so a
+fallback that appeared to work would have silently done nothing on exactly the
+boxes it existed for. It is gone. The applier now **requires a live xfconf** —
+which means running it inside an Xfce session, the way `cachy-branding` is
+already documented to be used — and without one it writes what it can
+(`terminalrc` needs no daemon), arms a one-shot `OnlyShowIn=XFCE` autostart that
+re-runs itself at the next Xfce login, and reports how many settings are queued.
+"ok" is never printed for a write that was refused.
+
+**Still unverified against a real session** (the grounding install was a
+container with no X server), and marked at each call site in the applier: the
+per-monitor wallpaper property path
+(`/backdrop/screen0/monitor<NAME>/workspace0/last-image` — dynamic, the same
+shape of trap as Plasma's per-containment wallpaper), and whether the panel
+repaints on a background-colour change without a restart. No panel restart is
+issued either way: a stale colour until the next login costs far less than
+restarting a bar someone is working in.
+
 ## 6. Scope & rules
 
 - **Opt-in overlay, never forced** — ship as config files the user *chooses* to apply (or

@@ -102,12 +102,29 @@ class DeDetectTests(unittest.TestCase):
         self.assertEqual(sorted(self.sh("--appliers").stdout.split()),
                          ["lxqt", "plasma"])
 
-    def test_tier1_desktop_offers_no_applier(self):
-        """Xfce is supported as Tier 1 — assets, no applier. It must not show up
-        as something to choose, or the user is promised integration we don't have."""
+    def test_xfce_is_a_tier2_target(self):
+        """Xfce has its own applier now, so it must be offered as a choice —
+        the inverse of the rule it used to illustrate: a desktop we CAN brand
+        has to appear, or the user is never asked about work we can do."""
         self.bin("xfce4-session")
-        self.assertEqual(self.sh("--appliers").stdout.strip(), "")
+        self.assertEqual(self.sh("--appliers").stdout.split(), ["xfce"])
         self.assertIn("xfce", self.ids(self.sh().stdout))
+
+    def test_tier1_desktop_offers_no_applier(self):
+        """Tier 1 is still a supported outcome — shared assets, no applier. It
+        must not show up as something to choose, or the user is promised
+        integration we do not have. MATE stands in for the class now that Xfce
+        has graduated to tier 2."""
+        self.bin("mate-session")
+        self.assertEqual(self.sh("--appliers").stdout.strip(), "")
+        self.assertIn("mate", self.ids(self.sh().stdout))
+
+    def test_three_appliers_when_all_three_desktops_are_present(self):
+        """The stated ceiling, exercised: lxqt, plasma and xfce each resolve to
+        their own applier and none of them absorbs another."""
+        self.bin("lxqt-session", "plasmashell", "xfce4-session")
+        self.assertEqual(sorted(self.sh("--appliers").stdout.split()),
+                         ["lxqt", "plasma", "xfce"])
 
     def test_window_managers_are_recognised_but_never_targets(self):
         """i3/sway/dwm are a decided 'no' (rejected-ideas), not an oversight:
@@ -152,7 +169,9 @@ class DeDetectTests(unittest.TestCase):
     def test_applier_of(self):
         self.assertEqual(self.sh("--applier-of", "openbox").stdout.strip(), "lxqt")
         self.assertEqual(self.sh("--applier-of", "plasma").stdout.strip(), "plasma")
-        self.assertEqual(self.sh("--applier-of", "xfce").stdout.strip(), "-")
+        self.assertEqual(self.sh("--applier-of", "xfce").stdout.strip(), "xfce")
+        # "-" is still the answer for a tier-1 desktop, which MATE now is
+        self.assertEqual(self.sh("--applier-of", "mate").stdout.strip(), "-")
         self.assertNotEqual(self.sh("--applier-of", "nosuchde").returncode, 0)
 
     def test_summary_is_human_readable(self):
