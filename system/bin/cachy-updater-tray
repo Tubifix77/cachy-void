@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 
 try:
     from PyQt5.QtCore import QProcess, QTimer, Qt
@@ -60,6 +61,14 @@ FG = "#abb2bf"              # the icon's own arrow grey
 # the mirrors. Override for testing with CACHY_TRAY_INTERVAL_MIN.
 FIRST_DELAY_MS = 90_000
 DEFAULT_INTERVAL_MIN = 180
+
+# How long to wait for a system tray to exist before giving up. At login this
+# program and the panel start together, and losing that race used to mean the
+# icon silently never appeared for the whole session — seen on Xfce, whose panel
+# registers its tray a few seconds after XDG autostart fires. Bounded, because on
+# a genuinely tray-less box (headless, a bare WM with no panel yet) exiting
+# quietly is still the right answer.
+TRAY_WAIT_S = 90
 
 # Human wording for each machine-readable reason the CLI can report. Keeping the
 # mapping here, rather than sentences in the JSON, keeps the contract between the
@@ -303,11 +312,21 @@ def main() -> int:
         sys.stderr.write("cachy-updater-tray: already running\n")
         return 0
 
+    # Wait for the tray rather than exiting the instant it is missing: at login
+    # the panel that PROVIDES the tray is still starting. Polling beats a fixed
+    # sleep, and the cap keeps a tray-less box from holding a process forever.
+    waited = 0
+    while not QSystemTrayIcon.isSystemTrayAvailable() and waited < TRAY_WAIT_S:
+        time.sleep(3)
+        waited += 3
     if not QSystemTrayIcon.isSystemTrayAvailable():
-        # Not an error: bare WMs start their panel after autostart runs, and a
-        # headless box has no tray at all. Exit 0 so nothing reports a failure.
-        sys.stderr.write("cachy-updater-tray: no system tray here — exiting\n")
+        # Not an error: a headless box has no tray, and a bare WM may never
+        # start a panel. Exit 0 so nothing reports a failure.
+        sys.stderr.write("cachy-updater-tray: no system tray after %ds — exiting\n"
+                         % TRAY_WAIT_S)
         return 0
+    if waited:
+        sys.stderr.write("cachy-updater-tray: tray appeared after %ds\n" % waited)
 
     tray = Tray(app)
     tray.show()
