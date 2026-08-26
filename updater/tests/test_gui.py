@@ -335,6 +335,112 @@ class ActionWiringTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
 
+
+@unittest.skipUnless(HAVE_QT, "PyQt5 not installed")
+class UpdateConfirmTests(unittest.TestCase):
+    """The Update confirm dialog: what the press will actually do.
+
+    It used to be one hardcoded sentence — "Update the system and rebuild the
+    performance overlay now?" — asked on every press regardless of state. The
+    owner hit it on a run whose overlay queue was empty and asked whether it
+    really does that. It did not: nothing was compiled, because there was
+    nothing to compile.
+
+    Both halves of that matter. Update genuinely CAN build (it is the whole §4
+    pipeline, not a wrapper around `xbps-install -Su`), so the sentence was not
+    a lie in general — which is precisely the failure mode this project keeps
+    meeting: text that reads fine and is false for the run in front of you. And
+    the cost of being wrong is not cosmetic: a promised build is the difference
+    between waiting a minute and waiting an hour, which is the expectation a
+    confirm dialog exists to set.
+
+    So the dialog is built from the counts the window already parsed, and never
+    from a second opinion — the same one-source-of-truth rule the headline and
+    the kernel card follow.
+    """
+
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        loader = importlib.machinery.SourceFileLoader("cachygui", str(GUI_PATH))
+        spec = importlib.util.spec_from_loader("cachygui", loader)
+        cls.mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.mod)
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.mod.Updater._run = lambda s, a, t, **kw: None
+        self.w = self.mod.Updater()
+        self.w.show()
+
+    def tearDown(self):
+        self.w.deleteLater()
+
+    def _confirm(self, status):
+        self.w.status.setPlainText(status)
+        self.w._update_pin_banner()
+        return self.w._update_confirm()
+
+    SPLIT = "    82 package update(s), 8 driver/firmware update(s)   (+4 on hold)\n"
+
+    def test_an_empty_overlay_queue_does_not_promise_a_build(self):
+        # The exact run that exposed this: 82 + 8 upstream, queue empty.
+        t = self._confirm(self.SPLIT + "    0 to rebuild, 0 to deploy\n")
+        self.assertIn("82 package updates and 8 driver updates", t)
+        self.assertIn("Nothing needs compiling", t)
+        self.assertNotIn("rebuild the performance overlay", t)
+
+    def test_a_real_queue_says_how_much_it_will_build(self):
+        t = self._confirm(self.SPLIT + "    3 to rebuild, 1 to deploy\n")
+        self.assertIn("3 overlay packages will be rebuilt first", t)
+        self.assertIn("compiles from source", t)
+        # the cost belongs on its own line, not folded into the question
+        self.assertIn("Install 82 package updates and 8 driver updates now?", t)
+
+    def test_built_but_undeployed_packages_are_not_called_a_build(self):
+        # The P-term case (§7.3): work is queued, but it is a deploy, not a
+        # compile — so it must not borrow the compile warning's language.
+        t = self._confirm(self.SPLIT + "    0 to rebuild, 2 to deploy\n")
+        self.assertIn("already-built", t)
+        self.assertNotIn("compiles from source", t)
+
+    def test_without_a_parsed_status_the_claim_stays_conditional(self):
+        # Nothing known yet: the wording must be one the run cannot falsify,
+        # and it must not invent a count.
+        t = self._confirm("    (status unavailable)\n")
+        self.assertIn("any overlay packages that need it", t)
+        self.assertNotIn("Install 0", t)
+        self.assertNotIn("Nothing needs compiling", t)
+
+    def test_upstream_counts_without_a_queue_line_stay_conditional_too(self):
+        t = self._confirm(self.SPLIT)
+        self.assertIn("82 package updates", t)
+        self.assertIn("did not say whether there are any", t)
+        self.assertNotIn("Nothing needs compiling", t)
+
+    def test_singulars_are_not_pluralised(self):
+        t = self._confirm("    1 package update(s), 1 driver/firmware update(s)\n"
+                          "    1 to rebuild, 0 to deploy\n")
+        self.assertIn("1 package update and 1 driver update", t)
+        self.assertIn("1 overlay package will be rebuilt first", t)
+
+    def test_no_drivers_means_no_driver_clause(self):
+        t = self._confirm("    5 package update(s), 0 driver/firmware update(s)\n"
+                          "    0 to rebuild, 0 to deploy\n")
+        self.assertIn("5 package updates now?", t)
+        self.assertNotIn("driver update", t)
+
+    def test_every_variant_still_says_the_kernel_is_untouched(self):
+        # The one thing Update will NOT do. Losing it from a branch is how a
+        # user concludes the button did nothing about the kernel notice above.
+        for status in (self.SPLIT + "    0 to rebuild, 0 to deploy\n",
+                       self.SPLIT + "    3 to rebuild, 0 to deploy\n",
+                       self.SPLIT + "    0 to rebuild, 2 to deploy\n",
+                       self.SPLIT,
+                       "    (status unavailable)\n"):
+            self.assertIn("Update kernel", self._confirm(status))
+
 if __name__ == "__main__":
     unittest.main()
 

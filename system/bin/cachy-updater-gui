@@ -411,7 +411,7 @@ class Updater(QWidget):
         self.btn_update = QPushButton("Update")
         self.btn_update.setObjectName("primary")
         self.btn_update.setToolTip(
-            "Update the system and rebuild the performance overlay "
+            "Update the system, rebuilding any overlay packages that need it "
             "(leaves the kernel alone)")
         self.btn_kernel = QPushButton("Update kernel")
         self.btn_kernel.setToolTip(
@@ -691,6 +691,11 @@ class Updater(QWidget):
         and the detail beneath it to disagree.
         """
         parts = []
+        # Kept for the Update confirm dialog, which used to assert a hardcoded
+        # "rebuild the performance overlay" whether or not anything needed
+        # building. None means "the status did not say", which is a different
+        # thing from zero and has to read differently.
+        self._counts = {"pkgs": None, "drivers": 0, "rebuild": None, "deploy": None}
         held = re.search(r"\(\+(\d+) on hold\)", text)
         hold_txt = f" ({held.group(1)} on hold)" if held else ""
         # Counts, not prose. The owner's format, and it is simply better: the
@@ -700,14 +705,17 @@ class Updater(QWidget):
         m = re.search(r"(\d+) upstream package\(s\) updatable", text)
         if split:
             pk, drv = int(split.group(1)), int(split.group(2))
+            self._counts["pkgs"], self._counts["drivers"] = pk, drv
             parts.append(f"{pk} package update{'' if pk == 1 else 's'}, "
                          f"{drv} driver update{'' if drv == 1 else 's'}" + hold_txt)
         elif m and int(m.group(1)):
             n = int(m.group(1))
+            self._counts["pkgs"] = n
             parts.append(f"{n} package update{'' if n == 1 else 's'}" + hold_txt)
         m = re.search(r"(\d+) to rebuild, (\d+) to deploy", text)
         if m:
             rb, dep = int(m.group(1)), int(m.group(2))
+            self._counts["rebuild"], self._counts["deploy"] = rb, dep
             if rb:
                 parts.append(f"{rb} overlay package{'' if rb == 1 else 's'} to rebuild")
             elif dep:
@@ -809,12 +817,65 @@ class Updater(QWidget):
         self._run(["--pin-bore", "--dry-run"], self.out, done=after_preview,
                   activity="Fetching the BORE patch for review…")
 
+    KERNEL_ASIDE = ("\n\n(The BORE kernel is left alone — use 'Update kernel' "
+                    "for that.)")
+
+    def _update_confirm(self):
+        """What this press will ACTUALLY do, from the counts already on screen.
+
+        The old text was one hardcoded sentence — "Update the system and rebuild
+        the performance overlay now?" — and the owner rightly asked whether it
+        really does that, on a run whose overlay queue was empty. It did not.
+        Update *can* compile: it is the whole §4 pipeline, not a wrapper around
+        `xbps-install -Su`. But whether it compiles ANYTHING on this press is a
+        fact the window already knows, and a dialog that asserts a build before
+        a download is the difference between "this takes a minute" and "this
+        takes an hour" — exactly the expectation a confirm exists to set.
+
+        Same rule as the headline and the kernel card: read what the CLI said,
+        never re-derive. Unknown stays conditional rather than guessing.
+        """
+        c = getattr(self, "_counts", None) or {}
+        pk, drv = c.get("pkgs"), c.get("drivers") or 0
+        rb, dep = c.get("rebuild"), c.get("deploy")
+
+        if pk is None:
+            # No status parsed yet: promise nothing specific. "any that need it"
+            # is conditional on purpose — it cannot be falsified by the run.
+            return ("Update the system now, rebuilding any overlay packages that "
+                    "need it?" + self.KERNEL_ASIDE)
+
+        what = f"{pk} package update{'' if pk == 1 else 's'}"
+        if drv:
+            what += f" and {drv} driver update{'' if drv == 1 else 's'}"
+
+        # The QUESTION stays the same in every branch and only the disclosure
+        # under it changes. Folding the build into the question produced
+        # "Install 82 package updates and 8 driver updates, and rebuild 3
+        # overlay packages, now?" — two conjunctions and a stranded "now?",
+        # which is the same unreadable-clause problem the headline already had
+        # to be rescued from. The expensive part earns its own line instead.
+        head = f"Install {what} now?"
+        if rb:
+            note = (f"\n\n{rb} overlay package{'' if rb == 1 else 's'} will be "
+                    "rebuilt first — that compiles from source and can take a "
+                    "while.")
+        elif dep:
+            note = (f"\n\nNothing needs compiling — {dep} already-built overlay "
+                    f"package{'' if dep == 1 else 's'} will be deployed.")
+        elif rb == 0:
+            note = ("\n\nNothing needs compiling — the overlay packages are "
+                    "already current.")
+        else:
+            # counts for upstream, but the overlay queue was not reported
+            note = ("\n\nAny overlay packages that need rebuilding are built "
+                    "first; the status did not say whether there are any.")
+        return head + note + self.KERNEL_ASIDE
+
     def update_userspace(self):
         # userspace only — the kernel is the explicit "Update kernel" button
         self._sync_then(["--commit", "--yes", "--no-kernel"],
-                  confirm="Update the system and rebuild the performance overlay now?"
-                          "\n\n(The BORE kernel is left alone — use 'Update kernel' "
-                          "for that.)",
+                  confirm=self._update_confirm(),
                   activity="Updating — do not power off")
 
     def update_kernel(self):

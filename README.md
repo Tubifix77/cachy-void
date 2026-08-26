@@ -69,7 +69,7 @@ Once `deploy.sh` has finished, **`cachy-updater-gui` is the part of Cachy-Void y
 
 | Control | What it does |
 |---|---|
-| **Update** | Sync `void-packages`, then update the system + rebuild the performance overlay (kernel untouched). |
+| **Update** | Sync `void-packages`, then rebuild any overlay package that needs it and update the system (kernel untouched). Whether anything compiles depends on the queue — the confirm dialog says which. |
 | **Update kernel** | The same, including the BORE kernel: compiles, then a reboot switches to it. |
 | **Clean up** | Orphans + package cache. **Previews first** and lists exactly what will go; never removes kernels. |
 | **GPU / drivers** | Card, driver + pending update, whether the module is really loaded, DKMS builds per kernel — and a warning for any installed kernel with **no** module built. |
