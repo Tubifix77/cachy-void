@@ -157,7 +157,11 @@ if [ "${1:-}" = "--remove" ]; then
     # Only the names WE added; the rest of Luv-Void belongs to the shared half.
     if [ -d "$SHARE/icons/Luv-Void" ]; then
         find "$SHARE/icons/Luv-Void" -name 'org.xfce.*' -type l -delete 2>/dev/null
-        ok "Xfce icon aliases removed from Luv-Void"
+        if [ -f "$SHARE/icons/Luv-Void/icon-theme.cache" ] &&
+           command -v gtk-update-icon-cache >/dev/null 2>&1; then
+            gtk-update-icon-cache -f -t "$SHARE/icons/Luv-Void" >/dev/null 2>&1
+        fi
+        ok "Xfce icon aliases removed from Luv-Void (cache refreshed)"
     fi
     ok "removed - log out and back in for a full reset."
     exit 0
@@ -248,6 +252,18 @@ if [ -d "$LUV" ]; then
     alias_icon org.xfce.panel.showdesktop      user-desktop && _al=$((_al + 1))
     alias_icon org.xfce.panel.directorymenu    folder && _al=$((_al + 1))
     alias_icon org.xfce.panel.applicationsmenu start-here && _al=$((_al + 1))
+    # A theme with an icon-theme.cache is read FROM THAT CACHE, so files added
+    # afterwards are invisible no matter how correct they are. This cost a round
+    # of confusion: the aliases existed, the symlinks were valid, and GTK still
+    # resolved org.xfce.panel.showdesktop to Xfce's own colourful icon in
+    # hicolor — because Luv-Void's cache had been written by the shared half
+    # moments earlier and did not list them. Refresh it, or the aliases above do
+    # nothing at all.
+    if [ -f "$LUV/icon-theme.cache" ] && command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -f -t "$LUV" >/dev/null 2>&1 \
+            && ok "Luv-Void icon cache refreshed (else the aliases stay invisible)" \
+            || warn "could not refresh the Luv-Void icon cache — icons may not apply"
+    fi
     if [ "$_al" -gt 0 ]; then
         ok "$_al Xfce app icon name(s) aliased into Luv-Void (the dock was falling"
         printf '    back to a colourful stock set)\n'
