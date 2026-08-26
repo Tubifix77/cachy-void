@@ -730,28 +730,52 @@ work that had been budgeted:
   the user's `terminalrc` so the look is *applied* rather than merely offered in
   a preferences dialog.
 
-**One fallback was built, tested, and deleted.** The applier originally carried a
-path that wrote the channel XML directly, for boxes with no xfconf daemon
-reachable. A clean test disproved it: with a fresh `xfconfd`, `HOME` and
-`XDG_CONFIG_HOME` pointed at a disposable tree holding hand-written channel
-files in the documented location and format, **every property still read back as
-the `/etc/xdg` default**. Writing those files is not a supported way in, so a
-fallback that appeared to work would have silently done nothing on exactly the
-boxes it existed for. It is gone. The applier now **requires a live xfconf** —
-which means running it inside an Xfce session, the way `cachy-branding` is
-already documented to be used — and without one it writes what it can
-(`terminalrc` needs no daemon), arms a one-shot `OnlyShowIn=XFCE` autostart that
-re-runs itself at the next Xfce login, and reports how many settings are queued.
-"ok" is never printed for a write that was refused.
+**One fallback was built, deleted, and then justified properly.** The applier
+originally carried a path that wrote the channel XML directly, for boxes with no
+xfconf daemon reachable. A container test appeared to disprove it — hand-written
+channel files in the documented place and format, and every property still read
+back as the `/etc/xdg` default — so the path was removed on that basis.
 
-**Still unverified against a real session** (the grounding install was a
-container with no X server), and marked at each call site in the applier: the
-per-monitor wallpaper property path
-(`/backdrop/screen0/monitor<NAME>/workspace0/last-image` — dynamic, the same
-shape of trap as Plasma's per-containment wallpaper), and whether the panel
-repaints on a background-colour change without a restart. No panel restart is
-issued either way: a stale colour until the next login costs far less than
-restarting a bar someone is working in.
+**That reasoning was wrong, and the conclusion survived anyway.** The same
+container's `xfconfd` never persisted *anything*, which makes it a broken daemon
+rather than a fair trial; on real hardware `xfconfd` plainly owns those files,
+and every channel this applier touches was found rewritten under
+`~/.config/xfce4/xfconf/xfce-perchannel-xml/` moments after a run. The honest
+reason not to hand-write them is the opposite of the original one: the daemon
+holds channel state in memory and flushes it, so an edit made while a session
+runs is racing a writer that wins. The live path is correct on its own merits.
+
+So the applier **requires a live xfconf** — meaning it runs inside an Xfce
+session, the way `cachy-branding` is already documented to be used — and without
+one it writes what it can (`terminalrc` needs no daemon), arms a one-shot
+`OnlyShowIn=XFCE` autostart that re-runs it at the next Xfce login, and reports
+how many settings are queued. `ok` is never printed for a write that was
+refused.
+
+**Verified on real hardware** (a nested Xfce session on the testbed,
+2026-08-26): every property lands and reads back, the panel accepts its
+background colour through xfconf, and the per-monitor wallpaper path
+(`/backdrop/screen0/monitor<NAME>/workspace0/last-image`) resolves against the
+session's **own** monitor name. That last one is dynamic — the same shape of
+trap as Plasma's per-containment wallpaper — and it is what caught the
+session-hijack bug below.
+
+**What the side-by-side test found.** Running the applier in a nested Xfce
+session *while LXQt was still running* exposed a latent bug in
+`cachy-branding` itself: it imported the entire environment of any running
+`lxqt-session`, overwriting the caller's `DISPLAY`,
+`DBUS_SESSION_BUS_ADDRESS` and `XDG_CURRENT_DESKTOP`. Every xfconf write went
+to LXQt's bus, the wallpaper was set for the host session's monitor name, the
+applier's own session gate read LXQt and refused to act — and it reported
+success for all of it. The import now happens only when the process has no
+session of its own. This was invisible for LXQt and Plasma because they were
+never running at the same time; testing two desktops *simultaneously* is what
+made it visible, which is an argument for doing that rather than logging
+between them.
+
+Still unverified: whether the panel repaints on a background-colour change
+without a restart. No panel restart is issued either way — a stale colour until
+the next login costs far less than restarting a bar someone is working in.
 
 ## 6. Scope & rules
 

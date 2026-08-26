@@ -28,20 +28,29 @@
 #     write the palette keys into terminalrc so it is applied rather than merely
 #     offered in a dialog.
 #
-# One thing was TESTED rather than assumed, and it deleted a whole code path.
-# This applier originally carried a fallback that wrote the channel XML directly,
-# for the case where no xfconf daemon is reachable. A clean test disproved it: on
-# a fresh xfconfd, with HOME and XDG_CONFIG_HOME pointed at a disposable tree
-# holding hand-written channel files in the documented location and format,
-# every property still read back as the /etc/xdg default. Writing those files is
-# not a supported way in. So the fallback is gone and the requirement is stated
-# instead: this applier needs a live xfconf, which means running it inside an
-# Xfce session — the same way cachy-branding is already documented to be used.
-# Without one it writes what it can, arms a one-shot, and says so.
+# There is no fallback that writes channel XML directly, and the reason is worth
+# recording because the first reason given for it was wrong.
 #
-# STILL UNVERIFIED against a real session (this container has no X server), and
-# marked at each call site: the per-monitor wallpaper property path, and whether
-# the panel repaints on a background colour change without a restart.
+# A container test appeared to show that hand-written channel files are ignored
+# by xfconfd. That test is not trustworthy: the same container's xfconfd never
+# persisted anything either, so it was a broken daemon rather than a fair trial.
+# On real hardware xfconfd DOES own those files — every channel this applier
+# touches was found rewritten under ~/.config/xfce4/xfconf/xfce-perchannel-xml/
+# moments after the run.
+#
+# Which is precisely why writing them by hand is still the wrong idea: the
+# daemon holds channel state in memory and flushes it out, so an edit made while
+# a session is running is racing a writer that will win. The live path is
+# correct on its own merits, not because the file path was proven closed. So:
+# this applier needs a live xfconf, meaning it runs inside an Xfce session — the
+# way cachy-branding is already documented to be used — and without one it
+# writes what it can, arms a one-shot for the next login, and says so.
+#
+# VERIFIED on real hardware (nested Xfce session, 2026-08-26): every property
+# above lands and reads back, the per-monitor wallpaper path resolves against
+# the session's own monitor name, and the panel accepts its background colour
+# through xfconf. Still unverified: whether the panel REPAINTS without a
+# restart, which is a look question rather than a state one.
 set -uo pipefail
 
 ASSETS="${CACHY_BRANDING_ASSETS:-/usr/share/cachy-void/branding}"
