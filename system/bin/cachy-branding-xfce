@@ -427,6 +427,20 @@ if $HAVE_XFCONF; then
     #     every separator transparent instead of removing them: panel-1's
     #     separators carry the `expand` flag that pushes the tray and clock to
     #     the right, so dropping them collapses the bar. Style 0 = transparent.
+    #     And the actual culprit: the TASKLIST draws a grip handle of its
+    #     own -- three lines, right where it sits beside the menu button.
+    #     Neither the panel lock nor the separator style touches it: it is
+    #     the tasklist's own show-handle property, and it defaults ON. Two
+    #     wrong diagnoses before this one, both plausible and both checked,
+    #     which is the argument for reading a plugin's properties rather
+    #     than reasoning about what a widget looks like.
+    for _i in $(seq 1 24); do
+        if [ "$(xfconf-query -c xfce4-panel -p /plugins/plugin-$_i 2>/dev/null)" = "tasklist" ]; then
+            xq xfce4-panel /plugins/plugin-$_i/show-handle bool false \
+                && ok "tasklist grip handle hidden (the three lines)"
+        fi
+    done
+
     _sep=0
     for _i in $(seq 1 24); do
         if [ "$(xfconf-query -c xfce4-panel -p /plugins/plugin-$_i 2>/dev/null)" = "separator" ]; then
