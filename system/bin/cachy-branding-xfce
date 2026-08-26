@@ -329,13 +329,23 @@ if $HAVE_XFCONF; then
     # (a) The Applications button: Xfce ships a generic icon and the word
     #     "Applications" (localised — it read "Programmer" on a Danish box). The
     #     brand square alone is what the other desktops show.
-    EMBLEM="$ASSETS/void-cachy-square.svg"
-    if [ -f "$EMBLEM" ]; then
+    #     Which asset matters: void-cachy-square.svg is the WALLPAPER motif
+    #     (concentric square frames in grey) and at 22px it reads as a small grey
+    #     box — the owner spotted it immediately as "not the same as the other
+    #     desktops". The brand MARK is the green diamond, void-cachy-icon.svg,
+    #     and LXQt's menu button uses exactly that (as the PNG the shared half
+    #     renders). Prefer that same PNG so the two panels are identical, and
+    #     fall back to the SVG.
+    EMBLEM=""
+    for _e in "$SHARE/cachy-void/void-cachy-icon.png" "$ASSETS/void-cachy-icon.svg"; do
+        [ -f "$_e" ] && { EMBLEM="$_e"; break; }
+    done
+    if [ -n "$EMBLEM" ]; then
         xq xfce4-panel /plugins/plugin-1/button-icon string "$EMBLEM"
         xq xfce4-panel /plugins/plugin-1/show-button-title bool false
-        ok "menu button -> the Cachy-Void square, no label"
+        ok "menu button -> the Cachy-Void mark ($(basename "$EMBLEM")), no label"
     else
-        warn "brand square missing ($EMBLEM) — menu button left as Xfce set it"
+        warn "brand mark not found — menu button left as Xfce set it"
     fi
 
     # (b) Drop the workspace switcher. Nothing here uses multiple workspaces and
@@ -364,7 +374,19 @@ if $HAVE_XFCONF; then
     # (c) Put the updater in the dock. It is the program this project expects you
     #     to live with, and every other desktop here has it one click away.
     UPD=/usr/share/applications/cachy-updater.desktop
-    if [ -f "$UPD" ] && ! grep -qls "cachy-updater-gui" "$CFG"/xfce4/panel/launcher-*/*.desktop 2>/dev/null; then
+    # Is one already there? Idempotency alone is not enough: an earlier version of
+    # this applier created the directory WITHOUT the items array, so "already
+    # present" would have meant "permanently broken". Find it and repair it.
+    _have=""
+    for _d in "$CFG"/xfce4/panel/launcher-*; do
+        [ -f "$_d/cachy-updater.desktop" ] && { _have="${_d##*launcher-}"; break; }
+    done
+    if [ -f "$UPD" ] && [ -n "$_have" ]; then
+        if xfconf-query -c xfce4-panel -p "/plugins/plugin-$_have/items" \
+                -n -t string -s cachy-updater.desktop 2>/dev/null; then
+            ok "updater already in the dock (launcher items re-asserted)"
+        fi
+    elif [ -f "$UPD" ]; then
         _next=$(( $(xfconf-query -c xfce4-panel -p /panels/panel-2/plugin-ids 2>/dev/null | tail -n +3 | sort -n | tail -1) + 1 ))
         mkdir -p "$CFG/xfce4/panel/launcher-$_next"
         cp -f "$UPD" "$CFG/xfce4/panel/launcher-$_next/cachy-updater.desktop"
@@ -373,8 +395,13 @@ if $HAVE_XFCONF; then
             _ids="$_ids -t int -s $_id"
         done
         # shellcheck disable=SC2086
+        # The `items` array is what makes a launcher a launcher. Without it the
+        # plugin renders a generic gear and does nothing when clicked — which is
+        # precisely what the first attempt produced, since creating the directory
+        # and the .desktop is only half the job.
         if [ -n "$_ids" ] &&
            xfconf-query -c xfce4-panel -p /plugins/plugin-$_next -n -t string -s launcher 2>/dev/null &&
+           xfconf-query -c xfce4-panel -p /plugins/plugin-$_next/items -n -t string -s cachy-updater.desktop 2>/dev/null &&
            xfconf-query -c xfce4-panel -p /panels/panel-2/plugin-ids -n $_ids -t int -s "$_next" 2>/dev/null; then
             ok "Cachy-Void updater added to the dock"
         else
