@@ -382,7 +382,7 @@ Two upstream tools plus a composition wrapper:
   sibling `wqy-zenhei`, which Void does not package, so the packaged sibling is
   adopted instead — verified 2026-08-16). All are members of CachyOS's own
   gaming dependency sets (verified 2026-08-15/16) and stock Void packages — the
-  `future-ideas.md` §4 maintenance test passes by construction.
+  `future-ideas.md` maintenance test passes by construction.
 - **`cachy-game`** — a launch wrapper that composes the offloader and gamemode:
   `gamemoderun` → `prime-run` (the NVIDIA PRIME offload, §6b) → optionally
   `gamescope --` → the game. It **skips any piece that is absent**, so it is

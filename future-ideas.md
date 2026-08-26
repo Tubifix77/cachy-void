@@ -8,11 +8,27 @@ What exists is documented where it belongs: the design in
 [`branding.md`](branding.md), and the history in `git log`. Nothing is recorded
 here twice.
 
-Two companions govern which ideas are worth having, and both live outside this
-list: the **selection rule** for any addition is §4 below, and everything already
-turned down is in [`rejected-ideas.md`](rejected-ideas.md) — check it before
-proposing something, because a rejected idea stays an idea until the verdict is
-written down.
+Two companions govern which ideas are worth having, and neither is an idea
+itself: the **selection rule** every addition has to pass, which is stated right
+here rather than numbered among the proposals it judges, and
+[`rejected-ideas.md`](rejected-ideas.md), where everything already turned down is
+recorded with its verdict — check it before proposing something, because a
+rejected idea stays an idea until the verdict is written down.
+
+**The selection rule (agreed 2026-08-15). An addition must be
+upstream-maintained. If keeping it working falls on US — our own srcpkg, our own
+fork, our own rules file to curate — it is DISQUALIFIED, no matter how well it
+fits the philosophy, UNLESS it *is* core CachyOS substance.**
+
+`linux-cachy`/BORE is the one sanctioned exception: maintaining that fork is the
+project's reason to exist, not a side burden. Everything else must be one
+`xbps-install` away, with Void (or the package's upstream) carrying the updates.
+
+Rationale: this is a solo hobby overlay that deliberately rides upstream Void so
+it "doesn't rot". Every self-maintained component is a standing bill against that
+design; the kernel is the only bill worth paying. (Our own *config* appliers,
+like §1's Tier-2 work, are not packages and are not disqualified — but they are
+not free either.)
 
 ---
 
@@ -59,8 +75,8 @@ offline. Budget login cycles and an owner looking at it, exactly as §1 says.
 **Rules for any of them** (unchanged, and they are what keep this from sprawling):
 never install a desktop, never override a user's own theme, and an unrecognised
 session gets the shared assets plus a plain message — never a half-applied look.
-Each Tier-2 applier is our own config code, so §4's maintenance test does not
-disqualify it, but it is not free either: **three appliers is already at the sane
+Each Tier-2 applier is our own config code, so the selection rule's maintenance
+test does not disqualify it, but it is not free either: **three appliers is already at the sane
 ceiling** — the ceiling this section set before Xfce, and Xfce spent it. A fourth
 needs a better reason than "we could", and GNOME above is not obviously that
 reason.
@@ -109,25 +125,3 @@ Each of these needs a decision rather than another mention.
 - **A second hardware target.** The living-room Asus GR8 mini-PC was the original
   second box. Anything claimed for modern GPUs (Wayland, explicit sync, `fbdev`,
   gamescope) needs hardware like that to be more than theory.
-
----
-
-## 4. Selection rule for any addition (agreed 2026-08-15)
-
-**An addition must be upstream-maintained. If keeping it working falls on US —
-our own srcpkg, our own fork, our own rules file to curate — it is DISQUALIFIED,
-no matter how well it fits the philosophy, UNLESS it *is* core CachyOS
-substance.**
-
-`linux-cachy`/BORE is the one sanctioned exception: maintaining that fork is the
-project's reason to exist, not a side burden. Everything else must be one
-`xbps-install` away, with Void (or the package's upstream) carrying the updates.
-
-Rationale: this is a solo hobby overlay that deliberately rides upstream Void so
-it "doesn't rot". Every self-maintained component is a standing bill against that
-design; the kernel is the only bill worth paying. (Our own *config* appliers,
-like §1's Tier-2 work, are not packages and are not disqualified — but they are
-not free either.)
-
-Ideas this rule has already disqualified — and every other rejection — are
-recorded with their verdicts in [`rejected-ideas.md`](rejected-ideas.md).

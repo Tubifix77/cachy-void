@@ -12,8 +12,9 @@ concrete external event (Void packaging something upstream). "I still think it
 would be nice" is not one of those conditions. If a reopening condition *is* met,
 move the row into `future-ideas.md` rather than editing the verdict here.
 
-The selection rule these verdicts are measured against lives in
-[`future-ideas.md`](future-ideas.md) §4, because it governs new proposals.
+The selection rule these verdicts are measured against is stated in the
+introduction to [`future-ideas.md`](future-ideas.md), because it governs new
+proposals.
 
 ---
 
