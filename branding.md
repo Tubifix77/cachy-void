@@ -817,6 +817,29 @@ offline; this is what only a screen could tell us, and it is most of the work.
   monitor layout is **box-local** configuration and deliberately stays out of
   `deploy.sh`.
 
+- **One panel colour is not the panel's to give.** Arc-Dark marks the active
+  window's tasklist button with *its* blue accent — `box-shadow: inset 0 -2px
+  #5294e2` on `.xfce4-panel.panel .tasklist > button:checked` — and there is no
+  xfconf property for it, because it is theme CSS. So the applier writes CSS: a
+  panel-scoped block in `~/.config/gtk-3.0/gtk.css`, which wins on *priority*
+  rather than specificity (GTK loads the user stylesheet at
+  `PROVIDER_PRIORITY_USER` 800 against a theme's 200, so no `!important` arms
+  race). Two things this cost, both worth keeping:
+  **measure before believing** — the underline was confirmed as exactly
+  `#5294e2`, two rows tall, before anything was written, which ruled out the
+  plausible alternative that some plugin drew its own running-indicator (this
+  panel has no indicator plugin at all); and **a colour probe is not a look
+  check** — the first version also recoloured the button's background, the probe
+  read brand green and reported success, and only cropping the screenshot showed
+  a solid green slab where a 2px line belonged. Arc's own subtle dark fill is now
+  kept deliberately, and only the line changes.
+- **Two appliers, one file.** That block shares `gtk.css` with the shared half's
+  block (which tints Plank's running-indicator dot), so each strips and rewrites
+  only its *own* distinctly-marked block. A box running both desktops is the one
+  that would hit a widened regex, and it would lose half its rules silently —
+  hence the offline assertion in `dispatch-isolation.sh` described below, which
+  was itself mutation-tested to prove it can fail.
+
 **And one bug in the shared half that only two desktops at once could expose.**
 `cachy-branding` imported the whole environment of any running `lxqt-session`,
 overwriting the caller's `DISPLAY`, `DBUS_SESSION_BUS_ADDRESS` and
@@ -890,9 +913,11 @@ than logging between them.
   **decision** is unit-tested against fake filesystem trees (`test_de_detect.py`,
   `test_branding_dispatch.py`, and `cachy-branding --dry-run`); the **files
   written** are checked by `updater/tests/dispatch-isolation.sh`, which runs the
-  real appliers into two disjoint `HOME`s and asserts neither desktop's config
-  appears in the other's (while Tier-1 assets appear in both); and only the
-  **pixels** need a real login. The middle one runs in the Void WSL sandbox given
+  real appliers into three disjoint `HOME`s (LXQt, Plasma, Xfce) and asserts no
+  desktop's config appears in another's, while Tier-1 assets appear in all of
+  them — plus one deliberately *shared* `HOME`, for the opposite failure: two
+  appliers that both legitimately edit `gtk.css` must not strip each other's
+  marked blocks; and only the **pixels** need a real login. The middle one runs in the Void WSL sandbox given
   a non-root user and `kf6-kconfig` — a real applier run refuses root, correctly,
   since the config is per-user.
 - **The applier is split accordingly**: `apply_shared` (Tier 1 — Kvantum, icons,

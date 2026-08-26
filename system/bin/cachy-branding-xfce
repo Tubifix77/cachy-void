@@ -181,6 +181,19 @@ if [ "${1:-}" = "--remove" ]; then
         fi
         ok "Xfce icon aliases removed from Luv-Void (cache refreshed)"
     fi
+    # Only our block; the shared half's block in the same file (Plank's dot)
+    # and any rule the user wrote themselves are left exactly as they are.
+    if [ -f "$CFG/gtk-3.0/gtk.css" ]; then
+        python3 - "$CFG/gtk-3.0/gtk.css" <<'PY'
+import re, sys
+p = sys.argv[1]
+t = open(p).read()
+t = re.sub(r"\n*/\* >>> cachy-void xfce >>> \*/.*?/\* <<< cachy-void xfce <<< \*/\n*",
+           "\n", t, flags=re.S)
+open(p, "w").write(t)
+PY
+        ok "panel accent CSS removed (other blocks in gtk.css left alone)"
+    fi
     ok "removed - log out and back in for a full reset."
     exit 0
 fi
@@ -616,6 +629,63 @@ if [ -x "$LAUNCH" ] && command -v conky >/dev/null 2>&1; then
     ok "conky telemetry autostart installed (the same two panels the others run)"
 elif command -v conky >/dev/null 2>&1; then
     warn "conky is installed but the shared launcher is missing — run cachy-branding"
+fi
+
+# --------------------------------------------------- 5a. panel accent (GTK CSS)
+# The one panel colour xfconf cannot reach. Arc-Dark marks the ACTIVE window's
+# tasklist button with its own blue accent, and fills other checked panel
+# buttons with it outright:
+#
+#     .xfce4-panel.panel .tasklist > button:checked
+#         { box-shadow: inset 0 -2px #5294e2; }
+#
+# There is no panel property for that line, because it is not the panel's line
+# -- it is the theme's, so it has to be answered in CSS. Only the LINE changes:
+# the first attempt recoloured the button's whole background too, which read as
+# a solid green slab in the bar -- caught by cropping the screenshot rather than
+# by trusting the pixel probe, which had reported the right colour all along. Measured before it was
+# believed: the pixels under the running updater's button were exactly #5294e2,
+# two rows tall, which is that rule and not some plugin's running-indicator
+# (this panel has no indicator plugin at all -- it was checked).
+#
+# The override wins on PRIORITY, not specificity: GTK loads the user stylesheet
+# ~/.config/gtk-3.0/gtk.css at PROVIDER_PRIORITY_USER (800) against a theme's
+# 200, so a plain selector beats Arc with no !important arms race. Every
+# selector is panel-scoped, so no widget outside the two bars changes colour.
+#
+# It gets its OWN marked block, distinct from the shared half's block in the
+# same file (that one tints Plank's dot): two appliers editing one file must not
+# strip each other's rules, and a box running both desktops is exactly this box.
+mkdir -p "$CFG/gtk-3.0"
+python3 - "$CFG/gtk-3.0/gtk.css" "$ACCENT" <<'PY'
+import os, re, sys
+path, accent = sys.argv[1], sys.argv[2]
+text = open(path).read() if os.path.exists(path) else ""
+text = re.sub(r"\n*/\* >>> cachy-void xfce >>> \*/.*?/\* <<< cachy-void xfce <<< \*/\n*",
+              "\n", text, flags=re.S)
+block = ("/* >>> cachy-void xfce >>> */\n"
+         "/* Arc-Dark paints every checked panel button with ITS blue accent;\n"
+         "   repaint brand green. Panel-scoped, so nothing else moves. */\n"
+         ".xfce4-panel.panel button:checked,\n"
+         ".xfce4-panel.panel .tasklist > button.flat:active {\n"
+         "    background-color: " + accent + ";\n"
+         "}\n"
+         "/* The active window is the exception: Arc gives it a subtle dark fill\n"
+         "   and a 2px underline, and only the UNDERLINE should change colour. A\n"
+         "   solid green button is louder than the bar it sits in -- this rule is\n"
+         "   more specific than the one above precisely to keep that fill. */\n"
+         ".xfce4-panel.panel .tasklist > button:checked,\n"
+         ".xfce4-panel.panel .tasklist > button.flat:checked {\n"
+         "    background-color: rgba(0, 0, 0, 0.25);\n"
+         "    box-shadow: inset 0 -2px " + accent + ";\n"
+         "}\n"
+         "/* <<< cachy-void xfce <<< */\n")
+open(path, "w").write((text.rstrip() + "\n\n" if text.strip() else "") + block)
+PY
+if [ -f "$CFG/gtk-3.0/gtk.css" ]; then
+    ok "panel accent -> $ACCENT (the active-window underline was Arc-Dark's blue)"
+else
+    warn "could not write $CFG/gtk-3.0/gtk.css -- the panel keeps Arc's blue accent"
 fi
 
 # ----------------------------------------------------------- 5b. panel reload

@@ -52,8 +52,10 @@ and `--dry-run` reports what would be applied and *why* without writing anything
 **Test it without hardware** — three layers, only one of which needs a machine:
 the decision (`test_de_detect.py`, `test_branding_dispatch.py`, `--dry-run`), the
 files written (`updater/tests/dispatch-isolation.sh`, real appliers into disjoint
-`HOME`s), and the look (a real login; nothing offline substitutes). The isolation
-harness runs in the Void WSL sandbox given a non-root user and `kf6-kconfig`.
+`HOME`s — plus one shared `HOME`, because two appliers editing the same file is a
+different failure from two appliers leaking into each other), and the look (a
+real login; nothing offline substitutes). The isolation harness runs in the Void
+WSL sandbox given a non-root user and `kf6-kconfig`.
 
 ## What This Project Is
 

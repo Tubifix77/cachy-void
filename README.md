@@ -147,7 +147,7 @@ assets/                  Wallpapers + icons (the mark)
 updater/
   cachy_void_update.py   Unified CLI (--sync/--check/--status/--commit/--rollback/--clean/--gpu/…)
   engine/                Solver, XBPS layer, journal, kernel state machine, trust, health, snapshot
-  tests/                 Mock-driven unit + integration suites (344 tests) +
+  tests/                 Mock-driven unit + integration suites (505 tests) +
                          dispatch-isolation.sh (real appliers, disjoint HOMEs)
 ```
 
@@ -155,7 +155,7 @@ updater/
 
 ## Status
 
-The whole spec is implemented and covered by a **344-test** mock-driven suite (run in a Void WSL2 sandbox): the update engine, dependency solver, trust pipeline, template synthesis, kernel state machine, health daemon, installer, and the desktop detector/dispatcher. Desktop branding is verified in three layers, because only one of them needs hardware: the *decision* (which desktop, on what evidence) is unit-tested against fake filesystem trees and by `cachy-branding --dry-run`; the *files written* are checked by `updater/tests/dispatch-isolation.sh`, which runs the real appliers into two disjoint `HOME`s and asserts neither desktop's config lands in the other's; only the *look* needs a real login.
+The whole spec is implemented and covered by a **505-test** mock-driven suite (run in a Void WSL2 sandbox): the update engine, dependency solver, trust pipeline, template synthesis, kernel state machine, health daemon, installer, and the desktop detector/dispatcher. Desktop branding is verified in three layers, because only one of them needs hardware: the *decision* (which desktop, on what evidence) is unit-tested against fake filesystem trees and by `cachy-branding --dry-run`; the *files written* are checked by `updater/tests/dispatch-isolation.sh`, which runs the real appliers into disjoint `HOME`s and asserts no desktop's config lands in another's (plus one shared `HOME`, since two appliers editing the same file is its own failure mode); only the *look* needs a real login.
 
 **Validated on real hardware** (a Void + LXQt laptop): the updater's own `--commit` built `linux-cachy` end-to-end (BORE patch trust → template regen → G2 config gate → compile → deploy), the kernel **booted** (BORE live, 1000 Hz, full preempt), the **NVIDIA DKMS driver built against the BORE kernel**, and games ran on it. The **post-boot health daemon** has also run its full §8.7 confirm cycle on metal: candidate confirmed, the H1–H5 battery passed, and the kernel was **promoted** to tracked/known-good. The performance overlay, zram/sysctl tuning, service cycling, btrfs snapshots, and gaming layer are all exercised on bare metal.
 
