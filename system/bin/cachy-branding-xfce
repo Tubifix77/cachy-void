@@ -128,6 +128,7 @@ if [ "${1:-}" = "--remove" ]; then
         for _pp in /general/theme /general/title_font; do
             xfconf-query -c xfwm4 -p "$_pp" -r 2>/dev/null
         done
+        xfconf-query -c xfce4-desktop -p /desktop-icons/style -r 2>/dev/null
         xfconf-query -c xfce4-panel -p /panels/panel-1/background-style -r 2>/dev/null
         xfconf-query -c xfce4-panel -p /panels/panel-1/background-rgba -r 2>/dev/null
         # The wallpaper is per-monitor, so reset whatever monitors exist now.
@@ -231,6 +232,14 @@ else
     warn "panel colour skipped: it needs a live xfconf (re-run inside Xfce)"
 fi
 
+# xfdesktop shows file/launcher icons by default (Home, Filesystem, Trash, and
+# one per mounted volume). The LXQt applier already clears the desktop for the
+# same two reasons, and a live look confirmed both on Xfce: the SYSTEM telemetry
+# sheet lives down the left edge and the icons land straight on top of it, and a
+# clean desktop is the look. 0 = none, 1 = minimised windows, 2 = file icons.
+xq xfce4-desktop /desktop-icons/style int 0 && \
+    ok "desktop icons cleared (they collided with the SYSTEM panel)"
+
 # --------------------------------------------------------------- 3. wallpaper
 # Same wallpaper, same order of preference, as every other desktop here. Picking
 # a different one per desktop was a real bug once: they are meant to be the same
@@ -323,6 +332,22 @@ elif command -v conky >/dev/null 2>&1; then
     warn "conky is installed but the shared launcher is missing — run cachy-branding"
 fi
 
+# ----------------------------------------------------------- 5b. panel reload
+# The panel caches the icon theme and its background at startup, so a live run
+# leaves stock icons and a stock bar until the next login — which a real session
+# made obvious. `xfce4-panel -r` is Xfce's OWN reload (what its settings tooling
+# uses), takes under a second and keeps the layout, so unlike the plasmashell
+# restart this one is cheap enough to be worth doing. Only in our own session:
+# reloading a panel belonging to a desktop we are not in would be exactly the
+# cross-session rudeness the $LIVE gate exists to prevent.
+if $LIVE && command -v xfce4-panel >/dev/null 2>&1; then
+    if xfce4-panel -r >/dev/null 2>&1; then
+        ok "panel reloaded (icons + background applied now, layout untouched)"
+    else
+        warn "panel reload failed — its icons and colour land at the next login"
+    fi
+fi
+
 # ------------------------------------------------------------------ 6. closing
 log "Xfce applier done."
 if [ "$XQ_FAILED" -gt 0 ]; then
@@ -330,8 +355,9 @@ if [ "$XQ_FAILED" -gt 0 ]; then
     warn "  queued for your next Xfce login by the one-shot armed above"
 fi
 if $LIVE; then
-    printf '  Theme, icons and font apply immediately (xfconf notifies its listeners).\n'
-    printf '  The panel colour and the Conky panels appear at the next Xfce login.\n'
+    printf '  Theme, icons, font and the panel apply immediately.\n'
+    printf '  The Conky panels start with the session, so they appear at the next login\n'
+    printf '  (or run ~/.local/share/cachy-void/conky-start.sh to see them now).\n'
 else
     printf '  Config written. Log into Xfce to see it.\n'
 fi
