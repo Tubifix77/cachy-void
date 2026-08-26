@@ -164,7 +164,8 @@ if [ "${1:-}" = "--remove" ]; then
     rm -f "$CFG/autostart/cachy-void-conky-xfce.desktop" \
           "$CFG/autostart/cachy-void-xfce-firstrun.desktop" \
           "$CFG/autostart/cachy-void-xfce-wallpaper.desktop"
-    rm -f "$SHARE/cachy-void/wallpaper-xfce.png"
+    rm -f "$SHARE/cachy-void/wallpaper-xfce.png" \
+          "$SHARE/cachy-void/void-cachy-updater.png"
     # Only the names WE added; the rest of Luv-Void belongs to the shared half.
     if [ -d "$SHARE/icons/Luv-Void" ]; then
         find "$SHARE/icons/Luv-Void" -name 'org.xfce.*' -type l -delete 2>/dev/null
@@ -320,6 +321,56 @@ fi
 xq xfce4-desktop /desktop-icons/style int 0 && \
     ok "desktop icons cleared (they collided with the SYSTEM panel)"
 
+# panel_drop PANEL TYPE... — remove every plugin of the given type(s) from a
+# panel. Removing an Xfce plugin is two steps: reset the plugin AND rewrite the
+# panel's plugin-ids array, or the bar keeps a gap where the item used to be.
+# Written as a function because the owner asked for three of these in a row.
+panel_drop() {
+    local panel="$1"; shift
+    local t id drop="" keep=""
+    for t in "$@"; do
+        for id in $(xfconf-query -c xfce4-panel -p "/panels/panel-$panel/plugin-ids" 2>/dev/null | tail -n +3); do
+            [ "$(xfconf-query -c xfce4-panel -p "/plugins/plugin-$id" 2>/dev/null)" = "$t" ] \
+                && drop="$drop $id"
+        done
+    done
+    [ -n "$drop" ] || return 1
+    for id in $(xfconf-query -c xfce4-panel -p "/panels/panel-$panel/plugin-ids" 2>/dev/null | tail -n +3); do
+        case " $drop " in *" $id "*) ;; *) keep="$keep -t int -s $id" ;; esac
+    done
+    [ -n "$keep" ] || return 1
+    # shellcheck disable=SC2086
+    xfconf-query -c xfce4-panel -p "/panels/panel-$panel/plugin-ids" -n $keep 2>/dev/null || return 1
+    for id in $drop; do
+        xfconf-query -c xfce4-panel -p "/plugins/plugin-$id" -r 2>/dev/null
+    done
+    return 0
+}
+
+# updater_launcher_icon — an absolute PNG path for the dock launcher.
+#
+# The launcher plugin would not render the updater's SVG by absolute path: it
+# fell back to Xfce's generic settings gear, which the owner spotted as "xfce
+# default setting icons instead of the cachy void updater icon". The menu button
+# right above it DOES load an absolute path — but a PNG (the one the shared half
+# renders) — so raster works where the SVG did not. Rather than diagnose the
+# panel's SVG loading, render a PNG once and point at that; it also matches how
+# the wallpaper is handled here.
+updater_launcher_icon() {
+    local src="$ASSETS/void-cachy-updater.svg"
+    local png="$SHARE/cachy-void/void-cachy-updater.png"
+    [ -f "$src" ] || { printf '%s' "$src"; return; }
+    if [ ! -s "$png" ]; then
+        mkdir -p "$(dirname "$png")"
+        if command -v magick >/dev/null 2>&1; then
+            magick -background none "$src" -resize 64x64 "$png" 2>/dev/null
+        elif command -v convert >/dev/null 2>&1; then
+            convert -background none "$src" -resize 64x64 "$png" 2>/dev/null
+        fi
+    fi
+    [ -s "$png" ] && printf '%s' "$png" || printf '%s' "$src"
+}
+
 # ------------------------------------------------------------ 2b. panel items
 # Three owner-requested changes to Xfce's own panel. Note the shift: everything
 # above only RECOLOURS what Xfce set up, while this edits its layout — asked for
@@ -348,28 +399,16 @@ if $HAVE_XFCONF; then
         warn "brand mark not found — menu button left as Xfce set it"
     fi
 
-    # (b) Drop the workspace switcher. Nothing here uses multiple workspaces and
-    #     the pager is dead weight in the bar. Removing a plugin means BOTH
-    #     resetting it and taking its id out of the panel's array, or the panel
-    #     keeps a gap where it used to be.
-    PAGER=""
-    for _i in $(seq 1 20); do
-        [ "$(xfconf-query -c xfce4-panel -p /plugins/plugin-$_i 2>/dev/null)" = "pager" ] \
-            && { PAGER=$_i; break; }
-    done
-    if [ -n "$PAGER" ]; then
-        _keep=""
-        for _id in $(xfconf-query -c xfce4-panel -p /panels/panel-1/plugin-ids 2>/dev/null | tail -n +3); do
-            [ "$_id" = "$PAGER" ] || _keep="$_keep -t int -s $_id"
-        done
-        # shellcheck disable=SC2086
-        if [ -n "$_keep" ] && xfconf-query -c xfce4-panel -p /panels/panel-1/plugin-ids -n $_keep 2>/dev/null; then
-            xfconf-query -c xfce4-panel -p /plugins/plugin-$PAGER -r 2>/dev/null
-            ok "workspace switcher removed from the panel"
-        else
-            warn "could not rewrite the panel plugin list — pager left in place"
-        fi
-    fi
+    # (b) Unify the bars with the other desktops, all owner-requested after
+    #     seeing them side by side: no workspace switcher (nothing here uses
+    #     multiple workspaces), no username button (the `actions` plugin — LXQt
+    #     and Plasma show tray + clock and nothing else), and none of the dock's
+    #     separators. Panel-1's separators are deliberately KEPT: one of them is
+    #     the expanding spacer that pushes the tray and clock to the right, and
+    #     dropping those collapses the bar.
+    panel_drop 1 pager   && ok "workspace switcher removed from the panel"
+    panel_drop 1 actions && ok "username button removed (tray + clock, like the others)"
+    panel_drop 2 separator && ok "dock separators removed"
 
     # (c) Put the updater in the dock. It is the program this project expects you
     #     to live with, and every other desktop here has it one click away.
@@ -382,14 +421,19 @@ if $HAVE_XFCONF; then
         [ -f "$_d/cachy-updater.desktop" ] && { _have="${_d##*launcher-}"; break; }
     done
     if [ -f "$UPD" ] && [ -n "$_have" ]; then
+        _ico=$(updater_launcher_icon)
+        sed -i "s|^Icon=.*|Icon=$_ico|" \
+            "$CFG/xfce4/panel/launcher-$_have/cachy-updater.desktop" 2>/dev/null
         if xfconf-query -c xfce4-panel -p "/plugins/plugin-$_have/items" \
                 -n -t string -s cachy-updater.desktop 2>/dev/null; then
-            ok "updater already in the dock (launcher items re-asserted)"
+            ok "updater already in the dock (items + icon re-asserted)"
         fi
     elif [ -f "$UPD" ]; then
         _next=$(( $(xfconf-query -c xfce4-panel -p /panels/panel-2/plugin-ids 2>/dev/null | tail -n +3 | sort -n | tail -1) + 1 ))
         mkdir -p "$CFG/xfce4/panel/launcher-$_next"
         cp -f "$UPD" "$CFG/xfce4/panel/launcher-$_next/cachy-updater.desktop"
+        sed -i "s|^Icon=.*|Icon=$(updater_launcher_icon)|" \
+            "$CFG/xfce4/panel/launcher-$_next/cachy-updater.desktop"
         _ids=""
         for _id in $(xfconf-query -c xfce4-panel -p /panels/panel-2/plugin-ids 2>/dev/null | tail -n +3); do
             _ids="$_ids -t int -s $_id"
