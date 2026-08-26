@@ -16,10 +16,12 @@ written down.
 
 ---
 
-## 1. Desktop support beyond the three that exist
+## 1. Desktop support beyond the four that exist
 
-The *next* desktop, and only that. Read `branding.md` §5.12/§6 first for the applier
-model and the plumbing a new one plugs into.
+The *next* desktop, and only that. Four are branded now — LXQt, the bare Openbox
+session, Plasma and Xfce — through three Tier-2 appliers, since Openbox shares
+LXQt's. Read `branding.md` §5.12 (Plasma), §5.13 (Xfce) and §6 first for the
+applier model and the plumbing a new one plugs into.
 
 **Price it honestly.** The plumbing IS cheap now — a row in the detector's table, a
 function, and the install-time choice, dry-run and offline isolation test come free.
@@ -58,8 +60,10 @@ offline. Budget login cycles and an owner looking at it, exactly as §1 says.
 never install a desktop, never override a user's own theme, and an unrecognised
 session gets the shared assets plus a plain message — never a half-applied look.
 Each Tier-2 applier is our own config code, so §4's maintenance test does not
-disqualify it, but it is not free either: three is already at the sane ceiling,
-and a fourth needs a better reason than "we could".
+disqualify it, but it is not free either: **three appliers is already at the sane
+ceiling** — the ceiling this section set before Xfce, and Xfce spent it. A fourth
+needs a better reason than "we could", and GNOME above is not obviously that
+reason.
 
 ---
 
