@@ -161,6 +161,12 @@ if [ "${1:-}" = "--remove" ]; then
         rm -f "$CFG/xfce4/terminal/terminalrc"
         ok "terminalrc removed (there was none before us)"
     fi
+    rm -f "$CFG/autostart/cachy-void-pasystray-xfce.desktop" \
+          "$CFG/autostart/cachy-void-udiskie-xfce.desktop"
+    if $HAVE_XFCONF; then
+        xfconf-query -c xfce4-panel -p /panels/panel-1/position-locked -r 2>/dev/null
+        xfconf-query -c xfce4-panel -p /panels/panel-2/position-locked -r 2>/dev/null
+    fi
     rm -f "$CFG/autostart/cachy-void-conky-xfce.desktop" \
           "$CFG/autostart/cachy-void-xfce-firstrun.desktop" \
           "$CFG/autostart/cachy-void-xfce-wallpaper.desktop"
@@ -406,6 +412,15 @@ if $HAVE_XFCONF; then
     #     separators. Panel-1's separators are deliberately KEPT: one of them is
     #     the expanding spacer that pushes the tray and clock to the right, and
     #     dropping those collapses the bar.
+    #     Lock both bars. An UNLOCKED Xfce panel draws a move handle — the three
+    #     dots the owner spotted beside the menu button — exactly as an unlocked
+    #     LXQt panel draws grip dots, which is why the LXQt applier sets
+    #     lockPanel=true. Same decision, same reason: a bar that advertises its
+    #     own draggability looks unfinished.
+    xq xfce4-panel /panels/panel-1/position-locked bool true
+    xq xfce4-panel /panels/panel-2/position-locked bool true
+    ok "panels locked (removes the move-handle dots)"
+
     panel_drop 1 pager   && ok "workspace switcher removed from the panel"
     panel_drop 1 actions && ok "username button removed (tray + clock, like the others)"
     panel_drop 2 separator && ok "dock separators removed"
@@ -532,6 +547,33 @@ TRC="$CFG/xfce4/terminal/terminalrc"
     printf 'ScrollingUnlimited=TRUE\n'
 } > "$TRC"
 ok "xfce4-terminal -> void-tactical palette (font follows the xsettings mono font)"
+
+# ------------------------------------------------------------ 4b. tray applets
+# LXQt provides volume and removable-media as PANEL PLUGINS; Xfce's stock panel
+# has neither, so its tray looked sparse next to the others (owner: "we have a
+# usb and a sound icon top right on the other DEs"). The bare-Openbox session
+# already solves this by starting the standalone equivalents, so Xfce uses the
+# same two — gated to Xfce, started only if installed, and never a second copy:
+# each gets ONE autostart entry, which is the nm-tray double-icon lesson.
+mkdir -p "$CFG/autostart"
+for _pair in "pasystray:volume" "udiskie:removable media"; do
+    _bin=${_pair%%:*}; _what=${_pair#*:}
+    if command -v "$_bin" >/dev/null 2>&1; then
+        _args=""; [ "$_bin" = "udiskie" ] && _args=" -t"
+        printf '[Desktop Entry]\nType=Application\nName=Cachy-Void %s (%s)\nExec=%s%s\nOnlyShowIn=XFCE;\nX-GNOME-Autostart-enabled=true\n' \
+            "$_what" "$_bin" "$_bin" "$_args" \
+            > "$CFG/autostart/cachy-void-$_bin-xfce.desktop"
+        ok "$_what tray applet ($_bin) autostarted in Xfce"
+        # Start it now too, but only in our own session and only if absent.
+        if $LIVE && ! pgrep -x "$_bin" >/dev/null 2>&1; then
+            # shellcheck disable=SC2086
+            setsid --fork "$_bin" $_args >/dev/null 2>&1 </dev/null
+        fi
+    else
+        warn "$_bin not installed — no $_what icon in the tray"
+        warn "  (deploy.sh --with-branding installs it)"
+    fi
+done
 
 # ------------------------------------------------------------------- 5. conky
 # The two panels are shared (cachy-branding's apply_conky writes the configs and
