@@ -851,6 +851,24 @@ own. This had been latent since Plasma, invisible because those two were never
 running simultaneously: an argument for testing desktops side by side rather
 than logging between them.
 
+**So name the technique, because the next desktop should start with it.** A
+second desktop can be run *inside* the session you are already in, with a nested
+X server — `xbps-install -S xorg-server-xephyr`, then `Xephyr :1 -screen
+1600x900 &` and `DISPLAY=:1 startxfce4` (or any other session binary). It costs
+one 2 MB package, needs no logout, and puts two live desktops on one screen at
+once, which is the only arrangement in which a bug like the one above is
+visible at all: everything else you might test — the dry run, the isolation
+harness, a real login — has exactly one session present, which is precisely the
+case where an environment hijack looks like success.
+
+It is not a substitute for a real login. A nested server has no display manager,
+no compositor of the host's, and the wrong screen geometry, so the *look* still
+has to be judged on the real thing (this is the §1 "pixels need a login" rule,
+unchanged). Its job is narrower and it is good at it: proving that applying to
+one desktop does not reach into another. Install it for the session, remove it
+after — it is a test tool, never a dependency, and `deploy.sh` neither installs
+nor expects it.
+
 ## 6. Scope & rules
 
 - **Opt-in overlay, never forced** — ship as config files the user *chooses* to apply (or
