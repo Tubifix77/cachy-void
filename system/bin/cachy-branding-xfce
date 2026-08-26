@@ -209,12 +209,14 @@ else
 fi
 
 # ------------------------------------------------------- 1b. Xfce icon names
-# Xfce's own launchers ask for REVERSE-DNS icon names — org.xfce.terminalemulator,
-# org.xfce.filemanager, org.xfce.webbrowser, org.xfce.appfinder — and Luv-Void
-# carries none of them, so the dock fell back to a colourful stock set against an
-# otherwise mono desktop. Seen immediately in a live session, and it is the
-# nm-tray lesson again: recolour the icon the app ACTUALLY REQUESTS, which means
-# reading the launcher's .desktop rather than guessing at generic names.
+# Xfce asks for REVERSE-DNS icon names in two separate namespaces, and Luv-Void
+# carries neither: its LAUNCHERS want org.xfce.terminalemulator,
+# org.xfce.filemanager, org.xfce.webbrowser, org.xfce.appfinder, and its PANEL
+# PLUGINS want org.xfce.panel.showdesktop, .directorymenu, .applicationsmenu.
+# Anything unanswered falls back to a colourful stock theme in the middle of a
+# mono desktop — the show-desktop button showed up as a cyan square in a live
+# look. This is the nm-tray lesson again: alias the icon the app ACTUALLY
+# REQUESTS, read out of its .desktop or its plugin, never guessed.
 #
 # The fix is an alias per name, pointing at the mono icon Luv-Void does carry, in
 # every size directory that has one. Symlinks, relative, idempotent, and removed
@@ -239,6 +241,13 @@ if [ -d "$LUV" ]; then
     alias_icon org.xfce.filemanager      system-file-manager && _al=$((_al + 1))
     alias_icon org.xfce.webbrowser       internet-web-browser && _al=$((_al + 1))
     alias_icon org.xfce.appfinder        edit-find && _al=$((_al + 1))
+    # Panel PLUGINS use org.xfce.panel.* names, a separate namespace from the
+    # launchers above and just as absent from Luv-Void. The show-desktop button
+    # was the one thing still colourful in a live look: a cyan square in an
+    # otherwise mono dock, because nothing answered its name.
+    alias_icon org.xfce.panel.showdesktop      user-desktop && _al=$((_al + 1))
+    alias_icon org.xfce.panel.directorymenu    folder && _al=$((_al + 1))
+    alias_icon org.xfce.panel.applicationsmenu start-here && _al=$((_al + 1))
     if [ "$_al" -gt 0 ]; then
         ok "$_al Xfce app icon name(s) aliased into Luv-Void (the dock was falling"
         printf '    back to a colourful stock set)\n'
