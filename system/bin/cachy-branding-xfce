@@ -154,6 +154,11 @@ if [ "${1:-}" = "--remove" ]; then
           "$CFG/autostart/cachy-void-xfce-firstrun.desktop" \
           "$CFG/autostart/cachy-void-xfce-wallpaper.desktop"
     rm -f "$SHARE/cachy-void/wallpaper-xfce.png"
+    # Only the names WE added; the rest of Luv-Void belongs to the shared half.
+    if [ -d "$SHARE/icons/Luv-Void" ]; then
+        find "$SHARE/icons/Luv-Void" -name 'org.xfce.*' -type l -delete 2>/dev/null
+        ok "Xfce icon aliases removed from Luv-Void"
+    fi
     ok "removed - log out and back in for a full reset."
     exit 0
 fi
@@ -201,6 +206,45 @@ if [ -d "/usr/share/themes/$GTK_THEME/xfwm4" ]; then
 else
     warn "$GTK_THEME ships no xfwm4 decorations — titlebars stay stock"
     warn "  (deploy.sh --with-branding installs arc-theme, which does)"
+fi
+
+# ------------------------------------------------------- 1b. Xfce icon names
+# Xfce's own launchers ask for REVERSE-DNS icon names — org.xfce.terminalemulator,
+# org.xfce.filemanager, org.xfce.webbrowser, org.xfce.appfinder — and Luv-Void
+# carries none of them, so the dock fell back to a colourful stock set against an
+# otherwise mono desktop. Seen immediately in a live session, and it is the
+# nm-tray lesson again: recolour the icon the app ACTUALLY REQUESTS, which means
+# reading the launcher's .desktop rather than guessing at generic names.
+#
+# The fix is an alias per name, pointing at the mono icon Luv-Void does carry, in
+# every size directory that has one. Symlinks, relative, idempotent, and removed
+# again by --remove — the theme belongs to the shared half, so this only ever
+# adds names to it and never edits what is already there.
+LUV="$SHARE/icons/Luv-Void"
+alias_icon() {          # alias_icon WANTED_NAME EXISTING_MONO_NAME
+    local want="$1" have="$2" f d n=0
+    [ -d "$LUV" ] || return 0
+    while IFS= read -r f; do
+        d=$(dirname "$f")
+        [ -e "$d/$want.svg" ] || ln -sf "$(basename "$f")" "$d/$want.svg"
+        n=$((n + 1))
+    done <<EOF
+$(find "$LUV" -name "$have.svg" 2>/dev/null)
+EOF
+    [ "$n" -gt 0 ]
+}
+if [ -d "$LUV" ]; then
+    _al=0
+    alias_icon org.xfce.terminalemulator utilities-terminal && _al=$((_al + 1))
+    alias_icon org.xfce.filemanager      system-file-manager && _al=$((_al + 1))
+    alias_icon org.xfce.webbrowser       internet-web-browser && _al=$((_al + 1))
+    alias_icon org.xfce.appfinder        edit-find && _al=$((_al + 1))
+    if [ "$_al" -gt 0 ]; then
+        ok "$_al Xfce app icon name(s) aliased into Luv-Void (the dock was falling"
+        printf '    back to a colourful stock set)\n'
+    fi
+else
+    warn "Luv-Void is not built yet — run cachy-branding first for mono icons"
 fi
 
 # ------------------------------------------------------------------- 2. panel
