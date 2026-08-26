@@ -234,11 +234,29 @@ PY
 fi
 
 # --- session env (so live restarts reach the running LXQt) ---
+# Imported ONLY when this process has no session of its own. The import exists so
+# a run from a TTY or over SSH can still reach the live LXQt session; done
+# unconditionally it does the exact opposite of its job on a box with more than
+# one desktop, because it overwrites the CALLER's DISPLAY,
+# DBUS_SESSION_BUS_ADDRESS and XDG_CURRENT_DESKTOP with LXQt's.
+#
+# Found live 2026-08-26 while testing the Xfce applier in a nested Xfce session
+# next to a running LXQt one: every xfconf write went to LXQt's bus, the
+# wallpaper was set for LXQt's monitor name rather than the Xfce session's, the
+# applier's own "is this my session?" gate read LXQt and refused to act — and it
+# reported success for all of it. A silent write to the wrong session is worse
+# than a refusal, and this is how appliers for two desktops become impossible to
+# test side by side.
+#
 # $USER is not guaranteed set (a container, a scrubbed cron-ish environment, the
 # dry-run tests), and `set -u` turns that into a hard failure, so fall back to id.
-_me="${USER:-$(id -un)}"
-SP=$(pgrep -u "$_me" -x lxqt-session 2>/dev/null | head -1)
-if [ -n "$SP" ]; then while IFS= read -r -d '' kv; do export "$kv"; done < "/proc/$SP/environ"; fi
+if [ -z "${XDG_CURRENT_DESKTOP:-}" ] && [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+    _me="${USER:-$(id -un)}"
+    SP=$(pgrep -u "$_me" -x lxqt-session 2>/dev/null | head -1)
+    if [ -n "$SP" ]; then
+        while IFS= read -r -d '' kv; do export "$kv"; done < "/proc/$SP/environ"
+    fi
+fi
 if ! $DRY_RUN; then
     case "${XDG_CURRENT_DESKTOP:-}" in *LXQt*) : ;; *) warn "not an LXQt session — this look targets LXQt/X11; applying config anyway" ;; esac
 fi
