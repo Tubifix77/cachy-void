@@ -216,8 +216,10 @@ void_packages = "/home/YOURUSER/void-packages"
 
 [build]
 jobs = 0            # 0 = nproc
-min_free_gib = 30   # §7.5 pre-flight: refuse to build with less free on the
-                    # build filesystem. A kernel build tree alone reaches 20 GB.
+min_free_gib = 30           # §7.5 pre-flight: refuse a KERNEL build with less
+                            # free on the build filesystem (a kernel build tree
+                            # alone reaches 20 GB).
+min_free_userspace_gib = 5  # the same floor for ordinary package builds.
 
 [packages]
 # The ONLY packages compiled locally. Seed set:

@@ -83,7 +83,8 @@ DEFAULT_CONFIG = "/etc/cachy-void/updater.toml"
 class Config:
     void_packages: Path
     jobs: int = 0                                   # 0 -> nproc
-    min_free_gib: int = 30                          # §7.5 preflight floor
+    min_free_gib: int = 30                          # §7.5 floor, kernel builds
+    min_free_userspace_gib: int = 5                 # §7.5 floor, everything else
     targets: list[str] = field(default_factory=list)
     blacklist: list[str] = field(default_factory=list)
     restart_skip: list[str] = field(default_factory=list)
@@ -143,6 +144,7 @@ def load_config(path: str | Path) -> Config:
         void_packages=Path(vp),
         jobs=int(build.get("jobs", 0)),
         min_free_gib=int(build.get("min_free_gib", 30)),
+        min_free_userspace_gib=int(build.get("min_free_userspace_gib", 5)),
         targets=list(pkgs.get("targets", [])),
         blacklist=list(pkgs.get("blacklist", [])),
         restart_skip=list(svc.get("restart_skip", [])),
@@ -1720,11 +1722,19 @@ def build_preflight(config: Config, build_list, out,
 
     Two checks, both normative in the spec since day one and implemented only
     now: the masterdir is initialised (``masterdir*/.xbps_chroot_init``), and
-    free disk on the hostdir's and the masterdir's filesystems is at least
-    ``[build] min_free_gib`` (default 30). The number is not arbitrary: a
-    kernel build tree alone reached 20 GB on the testbed before the disk ran
-    out, and packaging wants room on top of that. Refusing at minute one costs
-    nothing; discovering it at hour six cost a night.
+    free disk on the hostdir's and the masterdir's filesystems clears a floor.
+
+    **The floor scales to what is queued**, which the spec did not say and the
+    first implementation got wrong: ``[build] min_free_gib`` (default 30) is a
+    KERNEL number -- a kernel build tree alone reached 20 GB on the testbed
+    before the disk ran out, and packaging wants room on top. Demanding the
+    same 30 GiB to rebuild gamemode is nonsense, and it cost the owner a
+    routine 46-package update within an hour of this landing: the run was
+    refused, so the upstream pass never happened either. Userspace builds get
+    ``min_free_userspace_gib`` (default 5) instead.
+
+    Refusing at minute one costs nothing; discovering it at hour six cost a
+    night.
     """
     if not build_list:
         return ""
@@ -1735,7 +1745,8 @@ def build_preflight(config: Config, build_list, out,
             "masterdir is not initialized (no masterdir*/.xbps_chroot_init under "
             f"{config.void_packages}) — run: cd {config.void_packages} && "
             "./xbps-src binary-bootstrap")
-    need = config.min_free_gib
+    kernel_queued = KERNEL_TARGET in build_list
+    need = config.min_free_gib if kernel_queued else config.min_free_userspace_gib
     checked = {}
     hostdir = Path(config.void_packages) / "hostdir"
     for label, path in (("hostdir", hostdir),
@@ -1747,10 +1758,14 @@ def build_preflight(config: Config, build_list, out,
     if low:
         worst = min(low.values())
         where = " and ".join(sorted(low))
+        key = "min_free_gib" if kernel_queued else "min_free_userspace_gib"
+        what = ("a kernel build" if kernel_queued else
+                "building " + ", ".join(build_list[:3]))
         problems.append(
-            f"only {worst:.1f} GiB free on the {where} filesystem; a build needs "
-            f"at least {need} GiB ([build] min_free_gib) — a kernel build tree "
-            "alone reached 20 GB before the testbed ran out of disk")
+            f"only {worst:.1f} GiB free on the {where} filesystem; {what} needs "
+            f"at least {need} GiB ([build] {key})"
+            + (" — a kernel build tree alone reached 20 GB before the testbed "
+               "ran out of disk" if kernel_queued else ""))
         for tree, size in _leftover_trees(config):
             problems.append(
                 f"  a build tree from a previous run holds {size / GIB:.1f} GiB "
@@ -1949,8 +1964,68 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
         out(f"error: environment failure during queries: {exc}")
         return EXIT_QUERY
 
-    out(f"build order  [{order.provenance}]: {' -> '.join(order.order) or '-'}")
-    out(f"deploy queue ({len(plan.q_deploy)}): {', '.join(plan.q_deploy) or '-'}")
+    build_list = [*order.order, *order.second_pass]
+    q_deploy = list(plan.q_deploy)
+
+    def _withhold(reason: str):
+        """Drop the kernel from both queues, say why, and -- if that empties
+        them -- still run the §4.5a system pass.
+
+        That last part was missing from every withhold path: they returned
+        EXIT_OK, so a run whose only queue member was the kernel skipped the
+        upstream update entirely. The §8 preamble is explicit that a kernel
+        stall never blocks userspace, and §4.5a is explicit that an empty
+        queue still does the system pass; the withhold paths obeyed neither.
+        """
+        bl = [q for q in build_list if q != KERNEL_TARGET]
+        qd = [t for t in q_deploy if t != KERNEL_TARGET]
+        out(reason)
+        return bl, qd
+
+    # The CHEAP withholds happen before the queue is printed, so the preview
+    # states what the run will actually do. They used to sit after the dry-run
+    # exit, which meant `--commit --no-kernel --dry-run` advertised a kernel
+    # build that the same flag then withheld -- the preview contradicting the
+    # run it previews. The G2 gate stays below the prompt: it shells out to
+    # `xbps-src configure`, which is minutes of work, and a preview must stay
+    # cheap.
+    #
+    # --no-kernel scopes the run to userspace, and until now it did not
+    # actually remove the kernel from the queue: `_always_build` governs only
+    # the K-exemption (queueing a kernel that is NOT installed), while an
+    # installed linux-cachy whose regenerated template outranks the local repo
+    # enters by the ordinary outdated-and-installed rule regardless. Both
+    # kernel guards are gated on kernel_enable, so under --no-kernel the kernel
+    # would have gone straight into the build loop WITHOUT the G2 config gate
+    # -- i.e. the "Update" button, which promises to leave the kernel alone,
+    # would have started a multi-hour compile and skipped the only defence
+    # against a silently descheduled kernel. Found on the testbed (2026-09-06):
+    # a failed unattended run had left a regenerated 6.12.108 template on disk,
+    # so Update's queue was exactly [linux-cachy].
+    if not config.kernel_enable and (KERNEL_TARGET in build_list
+                                     or KERNEL_TARGET in q_deploy):
+        build_list, q_deploy = _withhold(
+            f"note: {KERNEL_TARGET} is queued but this run is --no-kernel — "
+            "withheld. Use 'Update kernel' (or drop --no-kernel) to build it.")
+    # §8.8: a frozen kernel path is withheld from the queue as well, not
+    # only from synthesis -- the template already on disk would otherwise
+    # walk straight into the build.
+    if config.kernel_enable and KERNEL_TARGET in build_list:
+        frozen = _frozen_kernel_state(config)
+        if frozen:
+            build_list, q_deploy = _withhold(
+                f"warning: {KERNEL_TARGET} withheld from this run — kernel "
+                f"state is {frozen} (frozen, §8.8); resume with "
+                "`cachy-void-update --kernel-ack`. Userspace updates continue.")
+    if not build_list and not q_deploy:
+        out("queue empty after kernel withhold — the system pass still runs (§4.5a).")
+        if dry_run:
+            return EXIT_OK
+        return _system_update(config, xbps, out, run, confirm, assume_yes,
+                              service_root=service_root)
+
+    out(f"build order  [{order.provenance}]: {' -> '.join(build_list) or '-'}")
+    out(f"deploy queue ({len(q_deploy)}): {', '.join(q_deploy) or '-'}")
     if dry_run:
         out("dry-run: stopping before build.")
         return EXIT_OK
@@ -1963,32 +2038,17 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
 
     # §8.5 G2 gate — after the prompt (configure is minutes of work), before
     # any compile. A withheld kernel never blocks userspace (§8 preamble).
-    build_list = [*order.order, *order.second_pass]
-    q_deploy = list(plan.q_deploy)
-    # §8.8: a frozen kernel path is withheld from the queue as well, not
-    # only from synthesis -- the template already on disk would otherwise
-    # walk straight into the build.
-    if config.kernel_enable and KERNEL_TARGET in build_list:
-        frozen = _frozen_kernel_state(config)
-        if frozen:
-            build_list = [q for q in build_list if q != KERNEL_TARGET]
-            q_deploy = [t for t in q_deploy if t != KERNEL_TARGET]
-            out(f"warning: {KERNEL_TARGET} withheld from this run — kernel "
-                f"state is {frozen} (frozen, §8.8); resume with "
-                "`cachy-void-update --kernel-ack`. Userspace updates continue.")
-            if not build_list and not q_deploy:
-                out("queue empty after kernel withhold.")
-                return EXIT_OK
     if config.kernel_enable and KERNEL_TARGET in build_list:
         if not _g2_gate(config, xbps, out):
-            build_list = [p for p in build_list if p != KERNEL_TARGET]
-            q_deploy = [t for t in q_deploy if t != KERNEL_TARGET]
             _record_kernel_state(config, {"state": "AWAIT_HUMAN_TEMPLATE"}, out)
-            out(f"warning: {KERNEL_TARGET} withheld from this run "
+            build_list, q_deploy = _withhold(
+                f"warning: {KERNEL_TARGET} withheld from this run "
                 "(AWAIT_HUMAN_TEMPLATE, §8.5); userspace updates continue.")
             if not build_list and not q_deploy:
-                out("queue empty after kernel withhold.")
-                return EXIT_OK
+                out("queue empty after kernel withhold — the system pass still "
+                    "runs (§4.5a).")
+                return _system_update(config, xbps, out, run, confirm, assume_yes,
+                                      service_root=service_root)
 
     run_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     rundir = config.log_root / f"run-{run_id}"

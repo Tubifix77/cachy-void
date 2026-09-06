@@ -642,6 +642,17 @@ minimal, non-package-naming set:
 - **`--no-kernel`** — scopes a `--commit` to userspace (disables `kernel_enable`
   for the run, gating synthesis/G2/build/staging). The GUI maps *Update* →
   `--commit --no-kernel` and *Update kernel* → full `--commit`.
+  **Normative: it removes `linux-cachy` from the build *and* deploy queues.**
+  Disabling `kernel_enable` is not sufficient on its own. `_always_build`
+  governs only the §7.3 K-exemption (queueing a kernel that is *not*
+  installed); an installed `linux-cachy` whose regenerated template outranks
+  the local repo enters the queue by the ordinary outdated-and-installed rule
+  regardless of the flag. Since the G2 gate and the §8.8 freeze check are
+  themselves gated on `kernel_enable`, the effect was that *Update* — the
+  button that promises to leave the kernel alone — would compile a kernel and
+  skip the config gate while doing it. Found on the testbed 2026-09-06, where
+  a failed unattended run had left a regenerated 6.12.108 template on disk and
+  the button's queue was exactly `[linux-cachy]`.
 - **`--clean`** — preview→confirm removal of orphans + obsolete cache. Grants
   **exactly** `xbps-remove -o|-O -n|-y` (flags that cannot name a package).
   **Kernel purges stay manual** (§2.5/§4.7): it only *prints* `vkpurge list`;
@@ -932,7 +943,11 @@ for S in [*order, *second_pass]:
 - **Timeout** ⇒ SIGKILL the entire process group (builds spawn chroot children; killing the leader alone leaks them), then `./xbps-src clean S`, then exit 40 with build-failure semantics. If subsequent builds fail with chroot/mount errors after a timeout kill, the remedy is `./xbps-src zap && ./xbps-src binary-bootstrap` (§5).
 - No retries, no flag-weakening retries (§4.4 stands). A failed wrksrc is deliberately left on disk for forensics; the `clean` at the next attempt removes it.
 
+**The floor scales to what is queued.** `[build] min_free_gib` (default 30) is a *kernel* number; userspace builds use `[build] min_free_userspace_gib` (default 5). The first implementation applied the kernel floor to every build and refused a routine 46-package update within the hour — and because the refusal happens before Stage 3, the upstream pass never ran either. A floor that blocks ordinary updates to protect a build that was not queued is worse than no floor.
+
 **The preflight was specified here from the start and implemented only on 2026-09-06**, after the first unattended kernel build ran six hours and died at the module-link stage with `ENOSPC` — leaving a 20 GB tree on a 63 GB disk that then sat at 100%. Two consequences are now normative alongside the two checks above. *The refusal is journaled* (`failure.exit = 31`, with the reason) so `--status` can report it, and it leaves the kernel state untouched: a full disk is the environment's fault, not the kernel's, and a retry once space exists needs no human acknowledgement. *The leftover tree is named wherever disk is reported*: "kept for forensics" is correct and was also 20 GB nobody knew about, so `--status` and the preflight refusal both list any `masterdir*/builddir/*` tree with its size and the `./xbps-src clean <srcpkg>` that reclaims it. The floor is `[build] min_free_gib` (default 30); the number is not arbitrary — a kernel build tree alone reached 20 GB before the disk ran out, and packaging wants room on top.
+
+**Every withhold path still runs the §4.5a system pass.** Withholding the kernel — for `--no-kernel`, a freeze, or a G2 failure — can empty the queue, and each of those paths used to return `EXIT_OK` at that point, skipping the upstream update entirely. §4.5a (an empty queue still does the system pass) and the §8 preamble (a kernel-path stall never blocks userspace updates) both say the opposite; the code obeyed neither, and one test asserted the wrong behaviour, which is how it survived.
 
 **G3 failures freeze the kernel path (§8.5 table), and a frozen path is enforced.** Both were normative and neither was implemented: a failed `linux-cachy` build left the state `READY`, and a persisted `AWAIT_*` state gated nothing — the next run re-synthesised (overwriting the state) and rebuilt, which is how a box could fail the identical six-hour build every night while its "frozen" kernel path sat in a file. Now: exit 40 on the kernel records `AWAIT_HUMAN_BUILD` and names `--kernel-ack`; and a frozen state skips synthesis *and* withholds `linux-cachy` from the queue (build and deploy alike), saying so, while userspace proceeds — the §8 preamble made literal.
 

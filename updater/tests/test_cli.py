@@ -321,7 +321,15 @@ class CommitCommandTests(unittest.TestCase):
 
     def test_kernel_withheld_when_fragment_missing(self):
         # §8.5: a missing fragment is a G2 failure -> kernel withheld, no build,
-        # userspace (here: nothing else) continues, exit 0.
+        # exit 0 -- and userspace STILL UPDATES.
+        #
+        # This test used to assert `no sudo call happened`, which encoded a bug
+        # rather than a requirement: every withhold path returned EXIT_OK the
+        # moment the queue emptied, so a run whose only queue member was the
+        # kernel skipped the upstream update entirely. Both §4.5a (an empty
+        # queue still runs the system pass) and the §8 preamble (a kernel stall
+        # never blocks userspace) say the opposite. The system pass is the
+        # correct behaviour, so it is what is asserted now.
         xb = FakeXbps(installed=["linux-cachy"],
                       src_map={"linux-cachy": "linux-cachy"},
                       inst_ver={"linux-cachy": "6.12.35_1"},
@@ -333,11 +341,51 @@ class CommitCommandTests(unittest.TestCase):
                             assume_yes=True, dry_run=False, out=out, run=run)
         self.assertEqual(rc, cli.EXIT_OK)
         self.assertIn("withheld", out.text())
-        self.assertEqual(xb.build_calls, [])
-        self.assertFalse(any(c[0] == "sudo" for c in calls))
+        self.assertEqual(xb.build_calls, [])            # nothing compiled
+        self.assertTrue(any(c[:2] == ["sudo", "xbps-install"] for c in calls),
+                        "the §4.5a system pass must still run")
         state = json.loads(
             (self.tmp / "state" / "kernel" / "kernel-state.json").read_text())
         self.assertEqual(state["state"], "AWAIT_HUMAN_TEMPLATE")
+
+    def test_no_kernel_withholds_an_installed_kernel_from_the_queue(self):
+        """--no-kernel must actually remove the kernel from the queue.
+
+        The "Update" button is `--commit --no-kernel` and promises to leave the
+        kernel alone. `_always_build` only governs the K-exemption (queueing a
+        kernel that is NOT installed); an installed linux-cachy whose
+        regenerated template outranks the local repo enters by the ordinary
+        outdated-and-installed rule regardless of that flag. And both kernel
+        guards are themselves gated on kernel_enable -- so under --no-kernel the
+        kernel went straight into the build loop, WITHOUT the G2 config gate,
+        which is the only defence against a silently descheduled kernel.
+
+        Found on the testbed 2026-09-06: a failed unattended run had left a
+        regenerated 6.12.108 template on disk, so Update's queue was exactly
+        [linux-cachy] and the button was one preflight refusal away from
+        starting a six-hour compile.
+        """
+        cfg = self._cfg(["linux-cachy"])
+        cfg.kernel_enable = False                        # what --no-kernel does
+        xb = FakeXbps(installed=["linux-cachy"],
+                      src_map={"linux-cachy": "linux-cachy"},
+                      inst_ver={"linux-cachy": "6.12.35_1"},
+                      repo_ver={"linux-cachy": "6.12.35_1"},
+                      local_updates=["linux-cachy"])
+        out = Sink()
+        run, calls = self._runstub()
+        rc = _commit(xb, cfg, assume_yes=True, dry_run=False, out=out, run=run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertEqual(xb.build_calls, [])             # NOT compiled
+        self.assertEqual(xb.configure_calls, [])         # G2 never even reached
+        self.assertIn("--no-kernel", out.text())
+        self.assertIn("Update kernel", out.text())       # names the button that does
+        # the PREVIEW must agree with the run: the withhold happens before the
+        # queue is printed, so a dry run cannot advertise a build that the same
+        # flag withholds.
+        self.assertNotIn("build order  [sorter]: linux-cachy", out.text())
+        # and the userspace half still happens
+        self.assertTrue(any(c[:2] == ["sudo", "xbps-install"] for c in calls))
 
     def test_full_kernel_staging_wiring_oneshot(self):
         # F1 regression: --commit with a kernel in queue must run the G2 gate,
