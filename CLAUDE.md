@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Done — installed, live, and in continuous daily use** (this was the vacation
 machine). The distro overlay, branding, runit services, and the Python updater engine
 (`updater/engine/`: xbps, grub, snapshot, trust, journal, health, health_daemon) are all
-built and covered by a real test suite (`updater/tests/`, 14 files + a shell harness). `architecture.md`
+built and covered by a real test suite (`updater/tests/`, 15 files + a shell harness; 528 tests). `architecture.md`
 remains the authoritative spec for anything new; if anything disagrees with it, the spec
 wins.
 
@@ -37,15 +37,30 @@ fallbacks), and verified live: STAGED → CONFIRMING → battery green → **PRO
 (§8.6 oneshot choreography — this box's GRUB is Debian's, so it runs the external
 class; the oneshot path remains code-reviewed + mock-tested only).
 
+**Milestone 2026-08-26 — the desktop integration and the updater's surfaces are
+hardware-verified too.** All four desktops are branded on the testbed (LXQt, the
+bare Openbox session, Plasma, Xfce), each owner-approved on a real screen; Xfce
+alone took a dozen live fix commits no offline test could have found, and running
+two desktops side by side (Xephyr) exposed a latent shared-half bug that had been
+silently misrouting every write since Plasma. The updater: a 90-package upstream
+update via the GUI; the tray verified on Plasma and Xfce and refreshed by the GUI's
+events over its instance-lock socket; the Update confirm stating whether a press
+compiles; `--pending`'s attention vocabulary enumerated and test-enforced against
+the tray (two tokens had been emitted and displayed by nobody); and `--status`
+naming the §4.9 scheduled run — because the owner found the laptop compiling a
+kernel at 3am and did not know the feature existed. That last one is the lesson of
+the month: documented and opt-in was not enough; the running program has to say it.
+
 ## Desktop Branding Is Dispatched, Not Assumed
 
 `cachy-de-detect` is the single detector, called by `deploy.sh` at install time and
 by `cachy-branding` at apply time so the two cannot drift. One brandable desktop is
 branded silently; several and the user is asked; the answer is recorded in
 `/etc/cachy-void/branding-targets`. `cachy-branding` is split into `apply_shared`
-(Tier 1), `apply_openbox_session`, `apply_lxqt` and `apply_shell`, with Plasma in
-its own `cachy-branding-plasma`; the dispatcher runs the shared half always and the
-appliers only for resolved targets. `--desktop|--de lxqt,plasma|auto` overrides,
+(Tier 1), `apply_openbox_session`, `apply_lxqt` and `apply_shell`, with Plasma and
+Xfce in their own `cachy-branding-plasma` and `cachy-branding-xfce`; the dispatcher
+runs the shared half always and the appliers only for resolved targets.
+`--desktop|--de lxqt,plasma,xfce|auto` overrides,
 and `--dry-run` reports what would be applied and *why* without writing anything
 (it is allowed as root precisely so it works in a container).
 
@@ -70,6 +85,12 @@ just mocked `subprocess` calls — before the overlay was ever installed onto th
 live Void partition. Unit tests still mock `subprocess` for the fast/offline gate, but
 "can't be executed locally" is not an accurate description of how this was actually
 built and validated.
+
+One trap of developing POSIX scripts from Windows, hit repeatedly: **Windows Python's
+`write_text()` turns every `\n` into `\r\n`**, so a read-modify-write of a shell script
+rewrites the whole file with CRLF and Void then fails it with `/usr/bin/env: 'bash\r'`.
+Always write with `newline="\n"`, and check `read_bytes().count(b"\r\n")` before
+deploying. The Python suite will not catch it — it runs under Linux Python in WSL.
 
 ## Invariants To Never Violate (spec §0, I1–I7)
 
@@ -114,3 +135,5 @@ about intrusiveness, and it is the reason the overlay has stayed additive in
 - **Kernel state machine (spec §8)**: the template is *regenerated* from upstream each bump, never incrementally patched. The G2 config gate exists because `oldconfig` silently drops unknown symbols — a failed BORE patch otherwise ships a stock-scheduler kernel that "built fine"; a G2 failure withholds the kernel but never blocks userspace updates. `bore.lock` is only ever updated by a human. GRUB one-shot staging requires a grubenv-writable `/boot` (ext*/vfat; btrfs/zfs/LVM degrade to safe `manual` mode), and staging **refuses** (exit 70) when `GRUB_DEFAULT≠saved` (`manual-unsafe`) — the saved-default edit is `deploy.sh --with-grub`'s job, never the updater's. `ported_version` advances only on a healthy boot (PROMOTED), not on a successful build.
 - **Rollback**: a corrupted repo index is fixed by deleting `x86_64-repodata` and re-running `xbps-rindex -a`. `xbps-pkgdb -m repounlock` is *not* an index-repair tool (an old draft claimed this; the spec explicitly retires it).
 - **Deliberate tuning values** (spec §2.4, §3.1): `vm.swappiness = 100` (zram-paired), `vm.max_map_count = 2147483642`, `kernel.sched_rt_runtime_us = -1`, 1000 Hz + full preemption. These are intentional, aggressive choices — do not normalize them to conventional defaults.
+- **Two ways a compile starts, and only one of them is a button.** The GUI's "Update" is `--commit --no-kernel`; "Update kernel" is the compile. But the §4.9 scheduled service (`/etc/sv/cachy-void-update`, enabled by `--with-schedule`) runs `--sync` then `--commit --yes` — **kernel included** — unattended. A kernel building at 3am with nobody at the keyboard is that service working as designed, and the testbed has it enabled. `--status` names it whenever it is on; check there before assuming a stray process.
+- **Front-end vocabularies are asserted, not documented.** `--pending`'s `attention` tokens are `ATTENTION_TOKENS` in the CLI and `REASON_TEXT` in the tray, and a test requires the two sets to be equal. The tray filters unknown tokens silently, so a token on one side only is not a visible bug — it is a tray that says nothing about something real, which happened twice. Same family: the GUI and tray share the socket name and keyword as duplicated literals, also test-asserted. When a message must be true for *this* run (does this press compile? does this box update itself?), derive it from the CLI's own output — never re-derive in a front-end, never hardcode.

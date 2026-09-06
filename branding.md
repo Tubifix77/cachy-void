@@ -876,13 +876,14 @@ nor expects it.
 - **DE-aware, and it decides for itself.** `cachy-de-detect` is the single detector,
   shared by `deploy.sh` at install time and `cachy-branding` at apply time so the two
   can never drift. It reports every desktop on the machine with a tier: **2** = a real
-  applier exists (LXQt — which also covers §5.9's Openbox session — and Plasma, §5.12);
+  applier exists (LXQt — which also covers §5.9's Openbox session — Plasma, §5.12,
+  and Xfce, §5.13);
   **1** = no applier, so the integration-free assets apply and nothing else, a supported
   outcome rather than a failure; **0** = deliberately not a target (i3/sway/dwm are
   listed so a user can see they were recognised and skipped on purpose).
   One brandable desktop is branded without asking; more than one is the user's choice,
   recorded in `/etc/cachy-void/branding-targets` and overridable with
-  `cachy-branding --desktop lxqt,plasma` (`--de` is the short form, `auto` resolves
+  `cachy-branding --desktop lxqt,plasma,xfce` (`--de` is the short form, `auto` resolves
   normally). `--dry-run` reports what would be applied and where the decision came
   from, writing nothing.
 - **Costly-but-real desktop features get named, not disabled.** Plasma's `baloo`

@@ -701,13 +701,14 @@ cachy-de-detect --summary
   lxqt       LXQt                   branded by the 'lxqt' applier — RUNNING NOW
   plasma     KDE Plasma             branded by the 'plasma' applier
   openbox    Openbox (bare session) branded by the 'lxqt' applier
+  xfce       Xfce                   branded by the 'xfce' applier
 ```
 
 If exactly one desktop can be branded, `deploy.sh` brands it and does not ask. If
 there is more than one it asks which — and a non-interactive install picks the
 session that is running rather than guessing. The answer is recorded in
 `/etc/cachy-void/branding-targets`; override it at any time with
-`--brand-de lxqt,plasma` (also `all` / `none`) at install time, or per run:
+`--brand-de lxqt,plasma,xfce` (also `all` / `none`) at install time, or per run:
 
 ```bash
 cachy-branding --desktop plasma     # or --de; "auto" means resolve normally
@@ -866,7 +867,65 @@ Reverting is `cachy-branding --remove` (which reverts every branded desktop), or
 
 ---
 
-### 14.3 Trying another desktop without committing (`cachy-de-trial`)
+### 14.3 Xfce
+
+Xfce is branded by `cachy-branding-xfce`, which `cachy-branding` calls for you
+when `xfce` is one of your targets. It is the smallest applier in the project
+(`branding.md` §5.13), because Xfce already provides nearly everything — panel,
+window manager, desktop, file manager, terminal, notifications, power management
+— so the applier points Xfce's own machinery at the palette and stops. Through
+xfconf it sets the GTK theme, icon theme and fonts (the `xsettings` channel), the
+xfwm4 window decorations, the panel colour and a per-monitor wallpaper rendered
+to your screen size, and it gives xfce4-terminal the *exact* palette qterminal
+and Konsole have. The titlebars come free: Arc-Dark, the GTK theme the shared
+half already selects, ships its own `xfwm4/` decoration set, so naming the same
+theme for xfwm4 dresses them without a single bitmap being authored. (Without
+`arc-theme` the widgets fall back to Adwaita-dark and the titlebars stay stock;
+the applier says so rather than pretending.) Changes apply live — xfconf notifies
+its listeners — so nothing is killed; the one exception is an `xfce4-panel -r`
+reload at the end, because the panel caches icons and colour at startup.
+
+It is also the only applier that **edits the panel layout**, because the owner
+put Xfce beside LXQt on a real screen and asked for it: the workspace switcher
+and the username button go, the dock loses its separators, the menu button
+becomes the Cachy-Void mark with no label, the updater joins the dock, both bars
+are locked, the active window's underline is repainted from Arc's blue to the
+accent, and the desktop icons are cleared (they collided with the panel). The
+tray gets a volume applet and removable-media handling (`pasystray`, `udiskie`)
+because Xfce's panel has no plugin for either — the same job the Openbox applier
+does when it supplies audio and polkit. Everything else stays Xfce's: Thunar,
+the notification daemon, the power manager, the session.
+
+**It needs a live Xfce session to finish.** Xfce configuration is xfconf, and
+the daemon that owns it holds channel state in memory and writes it out, so
+editing the XML by hand races a writer that will win. Run the applier inside
+Xfce and every property lands and reads back at once. From another session it
+writes what it can (terminal scheme, icon aliases, autostarts) and arms a
+one-shot autostart that finishes the rest at your first Xfce login, then deletes
+itself — the same pattern as Plasma's wallpaper. To apply by hand:
+
+```bash
+cachy-branding-xfce
+```
+
+**Two things only a real login could show, both handled.** XDG autostart fires
+the updater's tray icon at the same moment as the panel that *provides* the
+tray; losing that race used to mean no icon for the whole session, so the tray
+now waits for one (LXQt and Plasma had simply been winning by luck). And Xfce
+restores its own display layout at every login, discarding a transient `xrandr`
+— on a laptop driving a TV with the lid closed that puts the whole desktop on
+the panel nobody can see. Persist the layout in Xfce's own display settings; it
+is box-local configuration, and deliberately not the applier's business.
+
+Reverting is `cachy-branding --remove` (every branded desktop), or
+`cachy-branding-xfce --remove` for Xfce alone: it resets only the xfconf
+properties it set, restores your `terminalrc` from its backup, removes its
+autostarts and icon aliases, and leaves the shared half's `gtk.css` block (which
+tints Plank's dot) exactly as it was.
+
+---
+
+### 14.4 Trying another desktop without committing (`cachy-de-trial`)
 
 Installing a second desktop is easy; *removing* it later is not, because nothing
 records what "KDE" actually was on your machine — `xbps` pulls in packages you

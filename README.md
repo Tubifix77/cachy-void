@@ -25,7 +25,7 @@ The base system stays 100% upstream Void binaries. Only a short, curated overlay
 | **Gaming layer** | `cachy-game` launch wrapper (GameMode → PRIME → optional gamescope → game) with opt-in MangoHud, **gamescope** (frame limiting/FSR) and **vkBasalt** toggles, `earlyoom` guarding the aggressive zram posture, and `cachy-proton` to install Proton-CachyOS. |
 | **Maintenance & GPU** | `--clean` (orphans + package cache; **never** kernels, and it refuses a sweep containing a package the overlay built), `--gpu` (detected card, driver + pending update, module actually loaded, and a warning for any installed kernel with **no** out-of-tree module built). |
 | **btrfs rollback net** | Optional pre-deploy read-only snapshots taken right before each deploy (`[snapshot]`), on top of the always-converges recovery path. |
-| **Optional desktop look** | `void-tactical` — a low-key obsidian/green identity (Kvantum + panel + Conky telemetry + wallpaper + a branded SDDM login screen), fully reversible. The desktop *integration* covers **LXQt**, **KDE Plasma** and a **bare Openbox session** (which stock Openbox leaves as a black screen — the applier adds wallpaper, panel, compositor, curated menu, and the pieces a window manager has no desktop to provide: icon theme, **audio**, polkit, notifications and a full tray); everything else in this table is desktop-agnostic and runs under any session, a bare WM, or headless. Which desktops get branded is detected, not assumed: one is branded without asking, several and you are asked which. |
+| **Optional desktop look** | `void-tactical` — a low-key obsidian/green identity (Kvantum + panel + Conky telemetry + wallpaper + a branded SDDM login screen), fully reversible. The desktop *integration* covers **LXQt**, **KDE Plasma**, **Xfce** and a **bare Openbox session** (which stock Openbox leaves as a black screen — the applier adds wallpaper, panel, compositor, curated menu, and the pieces a window manager has no desktop to provide: icon theme, **audio**, polkit, notifications and a full tray); everything else in this table is desktop-agnostic and runs under any session, a bare WM, or headless. Which desktops get branded is detected, not assumed: one is branded without asking, several and you are asked which. |
 | **Void-native** | runit services (`zramen`, `cachy-health`), a narrow sudoers boundary, no systemd units or timers anywhere. |
 
 ---
@@ -57,7 +57,7 @@ cachy --sync             # rebase void-packages onto upstream
 cachy --commit --yes     # build, deploy, refresh flatpaks, and stage the kernel
 ```
 
-The performance overlay, runtime tuning, and gaming layer all work **without** the kernel step. Two extras are opt-in: the desktop look (`sudo ./deploy.sh --with-branding`, then run `cachy-branding` as your user) and unattended daily updates (`--with-schedule`).
+The performance overlay, runtime tuning, and gaming layer all work **without** the kernel step. Two extras are opt-in: the desktop look (`sudo ./deploy.sh --with-branding`, then run `cachy-branding` as your user) and unattended daily updates (`--with-schedule` — **kernel included**, so it can start a multi-hour build on its own; the install says so, and `--status` names it in every report while it is on).
 
 Full instructions, configuration, multi-boot/Secure-Boot notes, and the uninstall path are in **[INSTALL.md](INSTALL.md)**.
 
@@ -73,6 +73,7 @@ Once `deploy.sh` has finished, **`cachy-updater-gui` is the part of Cachy-Void y
 | **Update kernel** | The same, including the BORE kernel: compiles, then a reboot switches to it. |
 | **Clean up** | Orphans + package cache. **Previews first** and lists exactly what will go; never removes kernels. |
 | **GPU / drivers** | Card, driver + pending update, whether the module is really loaded, DKMS builds per kernel — and a warning for any installed kernel with **no** module built. |
+| **Snapshots** | Every pre-deploy btrfs snapshot with what that update actually did, which ones are pruned automatically, and the exact commands to go back to one on *your* layout (or an honest refusal where that cannot work). Read-only — it never restores anything for you. |
 | **Boot known-good kernel** | Appears *only* when the running kernel isn't the recorded known-good one; re-points the bootloader default, uninstalls nothing. |
 | **Review & pin…** | Appears *only* when your kernel series has no approved BORE patch: it fetches the patch, shows commit + checksum, and records it when you approve. Until then kernel updates pause while everything else still updates. |
 | **i** | What each status tier means, what maintains itself, and what needs you. Stays open and readable while a command runs. |
@@ -114,10 +115,10 @@ Everything the installer touches is recorded in a per-change **ledger** — insp
 
 | Flag | Adds |
 |---|---|
-| `--with-branding` | Packages `kvantum papirus-icon-theme papirus-folders plank rofi conky picom python3-PyQt5` (+ optional `arc-theme font-hack-ttf ImageMagick feh tint2 setxkbmap fastfetch`), theme assets under `/usr/share/cachy-void/branding`, the `cachy-branding` applier, and the **void-tactical** SDDM login theme. The desktop look itself is applied per-user by `cachy-branding` (backed up, `--remove` restores). *(The updater window is **not** here — it installs by default; a box with no GUI would have no way to see what the updater is telling it.)* |
+| `--with-branding` | Packages `kvantum papirus-icon-theme papirus-folders plank rofi conky picom python3-PyQt5` (+ optional `arc-theme font-hack-ttf ImageMagick feh tint2 setxkbmap fastfetch`), theme assets under `/usr/share/cachy-void/branding`, the `cachy-branding` applier with its `cachy-branding-plasma` and `cachy-branding-xfce` desktop appliers, and the **void-tactical** SDDM login theme. The desktop look itself is applied per-user by `cachy-branding` (backed up, `--remove` restores). *(The updater window is **not** here — it installs by default; a box with no GUI would have no way to see what the updater is telling it.)* |
 | `--with-networkmanager` | `NetworkManager` + `nm-tray` (Qt WiFi picker), enables the NM service, **disables `dhcpcd`** (they conflict) |
 | `--with-grub` | Edits `/etc/default/grub` (ledger-backed): `GRUB_DEFAULT=saved` (required for one-shot kernel boot-tests) + `usbcore.autosuspend=-1` |
-| `--with-schedule` | Enables the daily unattended-update runit service |
+| `--with-schedule` | Enables the daily unattended-update runit service: `--sync` then `--commit --yes`, **kernel included**. The install announces it and `--status` names it in every report while it is on; undo with `sudo rm /var/service/cachy-void-update` |
 | `--no-multilib` | *Opts **out*** of the default 32-bit gaming support (multilib repo + 32-bit driver/loader libs). Only useful if you never run 32-bit titles or manage repositories yourself |
 
 The kernel (`linux-cachy`) and the compiled overlay live in **your** `void-packages` checkout and local repo — they're ordinary XBPS packages, visible via `xbps-query` like everything else.
@@ -137,7 +138,7 @@ bootstrap.sh             Zero-touch provisioning entry point
 deploy.sh                Idempotent, reversible system installer (--with-grub/-branding/-schedule)
 system/                  Static config + runit services + gaming/branding assets:
   sysctl.d, udev, xbps.d, modprobe.d, sudoers.d, sv/   Tuning, boundaries, services
-  bin/                   cachy-game, cachy-proton, cachy-branding(-plasma),
+  bin/                   cachy-game, cachy-proton, cachy-branding(-plasma,-xfce),
                          cachy-updater-gui, cachy-updater-tray,
                          cachy-de-detect, cachy-de-trial
   cachy-void/            Default updater.toml template
@@ -147,7 +148,7 @@ assets/                  Wallpapers + icons (the mark)
 updater/
   cachy_void_update.py   Unified CLI (--sync/--check/--status/--commit/--rollback/--clean/--gpu/…)
   engine/                Solver, XBPS layer, journal, kernel state machine, trust, health, snapshot
-  tests/                 Mock-driven unit + integration suites (505 tests) +
+  tests/                 Mock-driven unit + integration suites (528 tests) +
                          dispatch-isolation.sh (real appliers, disjoint HOMEs)
 ```
 
@@ -155,9 +156,11 @@ updater/
 
 ## Status
 
-The whole spec is implemented and covered by a **505-test** mock-driven suite (run in a Void WSL2 sandbox): the update engine, dependency solver, trust pipeline, template synthesis, kernel state machine, health daemon, installer, and the desktop detector/dispatcher. Desktop branding is verified in three layers, because only one of them needs hardware: the *decision* (which desktop, on what evidence) is unit-tested against fake filesystem trees and by `cachy-branding --dry-run`; the *files written* are checked by `updater/tests/dispatch-isolation.sh`, which runs the real appliers into disjoint `HOME`s and asserts no desktop's config lands in another's (plus one shared `HOME`, since two appliers editing the same file is its own failure mode); only the *look* needs a real login.
+The whole spec is implemented and covered by a **528-test** mock-driven suite (run in a Void WSL2 sandbox): the update engine, dependency solver, trust pipeline, template synthesis, kernel state machine, health daemon, installer, and the desktop detector/dispatcher. Desktop branding is verified in three layers, because only one of them needs hardware: the *decision* (which desktop, on what evidence) is unit-tested against fake filesystem trees and by `cachy-branding --dry-run`; the *files written* are checked by `updater/tests/dispatch-isolation.sh`, which runs the real appliers into disjoint `HOME`s and asserts no desktop's config lands in another's (plus one shared `HOME`, since two appliers editing the same file is its own failure mode); only the *look* needs a real login.
 
 **Validated on real hardware** (a Void + LXQt laptop): the updater's own `--commit` built `linux-cachy` end-to-end (BORE patch trust → template regen → G2 config gate → compile → deploy), the kernel **booted** (BORE live, 1000 Hz, full preempt), the **NVIDIA DKMS driver built against the BORE kernel**, and games ran on it. The **post-boot health daemon** has also run its full §8.7 confirm cycle on metal: candidate confirmed, the H1–H5 battery passed, and the kernel was **promoted** to tracked/known-good. The performance overlay, zram/sysctl tuning, service cycling, btrfs snapshots, and gaming layer are all exercised on bare metal.
+
+**The desktop integration and the updater's own surfaces have been through the same treatment (August 2026).** All four desktops are branded on the testbed — LXQt, the bare Openbox session, Plasma and Xfce — each taken to owner-approved on a real screen. Xfce alone took a dozen live fix commits that no offline test could have found: a menu icon that was the wallpaper motif rather than the mark, a dock launcher missing the `items` array that makes a launcher work, an icon cache hiding every alias, three grip lines that took three diagnoses, and a panel underline in Arc's blue rather than ours. Running two desktops side by side in a nested X server also exposed a latent bug in the shared applier — it had been importing a running LXQt session's environment over the caller's, so every Xfce write went to the wrong bus while reporting success. The updater was finished on hardware in the same pass: a 90-package upstream update through the GUI (pre-deploy snapshot taken, services cycled, session kept), the tray verified on Plasma and Xfce and now refreshed by the updater's own events rather than only its timer, a confirm dialog that states whether a press will compile instead of asserting it, and `--status` naming the scheduled unattended run — because the owner found the laptop compiling a kernel at 3am and did not know that feature existed. Nothing had been hidden; documentation read once at install cannot compete with a program that never mentions it again, so now it does.
 
 **The gaming-completion set (earlyoom, gamescope, vkBasalt, the Proton toolbox, MangoHud) has been run live** and confirmed working: raw Vulkan/GL rendering on the actual discrete GPU, `cachy-game`'s GameMode composition registering correctly (verified over D-Bus), MangoHud's legacy-Optimus **minimal** profile rendering exactly as designed, and `earlyoom` running continuously under runit. That pass also caught and fixed a real bug (below).
 
@@ -179,6 +182,7 @@ Everything is reversible — `sudo ./deploy.sh --uninstall` restores from a per-
 - **Fail-fast, system-intact** — a failure at any stage leaves the running system bootable and unchanged.
 - **Preserve Void** — runit, no systemd, clean XBPS resolution; the bootstrap layer always comes from upstream mirrors.
 - **The spec is law** — `architecture.md` is the single source of truth; code and docs are kept in lockstep with it.
+- **Say what it does** — the window and the report state what will *actually* happen: whether this press compiles, whether the box updates itself at night, what going back to a snapshot would do on *your* layout. A message that reads well and is false for the run in front of you is the project's characteristic bug, and every one found on real hardware has been fixed by stating the specific fact instead of the category.
 
 ---
 

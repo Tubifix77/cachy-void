@@ -89,8 +89,21 @@ reason.
   today; a checkbox list (or a small TUI selector at install time) would make
   them discoverable. Note the reframing: a full graphical *installer* looks
   unnecessary now that `get.sh` reduced installation to one pasted line.
-- **A lighter "daily" mode.** Run the `-Su` + service-cycle and *prompt* before
-  any long compile, instead of doing the whole build/deploy in one `--commit`.
+- **A scope knob for the unattended run.** The interactive half of what this
+  entry used to call a "daily mode" — run `-Su` + the service cycle and *prompt*
+  before any long compile — is already how the window works: "Update" is
+  `--no-kernel`, "Update kernel" is the compile, and the confirm says whether a
+  press will build anything before you press it. What remains is the half that
+  cannot prompt: the §4.9 scheduled service runs `--commit --yes`, kernel
+  included, and the only alternative today is disabling it entirely. One conf
+  variable (`SCHEDULE_KERNEL=yes|no`, read by the service's `run`) would let a
+  box update userspace nightly and keep kernel builds for when someone is awake,
+  with the `--status` line flipping from "kernel INCLUDED" to "userspace only".
+  Default unchanged — changing behaviour under an existing install silently is
+  what the project avoids — and small: a conf line, a `run` branch, tests. It is
+  here because an owner found the laptop compiling a kernel at 3am (2026-08-26)
+  and had not known the service existed; the visibility fix shipped, the choice
+  did not.
 - **One-click snapshot restore.** `--snapshots` prints the restore commands for
   the host's layout (architecture.md §9.5b); doing it *for* the user is the part
   that is not built. It needs exactly two new sudoers grants — `btrfs subvolume

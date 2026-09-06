@@ -183,7 +183,7 @@ parse_args() {
             --with-grub)      WITH_GRUB=true ;;
             --with-schedule)  WITH_SCHEDULE=true ;;
             --with-branding)  WITH_BRANDING=true ;;
-            --brand-de)       BRAND_DE="${2:?--brand-de needs lxqt|plasma|all|none (comma-separated)}"; shift ;;
+            --brand-de)       BRAND_DE="${2:?--brand-de needs lxqt|plasma|xfce|all|none (comma-separated)}"; shift ;;
             --with-networkmanager) WITH_NM=true ;;
             --no-multilib)    WITH_MULTILIB=false ;;
             --no-tray)        WITH_TRAY=false ;;
@@ -781,7 +781,7 @@ write_branding_targets() {
     {
         printf '# Which desktop appliers cachy-branding should run on this machine.\n'
         printf '# Written by deploy.sh; one applier id per line. Override at any time with\n'
-        printf '#   cachy-branding --de lxqt,plasma\n'
+        printf '#   cachy-branding --de lxqt,plasma,xfce\n'
         printf '# Valid ids come from: cachy-de-detect --appliers\n'
         local t
         for t in $BRAND_DE; do printf '%s\n' "$t"; done

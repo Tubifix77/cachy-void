@@ -130,7 +130,7 @@ fi
 # The detector is shared with deploy.sh (cachy-de-detect --appliers), so the
 # install-time choice and the apply-time behaviour can never drift apart.
 # Resolution order, most explicit first:
-#   1. --de lxqt,plasma                    an explicit choice, right now
+#   1. --de lxqt,plasma,xfce               an explicit choice, right now
 #   2. /etc/cachy-void/branding-targets    what was chosen at install time
 #   3. cachy-de-detect --appliers          whatever is actually on the machine
 # No detector at all means an older install: assume LXQt, which is exactly what
