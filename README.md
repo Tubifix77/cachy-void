@@ -73,6 +73,7 @@ Once `deploy.sh` has finished, **`cachy-updater-gui` is the part of Cachy-Void y
 | **Update kernel** | The same, including the BORE kernel: compiles, then a reboot switches to it. |
 | **Clean up** | Orphans + package cache + the local repo's debug-symbol packages (2 GB per kernel build, never installed from). **Previews first** and lists exactly what will go; never removes kernels. |
 | **GPU / drivers** | Card, driver + pending update, whether the module is really loaded, DKMS builds per kernel — and a warning for any installed kernel with **no** module built. |
+| **Kernel build space** | Where the BORE kernel compiles. A build needs ~20 GB of scratch and refuses below 30 GB free — rather than reserving that much of your root disk forever, point it at another one. Validates the choice (space, filesystem, `noexec`, USB) before anything is written. |
 | **Snapshots** | Every pre-deploy btrfs snapshot with what that update actually did, which ones are pruned automatically, and the exact commands to go back to one on *your* layout (or an honest refusal where that cannot work). Read-only — it never restores anything for you. |
 | **Boot known-good kernel** | Appears *only* when the running kernel isn't the recorded known-good one; re-points the bootloader default, uninstalls nothing. |
 | **Review & pin…** | Appears *only* when your kernel series has no approved BORE patch: it fetches the patch, shows commit + checksum, and records it when you approve. Until then kernel updates pause while everything else still updates. |

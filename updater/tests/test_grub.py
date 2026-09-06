@@ -1,6 +1,7 @@
 """Unit tests for the Kernel Injection State Manager (architecture.md §8)."""
 import subprocess
 import tempfile
+import shutil
 import unittest
 from pathlib import Path
 
@@ -311,6 +312,35 @@ class KernelStateStoreTests(unittest.TestCase):
             store.save(st)
             self.assertEqual(store.load()["ported_version"], "6.12.34_1")
 
+
+
+class DotconfigWithRelocatedMasterdirTests(unittest.TestCase):
+    """G2 must find the .config when the build space has been moved.
+
+    Without this the glob finds nothing on such a host and the gate withholds
+    every kernel — a gate failing for the wrong reason, which is worse than no
+    gate at all.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_an_explicit_masterdir_is_searched(self):
+        md = self.tmp / "elsewhere" / "masterdir-x86_64"
+        d = md / "builddir" / "linux-6.12.108"
+        d.mkdir(parents=True)
+        (d / ".config").write_text("CONFIG_SCHED_BORE=y\n", encoding="utf-8")
+        self.assertEqual(locate_dotconfig(self.tmp / "vp", md), d / ".config")
+
+    def test_the_default_layout_still_works(self):
+        vp = self.tmp / "vp"
+        d = vp / "masterdir-x86_64" / "builddir" / "linux-6.12.108"
+        d.mkdir(parents=True)
+        (d / ".config").write_text("x\n", encoding="utf-8")
+        self.assertEqual(locate_dotconfig(vp), d / ".config")
 
 if __name__ == "__main__":
     unittest.main()

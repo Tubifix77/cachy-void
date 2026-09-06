@@ -498,6 +498,57 @@ class FailedRunCardTests(unittest.TestCase):
     def test_it_is_the_amber_kind_of_card(self):
         self.assertEqual(self.w.run_notice.objectName(), "notice")
 
+
+@unittest.skipUnless(HAVE_QT, "PyQt5 not installed")
+class BuildSpaceButtonTests(unittest.TestCase):
+    """The 'Kernel build space…' button — the owner's idea, and a good one.
+
+    Their reasoning: keeping 30 GB permanently free on a 62 GB laptop root, for
+    a build run once a month, is a steep enough price that the sensible move is
+    to abandon the BORE half of the project rather than the userspace half. A
+    disk chooser makes it a one-time decision instead.
+
+    Like every other path here it is a thin shell over the CLI: the window shows
+    the current setting, the CLI validates a candidate, and nothing is written
+    on the window's own authority.
+    """
+
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        loader = importlib.machinery.SourceFileLoader("cachygui", str(GUI_PATH))
+        spec = importlib.util.spec_from_loader("cachygui", loader)
+        cls.mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.mod)
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.calls = []
+        self.mod.Updater._run = lambda s, a, t, **kw: self.calls.append(list(a))
+        self.w = self.mod.Updater()
+        self.w.show()
+
+    def tearDown(self):
+        self.w.deleteLater()
+
+    def test_the_button_exists_and_is_wired(self):
+        self.assertTrue(self.w.btn_space.isVisible())
+        self.assertIn("build space", self.w.btn_space.text().lower())
+
+    def test_it_reads_before_it_writes(self):
+        # The chooser only opens after a read-only show of the current setting,
+        # so the pane has context behind the dialog rather than after the fact.
+        # (calls already holds the --status the window runs on open.)
+        self.calls.clear()
+        self.w.build_space()
+        self.assertEqual(self.calls, [["--build-space"]])
+
+    def test_the_tooltip_explains_the_cost_it_removes(self):
+        tip = self.w.btn_space.toolTip()
+        self.assertIn("20 GB", tip)
+        self.assertIn("30 GB", tip)
+
 if __name__ == "__main__":
     unittest.main()
 

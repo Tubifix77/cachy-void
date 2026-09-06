@@ -277,16 +277,26 @@ def _grub_default_is_saved(default_grub: str, exists) -> bool:
 _MENU_ID_RE = re.compile(r"\$menuentry_id_option\s+'([^']+)'")
 
 
-def locate_dotconfig(void_packages: str | os.PathLike) -> Path:
+def locate_dotconfig(void_packages: str | os.PathLike,
+                     masterdir: "str | os.PathLike | None" = None) -> Path:
     """Deterministically locate the generated kernel .config (§8.5, G2).
 
     The glob MUST match exactly one file: zero means configure never ran,
     several means stale builddirs could feed the wrong config — both are gate
     failures, never a guess.
+
+    ``masterdir`` is the explicit chroot path when the build space has been
+    moved off the void-packages checkout (§7.5 build space). Without it this
+    glob would find nothing on such a host and G2 would withhold every kernel
+    — a gate failing for the wrong reason, which is worse than no gate.
     """
     import glob as _glob
-    pattern = os.path.join(os.fspath(void_packages),
-                           "masterdir*", "builddir", "linux*", ".config")
+    if masterdir:
+        pattern = os.path.join(os.fspath(masterdir),
+                               "builddir", "linux*", ".config")
+    else:
+        pattern = os.path.join(os.fspath(void_packages),
+                               "masterdir*", "builddir", "linux*", ".config")
     matches = sorted(_glob.glob(pattern))
     if len(matches) != 1:
         raise GrubError(

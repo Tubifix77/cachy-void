@@ -85,6 +85,7 @@ class Config:
     jobs: int = 0                                   # 0 -> nproc
     min_free_gib: int = 30                          # §7.5 floor, kernel builds
     min_free_userspace_gib: int = 5                 # §7.5 floor, everything else
+    masterdir: Optional[Path] = None                # §7.5 build space (None -> default)
     targets: list[str] = field(default_factory=list)
     blacklist: list[str] = field(default_factory=list)
     restart_skip: list[str] = field(default_factory=list)
@@ -107,6 +108,17 @@ class Config:
         # §8.3 reuse-first cache path (also what synthesize rewrites).
         return (self.void_packages / "srcpkgs" / KERNEL_TARGET /
                 "patches" / "0001-bore.patch")
+
+    @property
+    def build_space(self) -> Path:
+        """The directory that will hold the build chroot.
+
+        The configured masterdir when set, else the void-packages checkout
+        (whose `masterdir-<arch>` xbps-src creates itself). One question,
+        one answer -- the preflight, the disk report, the G2 gate and the
+        xbps-src invocation must never disagree about where the build is.
+        """
+        return self.masterdir or self.void_packages
 
     @property
     def repos(self) -> list[Path]:
@@ -145,6 +157,7 @@ def load_config(path: str | Path) -> Config:
         jobs=int(build.get("jobs", 0)),
         min_free_gib=int(build.get("min_free_gib", 30)),
         min_free_userspace_gib=int(build.get("min_free_userspace_gib", 5)),
+        masterdir=(Path(build["masterdir"]) if build.get("masterdir") else None),
         targets=list(pkgs.get("targets", [])),
         blacklist=list(pkgs.get("blacklist", [])),
         restart_skip=list(svc.get("restart_skip", [])),
@@ -162,7 +175,8 @@ def load_config(path: str | Path) -> Config:
 
 
 def build_xbps(config: Config, run=None) -> Xbps:
-    kwargs = {"void_packages": config.void_packages, "repos": config.repos}
+    kwargs = {"void_packages": config.void_packages, "repos": config.repos,
+              "masterdir": config.masterdir}
     if run is not None:
         kwargs["run"] = run
     return Xbps(**kwargs)
@@ -509,7 +523,8 @@ def _g2_gate(config: Config, xbps, out) -> bool:
         out(f"warning: ./xbps-src configure {KERNEL_TARGET} failed (rc={rc})")
         return False
     try:
-        dotconfig = grub.locate_dotconfig(config.void_packages).read_text(
+        dotconfig = grub.locate_dotconfig(config.void_packages,
+                                          config.masterdir).read_text(
             encoding="utf-8")
     except (grub.GrubError, OSError) as exc:
         out(f"warning: G2 .config extraction failed: {exc}")
@@ -898,6 +913,86 @@ def scheduled_run_line(*, link: pathlib.Path = SCHED_LINK,
             "  kernel INCLUDED (the same work as the \"Update kernel\" button, not "
             "\"Update\"),\n"
             f"  so a build can start unattended. Turn it off: sudo rm {SCHED_LINK}")
+
+
+def cmd_build_space(config: Config, path=None, out=print, run=_run,
+                    config_path=None, disk_usage=shutil.disk_usage) -> int:
+    """Show where kernel builds happen, or validate and set a new location.
+
+    Why this is a first-class action rather than a line in a config file: a
+    kernel build needs ~20 GB of transient tree, and §7.5 asks for 30 GB free
+    before it will start. On a laptop whose root partition is 62 GB that is a
+    permanent third of the disk reserved for something used once a month — and
+    it is the reason a user would keep the userspace overlay and quietly give
+    up on the BORE half. Pointing the build at another disk removes the
+    constraint, and the product should say so rather than leaving it to a
+    config file nobody reads.
+
+    NEVER escalates. The config lives in /etc and is root-owned, which is
+    correct: the build space is a property of the machine, not a preference of
+    whoever is logged in. So when the file cannot be written this prints the
+    exact command that applies the change and stops. A tool that quietly
+    acquired root to edit its own config would be a worse tool.
+    """
+    if path is None:
+        out(build_space_line(config, run, disk_usage))
+        ok, lines = validate_build_space(config.build_space, config, run, disk_usage)
+        for line in lines:
+            out("  " + line)
+        if not ok:
+            out("  this location cannot host a kernel build (see above)")
+        out("")
+        out("to move it:  cachy-void-update --build-space /path/on/another/disk")
+        return EXIT_OK
+
+    target = Path(path).expanduser()
+    ok, lines = validate_build_space(target, config, run, disk_usage)
+    out(f"build space candidate: {target}")
+    for line in lines:
+        out("  " + line)
+    if not ok:
+        out("refusing: nothing was changed.")
+        return EXIT_USAGE
+
+    cfg_file = Path(config_path) if config_path else None
+    if cfg_file is None or not cfg_file.is_file():
+        out("")
+        out("validated. Add this to the [build] section of your updater.toml:")
+        out(f'    masterdir = "{target}"')
+        return EXIT_OK
+
+    try:
+        text = cfg_file.read_text(encoding="utf-8")
+        new = _set_toml_masterdir(text, str(target))
+        cfg_file.write_text(new, encoding="utf-8", newline="\n")
+    except OSError:
+        # The ordinary case: /etc is root-owned. Hand over the command instead
+        # of reaching for privilege we deliberately do not hold.
+        out("")
+        out(f"validated, but {cfg_file} is not writable by you (it is root-owned,")
+        out("as machine configuration should be). Apply it with:")
+        out(f"    sudo sed -i '/^\\[build\\]/a masterdir = \"{target}\"' {cfg_file}")
+        out("  (or edit that file and put the line under [build])")
+        return EXIT_OK
+
+    out("")
+    out(f"build space set to {target} in {cfg_file}.")
+    out("The chroot is created there on the next build; the old one can be")
+    out("removed by hand once you are happy with it.")
+    return EXIT_OK
+
+
+def _set_toml_masterdir(text: str, value: str) -> str:
+    """Insert or replace ``masterdir = "..."`` inside [build]. Text-level on
+    purpose: tomllib reads but does not write, and rewriting the whole file
+    from a parsed dict would discard the user's comments."""
+    line = f'masterdir = "{value}"'
+    if re.search(r"^\s*masterdir\s*=", text, re.M):
+        return re.sub(r"^\s*masterdir\s*=.*$", line, text, count=1, flags=re.M)
+    if re.search(r"^\[build\]", text, re.M):
+        return re.sub(r"^(\[build\][^\n]*\n)", r"\1" + line + "\n", text,
+                      count=1, flags=re.M)
+    return text.rstrip() + f"\n\n[build]\n{line}\n"
 
 
 def cmd_pending(config: Config, out=print, run=_run,
@@ -1400,6 +1495,7 @@ def cmd_status(xbps, config: Config, out=print, run=_run,
         pass
     for line in disk_lines(config, disk_usage):
         out("    " + line)
+    out("    " + build_space_line(config, run, disk_usage))
     _dbg = _debug_pkgs(config)
     if _dbg:
         out(f"    debug-symbol packages in the local repo: {len(_dbg)} "
@@ -1642,6 +1738,9 @@ def _free_gib(path, disk_usage=shutil.disk_usage):
 
 
 def _masterdirs(config: Config) -> list:
+    """Every chroot directory in play — one when relocated, else the glob."""
+    if config.masterdir:
+        return [Path(config.masterdir)] if Path(config.masterdir).is_dir() else []
     try:
         return sorted(d for d in Path(config.void_packages).glob("masterdir*")
                       if d.is_dir())
@@ -1716,6 +1815,117 @@ def disk_lines(config: Config, disk_usage=shutil.disk_usage) -> list:
     return lines
 
 
+# Filesystems that cannot host a build chroot, and why. A masterdir is a real
+# root filesystem: it needs unix ownership, permissions, symlinks and device
+# nodes. The FAT/NTFS family has none of that, so a build there fails deep
+# inside a package rather than at the point the directory was chosen.
+_CHROOT_HOSTILE = {
+    "vfat": "no unix permissions, ownership or symlinks",
+    "exfat": "no unix permissions, ownership or symlinks",
+    "msdos": "no unix permissions, ownership or symlinks",
+    "ntfs": "unix permissions are emulated at best",
+    "ntfs3": "unix permissions are emulated at best",
+    "fuseblk": "a FUSE mount (often NTFS/exFAT) — permissions are emulated",
+    "iso9660": "read-only",
+    "squashfs": "read-only",
+}
+
+
+def validate_build_space(path, config: Config, run=_run,
+                         disk_usage=shutil.disk_usage) -> tuple:
+    """``(ok, lines)`` — may this directory host the kernel build?
+
+    Checked in the order a user would hit them, and every failure names the
+    reason rather than a generic refusal. Deliberately a *preview*: it changes
+    nothing, so a front-end can show the verdict before anything is committed.
+    """
+    lines = []
+    q = Path(path)
+    if not q.is_dir():
+        return False, [f"{q} is not a directory"]
+    if not os.access(q, os.W_OK):
+        return False, [f"{q} is not writable by this user"]
+
+    fstype, opts, source = "", "", ""
+    try:
+        cp = run(["findmnt", "-no", "FSTYPE,OPTIONS,SOURCE", "-T", str(q)])
+        if cp.returncode == 0 and cp.stdout.strip():
+            parts = cp.stdout.split()
+            fstype = parts[0] if parts else ""
+            opts = parts[1] if len(parts) > 1 else ""
+            source = parts[2] if len(parts) > 2 else ""
+    except OSError:
+        pass
+
+    if fstype in _CHROOT_HOSTILE:
+        return False, [f"{q} is on {fstype}: {_CHROOT_HOSTILE[fstype]}. A build "
+                       "chroot cannot live there."]
+    if "noexec" in opts.split(","):
+        return False, [f"{q} is mounted noexec — a chroot must execute what it "
+                       "builds. Remount without noexec, or choose elsewhere."]
+
+    free = _free_gib(q, disk_usage)
+    need = config.min_free_gib
+    if free is None:
+        lines.append(f"could not read free space on {q}")
+    elif free < need:
+        return False, [f"{q} has {free:.1f} GiB free; a kernel build needs at "
+                       f"least {need} GiB ([build] min_free_gib)."]
+    else:
+        lines.append(f"{free:.1f} GiB free — enough for a kernel build "
+                     f"(floor {need} GiB)")
+    if fstype:
+        lines.append(f"filesystem: {fstype}" + (f" on {source}" if source else ""))
+
+    # Removable media is allowed but never silently: unplugging it mid-build
+    # ends the build. Fail-fast means the system stays intact, but six hours
+    # do not come back.
+    if _is_usb_backed(source):
+        lines.append("NOTE: this disk is attached over USB. Unplugging it during "
+                     "a build ends the build (nothing is deployed, but the hours "
+                     "are lost), and it must be mounted before one starts.")
+    return True, lines
+
+
+def _is_usb_backed(source: str, sysfs="/sys/class/block") -> bool:
+    """True when a block device sits behind USB.
+
+    ``/sys/block/<dev>/removable`` is NOT the test, though it is the obvious
+    one: a USB enclosure containing an ordinary SSD reports **0**, because the
+    drive inside really is fixed — it is the bridge that unplugs. That is the
+    common case for exactly the disks people would point a build at, so the
+    flag would have made this warning fire for card readers and nothing else.
+    Verified on the testbed: /sys/block/sdb/removable = 0 while the device path
+    reads .../usb4/4-2/... The path is authoritative.
+
+    Uses the PARTITION's own sysfs node rather than deriving the parent disk:
+    stripping trailing digits turns nvme0n1p1 into nvme0n1p, and the partition
+    node's realpath already contains the whole bus chain.
+    """
+    name = os.path.basename(source or "")
+    if not name:
+        return False
+    try:
+        return "/usb" in os.path.realpath(os.path.join(sysfs, name))
+    except OSError:
+        return False
+
+
+def build_space_line(config: Config, run=_run,
+                     disk_usage=shutil.disk_usage) -> str:
+    """One line naming where kernel builds happen and whether it fits."""
+    where = config.build_space
+    default = config.masterdir is None
+    free = _free_gib(where, disk_usage)
+    room = f"{free:.1f} GiB free" if free is not None else "free space unknown"
+    tag = "default (the void-packages checkout)" if default else "configured"
+    verdict = ""
+    if free is not None and free < config.min_free_gib:
+        verdict = (f" — below the {config.min_free_gib} GiB a kernel build needs; "
+                   "set [build] masterdir to a roomier disk")
+    return f"kernel build space: {where}  [{tag}]  {room}{verdict}"
+
+
 def build_preflight(config: Config, build_list, out,
                     disk_usage=shutil.disk_usage) -> str:
     """§7.5 preflight. "" when the build may start, else the refusal text.
@@ -1741,16 +1951,17 @@ def build_preflight(config: Config, build_list, out,
     problems = []
     mds = _masterdirs(config)
     if not mds or not any((md / ".xbps_chroot_init").exists() for md in mds):
+        _m = f" -m {config.masterdir}" if config.masterdir else ""
         problems.append(
-            "masterdir is not initialized (no masterdir*/.xbps_chroot_init under "
-            f"{config.void_packages}) — run: cd {config.void_packages} && "
-            "./xbps-src binary-bootstrap")
+            "the build chroot is not initialized (no .xbps_chroot_init under "
+            f"{config.build_space}) — run: cd {config.void_packages} && "
+            f"./xbps-src{_m} binary-bootstrap")
     kernel_queued = KERNEL_TARGET in build_list
     need = config.min_free_gib if kernel_queued else config.min_free_userspace_gib
     checked = {}
     hostdir = Path(config.void_packages) / "hostdir"
     for label, path in (("hostdir", hostdir),
-                        ("masterdir", mds[0] if mds else Path(config.void_packages))):
+                        ("masterdir", mds[0] if mds else config.build_space)):
         free = _free_gib(path, disk_usage)
         if free is not None:
             checked[label] = free
@@ -3104,6 +3315,10 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--snapshots", action="store_true",
                        help="list pre-deploy snapshots and how to restore one "
                             "on this host (read-only)")
+    action.add_argument("--build-space", dest="build_space", nargs="?",
+                       const="", metavar="PATH",
+                       help="show where kernel builds happen (§7.5), or "
+                            "validate and set a new location on a roomier disk")
     action.add_argument("--pending", action="store_true",
                        help="fast machine-readable probe (JSON): what is waiting, "
                             "for pollers and front-ends")
@@ -3198,6 +3413,10 @@ def main(argv: Optional[Sequence[str]] = None, *,
         if args.snapshots:
             # No solver either: the inventory is a btrfs list plus a journal read.
             return cmd_snapshots(config, out=out)
+        if args.build_space is not None:
+            # No solver: this is a directory question, not a package one.
+            return cmd_build_space(config, args.build_space or None, out=out,
+                                   config_path=args.config)
         if args.pending:
             # Deliberately ahead of build_xbps(): the probe must not pay for the
             # solver, which is what makes it cheap enough to poll.

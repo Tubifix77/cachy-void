@@ -97,11 +97,27 @@ class Xbps:
     :param void_packages: path to the void-packages checkout.
     :param repos: ordered local repo roots ``R`` (binpkgs, binpkgs/nonfree).
     :param run: injectable ``(args, cwd) -> CompletedProcess`` for testing.
+    :param masterdir: where the build chroot lives, when it is NOT the default
+        ``<void-packages>/masterdir-<arch>``. Passed to xbps-src as ``-m``.
+
+        This exists because a kernel build needs ~20 GB of transient tree and
+        the §7.5 floor asks for 30 GB free -- a steep permanent price to pay on
+        a root partition, and the main reason someone would abandon the kernel
+        half of the overlay rather than the userspace half. Pointing it at
+        another disk removes that constraint entirely.
+
+        Deliberately only the MASTERDIR moves, never the hostdir: the hostdir
+        holds ``binpkgs``, which is the local repository named by absolute path
+        in ``/etc/xbps.d/00-cachy-overlay.conf``. Move that to removable media
+        and unplugging the drive silently removes the overlay repo from xbps'
+        view. The masterdir is transient and rebuilt on demand, so losing it
+        costs a bootstrap, not a system.
     """
 
     void_packages: Path
     repos: Sequence[Path] = field(default_factory=list)
     run: Runner = _default_runner
+    masterdir: Optional[Path] = None
 
     def __post_init__(self) -> None:
         self.void_packages = Path(self.void_packages)
@@ -117,7 +133,15 @@ class Xbps:
         return cp
 
     def _xbps_src(self, *args: str, check: bool = True) -> "subprocess.CompletedProcess":
-        return self._capture(["./xbps-src", *args], cwd=str(self.void_packages), check=check)
+        argv = ["./xbps-src"]
+        if self.masterdir:
+            # xbps-src's own flag (XBPS_ARG_MASTERDIR), so the setting travels
+            # with every invocation rather than being written into
+            # void-packages/etc/conf -- which deploy.sh regenerates and would
+            # silently clobber on the next run.
+            argv += ["-m", str(self.masterdir)]
+        argv += list(args)
+        return self._capture(argv, cwd=str(self.void_packages), check=check)
 
     # -- name-domain mapping (§7.1) -------------------------------------
     def srcpkg_of(self, binpkg: str) -> Optional[str]:

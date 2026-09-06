@@ -38,9 +38,9 @@ import time
 from PyQt5.QtCore import QProcess, Qt, QTimer
 from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import (
-    QApplication, QDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
-    QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QTextBrowser,
-    QVBoxLayout, QWidget,
+    QApplication, QDialog, QFileDialog, QFrame, QGroupBox, QHBoxLayout, QLabel,
+    QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy,
+    QTextBrowser, QVBoxLayout, QWidget,
 )
 
 try:
@@ -459,6 +459,11 @@ class Updater(QWidget):
         # says so in --status). Until now rollback existed only as a CLI flag,
         # which is exactly the wrong place for the one action you want when a
         # kernel misbehaves.
+        self.btn_space = QPushButton("Kernel build space…")
+        self.btn_space.setToolTip(
+            "Where the BORE kernel is compiled. A kernel build needs ~20 GB of "
+            "temporary space and refuses to start below 30 GB free — point it at "
+            "another disk instead of keeping that much free on this one.")
         self.btn_rollback = QPushButton("Boot known-good kernel")
         self.btn_rollback.setToolTip(
             "Pin the bootloader default back to the last kernel known to work. "
@@ -484,6 +489,7 @@ class Updater(QWidget):
         actions.addWidget(self.btn_clean)
         actions.addWidget(self.btn_snapshots)
         actions.addWidget(self.btn_gpu)
+        actions.addWidget(self.btn_space)
         root.addLayout(actions)
         self.btn_rollback.hide()
 
@@ -536,6 +542,7 @@ class Updater(QWidget):
         self.btn_gpu.clicked.connect(self.gpu)
         self.btn_snapshots.clicked.connect(self.snapshots)
         self.btn_pin.clicked.connect(self.pin_bore)
+        self.btn_space.clicked.connect(self.build_space)
         self.btn_rollback.clicked.connect(self.rollback)
 
         self._buttons = (self.btn_check, self.btn_update, self.btn_kernel,
@@ -866,6 +873,42 @@ class Updater(QWidget):
                 tail = ". " + tail[0].upper() + tail[1:]
             self.kernel_label.setText(head + tail)
         self.kernel_notice.setVisible(bool(keep))
+
+    def build_space(self):
+        """Show where kernel builds happen, and let the user move them.
+
+        The owner's idea, and the reasoning is theirs: reserving 30 GB of a
+        62 GB laptop partition forever, for something run once a month, is a
+        steep price for having BORE at all — steep enough that the rational
+        move is to give up the kernel half. A disk chooser turns that into a
+        one-time decision instead.
+
+        Preview then confirm, like every other destructive-ish path here: the
+        CLI validates the candidate (free space, filesystem, noexec, USB) and
+        this shows the verdict before anything is written. And when the config
+        is root-owned — which it should be, since the build space is a property
+        of the machine — the CLI hands back the exact command rather than the
+        window quietly acquiring privilege it does not have.
+        """
+        def after_show(_code):
+            start = str(Path.home())
+            for guess in ("/mnt", "/media", "/run/media"):
+                if Path(guess).is_dir():
+                    start = guess
+                    break
+            chosen = QFileDialog.getExistingDirectory(
+                self, "Choose where kernel builds happen", start,
+                QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks)
+            if not chosen:
+                self._append_tail(self.out, "[build space unchanged]")
+                return
+            self._run(["--build-space", chosen], self.out, clear=False,
+                      done=lambda _c: self.check(),
+                      activity="Checking that disk…")
+        # Show the current setting first, so the dialog opens with context in
+        # the pane behind it rather than after the fact.
+        self._run(["--build-space"], self.out, done=after_show,
+                  activity="Reading the current build space…")
 
     def _update_run_notice(self, text):
         """Lift the CLI's "last update run FAILED/REFUSED" block into a card.

@@ -220,6 +220,12 @@ min_free_gib = 30           # §7.5 pre-flight: refuse a KERNEL build with less
                             # free on the build filesystem (a kernel build tree
                             # alone reaches 20 GB).
 min_free_userspace_gib = 5  # the same floor for ordinary package builds.
+# Where the build chroot lives. Unset = <void-packages>/masterdir-<arch>.
+# Point it at a roomier disk instead of keeping 30 GB free on your root:
+#   cachy-void-update --build-space /mnt/somewhere   (validates first)
+# Only the masterdir moves; the local package repo stays put, because it is
+# named by absolute path in /etc/xbps.d and must not vanish on an unplug.
+# masterdir = "/mnt/bigdisk/cachy-build"
 
 [packages]
 # The ONLY packages compiled locally. Seed set:

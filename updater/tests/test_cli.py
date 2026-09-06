@@ -2373,6 +2373,226 @@ class SystemPassJournalTests(unittest.TestCase):
         # the newest survive
         self.assertTrue((self.logs / "run-20260902T240000Z").exists())
 
+
+class BuildSpaceTests(unittest.TestCase):
+    """§7.5 build space: where the kernel is compiled, and whether it fits.
+
+    The owner's idea, from their own arithmetic: a kernel build needs ~20 GB of
+    transient tree and the preflight asks for 30 GB free, which on a 62 GB
+    laptop partition is a permanent third of the disk reserved for something
+    run once a month. That is a steep enough price that the rational move is to
+    keep the userspace overlay and quietly abandon the BORE half. Being able to
+    point the build at another disk removes the constraint.
+
+    Only the MASTERDIR moves. The hostdir holds binpkgs, which is the local
+    repository named by absolute path in /etc/xbps.d — put that on a disk that
+    can be unplugged and the overlay repo vanishes from xbps' view.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.vp = self.tmp / "vp"
+        self.vp.mkdir()
+        self.space = self.tmp / "elsewhere"
+        self.space.mkdir()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _cfg(self, masterdir=None):
+        return cli.Config(void_packages=self.vp, targets=[],
+                          state_dir=self.tmp / "state", log_root=self.tmp / "log",
+                          masterdir=masterdir)
+
+    @staticmethod
+    def _findmnt(fstype="ext4", opts="rw,relatime", source="/dev/sdb1"):
+        def run(args, cwd=None):
+            if args[:2] == ["findmnt", "-no"]:
+                return cp(0, f"{fstype} {opts} {source}\n")
+            return cp(0, "")
+        return run
+
+    # -- the property every consumer must agree on ------------------------
+    def test_build_space_defaults_to_the_checkout(self):
+        self.assertEqual(self._cfg().build_space, self.vp)
+
+    def test_build_space_follows_the_setting(self):
+        self.assertEqual(self._cfg(self.space).build_space, self.space)
+
+    def test_config_reads_masterdir_from_toml(self):
+        toml = (self.tmp / "u.toml")
+        toml.write_text(f'[paths]\nvoid_packages = "{self.vp}"\n'
+                        f'[build]\njobs = 2\nmasterdir = "{self.space}"\n',
+                        encoding="utf-8")
+        cfg = cli.load_config(toml)
+        self.assertEqual(cfg.masterdir, self.space)
+        self.assertEqual(cfg.build_space, self.space)
+
+    # -- validation -------------------------------------------------------
+    def test_a_roomy_ext4_directory_is_accepted(self):
+        ok, lines = cli.validate_build_space(self.space, self._cfg(),
+                                             self._findmnt(), _usage(250))
+        self.assertTrue(ok)
+        self.assertTrue(any("enough for a kernel build" in l for l in lines))
+
+    def test_too_small_is_refused_with_the_numbers(self):
+        ok, lines = cli.validate_build_space(self.space, self._cfg(),
+                                             self._findmnt(), _usage(12))
+        self.assertFalse(ok)
+        self.assertIn("12.0 GiB free", lines[0])
+        self.assertIn("30 GiB", lines[0])
+
+    def test_a_fat_or_ntfs_disk_is_refused_by_filesystem(self):
+        # A masterdir is a real root filesystem: unix ownership, permissions,
+        # symlinks, device nodes. FAT/NTFS have none, and the build would fail
+        # deep inside a package instead of at the point of choosing.
+        for fs in ("vfat", "exfat", "ntfs", "fuseblk"):
+            ok, lines = cli.validate_build_space(
+                self.space, self._cfg(), self._findmnt(fs), _usage(250))
+            self.assertFalse(ok, fs)
+            self.assertIn(fs, lines[0])
+
+    def test_noexec_is_refused(self):
+        ok, lines = cli.validate_build_space(
+            self.space, self._cfg(), self._findmnt(opts="rw,noexec"), _usage(250))
+        self.assertFalse(ok)
+        self.assertIn("noexec", lines[0])
+
+    def test_a_missing_directory_is_refused(self):
+        ok, lines = cli.validate_build_space(self.tmp / "nope", self._cfg(),
+                                             self._findmnt(), _usage(250))
+        self.assertFalse(ok)
+        self.assertIn("not a directory", lines[0])
+
+    # -- USB detection: the flag that would never have fired ---------------
+    def test_usb_is_detected_from_the_device_path_not_the_removable_flag(self):
+        # /sys/block/<dev>/removable reads 0 for a USB enclosure holding an
+        # ordinary SSD -- the drive is fixed, the bridge unplugs -- which is
+        # exactly the disk someone would point a build at. Verified on the
+        # testbed: removable=0 while the path reads .../usb4/4-2/...
+        sysfs = self.tmp / "sysblock"
+        sysfs.mkdir()
+        real = self.tmp / "devices" / "pci0000:00" / "usb4" / "4-2" / "block" / "sdb" / "sdb1"
+        real.mkdir(parents=True)
+        (sysfs / "sdb1").symlink_to(real)
+        self.assertTrue(cli._is_usb_backed("/dev/sdb1", sysfs=str(sysfs)))
+
+    def test_an_internal_disk_is_not_called_usb(self):
+        sysfs = self.tmp / "sysblock2"
+        sysfs.mkdir()
+        real = self.tmp / "devices2" / "pci0000:00" / "ata1" / "block" / "sda" / "sda8"
+        real.mkdir(parents=True)
+        (sysfs / "sda8").symlink_to(real)
+        self.assertFalse(cli._is_usb_backed("/dev/sda8", sysfs=str(sysfs)))
+
+    # -- the command ------------------------------------------------------
+    def test_showing_it_names_the_place_and_the_shortfall(self):
+        out = Sink()
+        rc = cli.cmd_build_space(self._cfg(), None, out=out,
+                                 run=self._findmnt(source="/dev/sda8"),
+                                 disk_usage=_usage(20.7, 62))
+        self.assertEqual(rc, cli.EXIT_OK)
+        t = out.text()
+        self.assertIn("kernel build space:", t)
+        self.assertIn("below the 30 GiB", t)
+        self.assertIn("--build-space", t)          # says how to move it
+
+    def test_setting_it_writes_the_config_when_writable(self):
+        toml = self.tmp / "u.toml"
+        toml.write_text("[build]\njobs = 4\n\n[packages]\n", encoding="utf-8")
+        out = Sink()
+        rc = cli.cmd_build_space(self._cfg(), self.space, out=out,
+                                 run=self._findmnt(), config_path=toml,
+                                 disk_usage=_usage(250))
+        self.assertEqual(rc, cli.EXIT_OK)
+        text = toml.read_text()
+        self.assertIn(f'masterdir = "{self.space}"', text)
+        self.assertIn("jobs = 4", text)            # the rest is preserved
+        self.assertIn("[packages]", text)
+
+    def test_setting_it_twice_replaces_rather_than_duplicates(self):
+        toml = self.tmp / "u.toml"
+        toml.write_text("[build]\njobs = 4\n", encoding="utf-8")
+        for _ in range(2):
+            cli.cmd_build_space(self._cfg(), self.space, out=Sink(),
+                                run=self._findmnt(), config_path=toml,
+                                disk_usage=_usage(250))
+        self.assertEqual(toml.read_text().count("masterdir ="), 1)
+
+    def test_a_refused_candidate_writes_nothing(self):
+        toml = self.tmp / "u.toml"
+        toml.write_text("[build]\njobs = 4\n", encoding="utf-8")
+        out = Sink()
+        rc = cli.cmd_build_space(self._cfg(), self.space, out=out,
+                                 run=self._findmnt("vfat"), config_path=toml,
+                                 disk_usage=_usage(250))
+        self.assertEqual(rc, cli.EXIT_USAGE)
+        self.assertNotIn("masterdir", toml.read_text())
+        self.assertIn("refusing", out.text())
+
+    def test_an_unwritable_config_hands_back_the_command_and_never_escalates(self):
+        # /etc/cachy-void/updater.toml is root-owned, which is correct: the
+        # build space is a property of the machine. The tool must not reach for
+        # privilege to edit its own config.
+        #
+        # The refusal is INJECTED rather than produced with chmod: this suite
+        # runs as root in the Void sandbox, and root ignores file permissions --
+        # a chmod-based version passes for the wrong reason as an ordinary user
+        # and fails outright as root.
+        import unittest.mock as _mock
+        toml = self.tmp / "ro.toml"
+        toml.write_text("[build]\njobs = 4\n", encoding="utf-8")
+        real_write = Path.write_text
+
+        def _denied(self_path, *a, **kw):
+            if self_path == toml:
+                raise OSError(13, "Permission denied")
+            return real_write(self_path, *a, **kw)
+
+        out = Sink()
+        with _mock.patch.object(Path, "write_text", _denied):
+            rc = cli.cmd_build_space(self._cfg(), self.space, out=out,
+                                     run=self._findmnt(), config_path=toml,
+                                     disk_usage=_usage(250))
+        self.assertEqual(rc, cli.EXIT_OK)
+        t = out.text()
+        self.assertIn("not writable by you", t)
+        self.assertIn("sudo", t)                     # the command, for the user
+        self.assertIn(str(self.space), t)
+
+    # -- the pieces that must follow the setting --------------------------
+    def test_the_preflight_measures_the_configured_space(self):
+        (self.space / ".xbps_chroot_init").write_text("", encoding="utf-8")
+        cfg = self._cfg(self.space)
+        # roomy there -> no refusal, even though the checkout itself is tiny
+        self.assertEqual(cli.build_preflight(cfg, ["linux-cachy"], Sink(),
+                                             disk_usage=_usage(60)), "")
+
+    def test_the_preflight_names_the_relocated_bootstrap_command(self):
+        cfg = self._cfg(self.space)          # no .xbps_chroot_init marker
+        t = cli.build_preflight(cfg, ["linux-cachy"], Sink(), disk_usage=_usage(60))
+        self.assertIn("not initialized", t)
+        self.assertIn(f"-m {self.space}", t)   # the flag the user must pass
+
+    def test_xbps_passes_the_masterdir_flag(self):
+        calls = []
+        def run(args, cwd=None):
+            calls.append(list(args))
+            return cp(0, "")
+        from engine.xbps import Xbps
+        xb = Xbps(void_packages=self.vp, repos=[], run=run, masterdir=self.space)
+        xb.clean("linux-cachy")
+        self.assertEqual(calls[0][:3], ["./xbps-src", "-m", str(self.space)])
+
+    def test_xbps_omits_the_flag_when_unset(self):
+        calls = []
+        def run(args, cwd=None):
+            calls.append(list(args))
+            return cp(0, "")
+        from engine.xbps import Xbps
+        Xbps(void_packages=self.vp, repos=[], run=run).clean("linux-cachy")
+        self.assertNotIn("-m", calls[0])
+
 if __name__ == "__main__":
     unittest.main()
 
