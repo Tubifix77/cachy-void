@@ -793,6 +793,65 @@ def upstream_counts(run) -> tuple:
     return None, 0, False, 0
 
 
+SCHED_SERVICE = "cachy-void-update"
+SCHED_LINK = pathlib.Path("/var/service") / SCHED_SERVICE
+SCHED_CONF = pathlib.Path("/etc/sv") / SCHED_SERVICE / "conf"
+
+
+def scheduled_run_line(*, link: pathlib.Path = SCHED_LINK,
+                       conf: pathlib.Path = SCHED_CONF) -> str:
+    """One line for the §4.9 unattended run when it is ON, else "".
+
+    This exists because of a real surprise: the owner found the laptop's fans
+    roaring at 3am, tracked it to a `linux-cachy` compile, and asked how the
+    updater could start one when nobody pressed Update. The answer was the
+    scheduled service, enabled at install time with `--with-schedule` months
+    earlier. Nothing had been hidden — README, INSTALL and architecture.md all
+    document it — but documentation read once on install day cannot compete
+    with a program that never mentions it again.
+
+    Note WHAT it runs: `--commit --yes`, with no `--no-kernel`. That is the
+    "Update kernel" button, not "Update" — an unattended run can start a
+    multi-hour kernel build and a reboot-gated deploy. Which is exactly the
+    kind of user-facing behaviour the project's own rule says is the user's to
+    choose, not ours to leave implicit.
+
+    Printed only when ON. Off-and-unknown harms nobody; on-and-unknown is the
+    case that cost a night's confusion, so only that one earns a line in every
+    report. Unprivileged: a symlink test and one small file read.
+    """
+    try:
+        if not link.exists():
+            return ""
+    except OSError:
+        return ""
+    when = ""
+    try:
+        text = conf.read_text(encoding="utf-8", errors="replace")
+        got = {}
+        for field in ("SNOOZE_HOUR", "SNOOZE_MINUTE"):
+            m = re.search(rf"^{field}=(\S+)", text, re.M)
+            if m:
+                got[field] = m.group(1).strip().strip('"').strip("'")
+        h, mi = got.get("SNOOZE_HOUR"), got.get("SNOOZE_MINUTE")
+        if h and mi:
+            # Only format a clock time when both really are plain numbers:
+            # snooze also accepts patterns like */6, and rendering "*/6:30"
+            # as a time would be a confident lie about when this fires.
+            if h.isdigit() and mi.isdigit():
+                when = f" at {int(h):02d}:{int(mi):02d} daily"
+            else:
+                when = f" on the schedule -H {h} -M {mi}"
+    except OSError:
+        when = ""      # say nothing rather than assume the shipped default
+
+    return ("scheduled updates: ON — this box runs --sync then --commit --yes by "
+            f"itself{when},\n"
+            "  kernel INCLUDED (the same work as the \"Update kernel\" button, not "
+            "\"Update\"),\n"
+            f"  so a build can start unattended. Turn it off: sudo rm {SCHED_LINK}")
+
+
 def cmd_pending(config: Config, out=print, run=_run) -> int:
     """Fast, machine-readable "is anything waiting?" probe — JSON on stdout.
 
@@ -1187,6 +1246,13 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
 
     out("Cachy-Void — status")
     out("=" * 46)
+    # Before the tiers, not after: whether this box updates itself changes how
+    # every count below should be read (those pending updates may install
+    # themselves tonight, kernel and all).
+    _sched = scheduled_run_line()
+    if _sched:
+        out(_sched)
+        out("")
     # A failing tier must not swallow the tiers below it. Tier [2] used to
     # `return EXIT_QUERY` on a broken/unbootstrapped void-packages, which hid
     # the kernel, maintenance and GPU sections — including the §8.3a BORE-pin

@@ -595,6 +595,27 @@ exec snooze -H 5 -M 30 /usr/local/bin/cachy-void-update --yes
   with `--with-schedule`. An unattended build+deploy is a deliberate choice, so
   the default install leaves it disabled and one `ln -s` (or a re-run with the
   flag) away.
+- **And opt-in is not enough on its own — being ON is normative to SAY.**
+  `--status` prints a line naming the scheduled run whenever the service is
+  enabled: that it runs `--sync` then `--commit --yes`, that the **kernel is
+  included**, when it fires, and the one command that turns it off. It goes
+  above the tiers, because whether a box updates itself changes how every count
+  below it should be read. Enabling it in `deploy.sh` now announces itself the
+  way the tray autostart does — previously the *quiet* branch was the one that
+  switched on unattended kernel builds and the explaining branch was the
+  harmless one, which is backwards.
+  The reason is a real incident: an owner found the laptop's fans roaring at 3am
+  on a `linux-cachy` compile and asked how the updater could start one when
+  nobody pressed Update. It was this service, enabled months earlier. Nothing
+  had been hidden — README, INSTALL and this file all document the flag — but
+  documentation read once on install day cannot compete with a program that
+  never mentions it again, and what it does here is a multi-hour kernel build
+  plus a reboot-gated deploy. That is the project's own rule about user-facing
+  behaviour, applied to the updater itself.
+  Printed only when ON: off-and-unknown harms nobody. And the line never
+  invents a time — an unreadable `conf` omits it rather than reporting the
+  shipped 05:30 default, because a box that changed the schedule is exactly the
+  box that would be misled (the one in the incident had).
 
 ### 4.10 User-facing actions (amendment)
 

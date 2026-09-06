@@ -1593,6 +1593,81 @@ class HealthDaemonConfigTests(unittest.TestCase):
         self.assertIn("cannot load config", out.text())
 
 
+
+class ScheduledRunVisibilityTests(unittest.TestCase):
+    """--status must say when the box updates ITSELF.
+
+    From a real surprise: the owner found the laptop's fans roaring at 3am, and
+    the cause was a `linux-cachy` compile started by the §4.9 scheduled service
+    -- enabled with `--with-schedule` at install time, months earlier. Their
+    words: "i thought all compiles were actually initialized by a human pressing
+    update."
+
+    Nothing had been hidden. README, INSTALL and architecture.md all document
+    the flag. The gap is that documentation read once on install day cannot
+    compete with a program that never mentions it again, and the behaviour in
+    question is a multi-hour unattended kernel build. That is squarely the
+    project's own rule -- invisible tuning is ours, user-facing behaviour is the
+    user's -- so it gets a line in every report.
+
+    Printed only when ON: off-and-unknown harms nobody, on-and-unknown is the
+    case that cost a night.
+    """
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        self.link = self.d / "svc"
+        self.conf = self.d / "conf"
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def _line(self):
+        return cli.scheduled_run_line(link=self.link, conf=self.conf)
+
+    def test_silent_when_the_service_is_not_enabled(self):
+        self.conf.write_text("SNOOZE_HOUR=5\nSNOOZE_MINUTE=30\n")
+        self.assertEqual(self._line(), "")
+
+    def test_named_with_its_time_when_enabled(self):
+        self.link.mkdir()
+        self.conf.write_text("SNOOZE_HOUR=5\nSNOOZE_MINUTE=30\n")
+        t = self._line()
+        self.assertIn("scheduled updates: ON", t)
+        self.assertIn("05:30", t)
+
+    def test_it_says_the_kernel_is_included(self):
+        # The whole point. A reader who thinks this is the "Update" button will
+        # not expect a multi-hour compile to start on its own.
+        self.link.mkdir()
+        self.conf.write_text("SNOOZE_HOUR=5\nSNOOZE_MINUTE=30\n")
+        t = self._line()
+        self.assertIn("kernel INCLUDED", t)
+        self.assertIn("--commit --yes", t)
+
+    def test_it_says_how_to_turn_it_off(self):
+        self.link.mkdir()
+        self.conf.write_text("SNOOZE_HOUR=5\nSNOOZE_MINUTE=30\n")
+        self.assertIn("rm /var/service/cachy-void-update", self._line())
+
+    def test_a_snooze_pattern_is_not_rendered_as_a_clock_time(self):
+        # snooze accepts */6 and 1-5; formatting those as "06:30" would be a
+        # confident lie about when the machine wakes up.
+        self.link.mkdir()
+        self.conf.write_text("SNOOZE_HOUR=*/6\nSNOOZE_MINUTE=0\n")
+        t = self._line()
+        self.assertIn("-H */6", t)
+        self.assertNotIn(":00 daily", t)
+
+    def test_an_unreadable_conf_omits_the_time_rather_than_assuming_it(self):
+        # 05:30 is the SHIPPED default, not necessarily this box's -- the box
+        # that prompted all this had been changed from it.
+        self.link.mkdir()
+        t = self._line()
+        self.assertIn("scheduled updates: ON", t)
+        self.assertNotIn("05:30", t)
+        self.assertNotIn("daily", t)
+
 if __name__ == "__main__":
     unittest.main()
 

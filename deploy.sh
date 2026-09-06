@@ -531,6 +531,15 @@ install_schedule_service() {
     install_dir "$SCHED_LOG_DIR" root
     if $WITH_SCHEDULE; then
         enable_service cachy-void-update
+        # Say it out loud, for the same reason the tray autostart does: this is
+        # the branch that makes the machine build and deploy on its own. The
+        # QUIET branch used to be this one and the explaining branch was the
+        # harmless one -- backwards, and it cost an owner a 3am mystery compile.
+        warn "unattended updates are now ENABLED (§4.9): this box will run"
+        warn "  --sync + --commit --yes on its own, KERNEL INCLUDED, which can"
+        warn "  start a multi-hour build without anyone pressing anything."
+        warn "  Time: /etc/sv/cachy-void-update/conf (SNOOZE_HOUR/MINUTE, default 05:30)"
+        warn "  Undo: sudo rm /var/service/cachy-void-update"
     else
         log "cachy-void-update provisioned but NOT enabled (pass --with-schedule for unattended §4.9 runs)"
     fi
