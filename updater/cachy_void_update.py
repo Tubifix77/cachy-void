@@ -1802,6 +1802,28 @@ def _note_kernel_build_failure(config: Config, pkg: str, out) -> None:
         "Resume with: cachy-void-update --kernel-ack")
 
 
+def prune_run_logs(config: Config, keep: int = 20) -> None:
+    """Keep the newest ``keep`` run directories (§7.6: "keep 20").
+
+    Specified and never implemented; it matters more now that an upstream-only
+    run journals too, so runs accumulate on every --commit rather than only on
+    ones that build something. Best-effort: losing a log is never worth failing
+    a run over.
+    """
+    try:
+        root = Path(config.log_root)
+        runs = sorted(d for d in root.iterdir()
+                      if d.is_dir() and d.name.startswith("run-"))
+    except OSError:
+        return
+    import shutil as _shutil
+    for old in runs[:-keep] if keep > 0 else runs:
+        try:
+            _shutil.rmtree(old)
+        except OSError:
+            pass
+
+
 def last_run_failure(config: Config):
     """The newest run's failure record as a dict, or None.
 
@@ -2060,6 +2082,7 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
         pass
     journal = Journal(rundir).start(run_id, git_head)
     journal.set_phase("build")
+    prune_run_logs(config)
     journal.set_order(build_list, order.provenance)
 
     # §7.5 preflight — refuse BEFORE the first compile, and say why. Specified
@@ -2664,26 +2687,54 @@ def _system_update(config: Config, xbps, out, run, confirm, assume_yes,
     empty deploy list, keeping a single call site), §4.7 service cycling, then
     Flatpak. Held packages (e.g. pinned kernels) are honored by xbps itself.
     """
+    # This run gets a journal like any other, and it is created BEFORE the
+    # "nothing pending" exit on purpose. Two things were broken by its absence.
+    # (1) --status's failed-run notice promises "a later successful run replaces
+    # this notice", and an upstream-only run left no journal -- so a stale
+    # failure sat on screen indefinitely while successful updates ran past it.
+    # The owner spotted it: "is it the bore update error that just stays around
+    # as a ghost until a new bore with 30 gigs of free space is made?" -- exactly
+    # right, since only a run that BUILDS something journalled. (2) the snapshot
+    # inventory's "upstream-only update (no overlay rebuild)" annotation could
+    # never fire, because it reads the journal this path never wrote.
+    run_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    rundir = config.log_root / f"run-{run_id}"
+    git_head = ""
+    try:
+        git_head = run(["git", "rev-parse", "HEAD"],
+                       str(config.void_packages)).stdout.strip()
+    except (OSError, AttributeError):
+        pass
+    journal = Journal(rundir).start(run_id, git_head)
+    journal.set_phase("deploy")
+    prune_run_logs(config)
+
     cp = run(["sudo", "xbps-install", "-Sun"])
     if cp.returncode != 0:
         out("error: could not query upstream updates (xbps-install -Sun)")
+        journal.fail(None, EXIT_QUERY, reason="could not query upstream updates")
         return EXIT_QUERY
     pending = [l for l in (cp.stdout or "").splitlines()
                if len(l.split()) > 1 and l.split()[1] in ("update", "install")]
     if not pending:
         out("system: base already up to date.")
-        return _update_flatpak(config, out, run)
+        rc_flatpak = _update_flatpak(config, out, run)
+        if rc_flatpak != EXIT_OK:
+            journal.fail(None, rc_flatpak, reason="flatpak update failed")
+        else:
+            journal.finish()
+        return rc_flatpak
 
     out(f"system: {len(pending)} upstream update(s) pending — applying (§4.5a).")
     if not assume_yes:
         ans = confirm("apply upstream system updates now? [y/N] ").strip().lower()
         if ans not in ("y", "yes"):
             out("aborted — nothing changed.")
+            journal.finish()          # a declined run is not a failed one
             return EXIT_OK
 
     # §9.5 rollback net: this mutates the system, so it gets the same snapshot
     # protection as a queue deploy.
-    run_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     try:
         snapshot.pre_deploy_snapshot(
             enable=config.snapshot_enable, subvol=config.snapshot_subvol,
@@ -2691,23 +2742,29 @@ def _system_update(config: Config, xbps, out, run, confirm, assume_yes,
             run_id=run_id, run=run, out=out)
     except snapshot.SnapshotUnavailable as exc:
         out(f"error: {exc}")
+        journal.fail(None, EXIT_SNAPSHOT_UNAVAIL, reason=str(exc))
         return EXIT_SNAPSHOT_UNAVAIL
     except snapshot.SnapshotFailed as exc:
         out(f"error: {exc}")
+        journal.fail(None, EXIT_SNAPSHOT_FAILED, reason=str(exc))
         return EXIT_SNAPSHOT_FAILED
 
     rc = _deploy(config, [], xbps, out, run)
     if rc != EXIT_OK:
+        journal.fail(None, rc, reason="upstream system update failed")
         return rc
     rc_services = _cycle_services(config, out, run, service_root=service_root)
     rc_flatpak = _update_flatpak(config, out, run)
     if rc_services != EXIT_OK:
         out("system update complete — some services need a manual restart "
             "or relogin (§4.7).")
+        journal.finish()      # the update itself succeeded; §4.7 is advisory
         return rc_services
     if rc_flatpak != EXIT_OK:
+        journal.fail(None, rc_flatpak, reason="flatpak update failed")
         return rc_flatpak
     out("system update complete.")
+    journal.finish()
     return EXIT_OK
 
 

@@ -1371,7 +1371,10 @@ class FlatpakTests(unittest.TestCase):
     def _fp(*, present=True, has_system=False, user_rc=0, sys_rc=0):
         calls = []
 
-        def run(args):
+        # cwd is part of the runner contract (`(args, cwd=None)`); this fake
+        # omitted it, which is why it broke the moment the system pass started
+        # journalling (its git rev-parse passes a cwd).
+        def run(args, cwd=None):
             a = list(args)
             if a[:2] == ["sudo", "-n"]:
                 a = a[2:]
@@ -2257,6 +2260,118 @@ class CleanDebugPackagesTests(unittest.TestCase):
         cli.cmd_clean(self._cfg(), assume_yes=False, dry_run=True, out=out,
                       run=self._quiet)
         self.assertIn("nothing to clean", out.text())
+
+
+class SystemPassJournalTests(unittest.TestCase):
+    """An upstream-only run is a run, and must journal like one.
+
+    The owner caught this from the report itself: after a successful Update the
+    status still showed the previous run's failure, and they asked whether it
+    "just stays around as a ghost until a new bore with 30 gigs of free space
+    is made". Exactly right. Only a run that BUILDS something wrote a journal,
+    so `last_run_failure` kept finding the old failed run as the newest, and
+    the notice's own promise -- "a later successful run replaces this notice"
+    -- was false for the most common kind of successful run.
+
+    Same root cause made `_deploy_annotation`'s "upstream-only update (no
+    overlay rebuild)" branch dead code: it reads a journal this path never
+    wrote, so those snapshots could never be annotated.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.logs = self.tmp / "log"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _cfg(self):
+        return cli.Config(void_packages=Path("/vp"), targets=[],
+                          state_dir=self.tmp / "state", log_root=self.logs,
+                          snapshot_enable=False)
+
+    def _runner(self, pending=True, deploy_rc=0):
+        calls = []
+
+        def run(args, cwd=None):
+            a = list(args)
+            calls.append(a)
+            if a[:3] == ["git", "rev-parse", "HEAD"]:
+                return cp(0, "abc123\n")
+            if a[:2] == ["sudo", "xbps-install"] and "-Sun" in a:
+                return cp(0, "foo-1.2_3 update x86_64\n" if pending else "")
+            if a[:2] == ["sudo", "xbps-install"] and "-Suy" in a:
+                return cp(deploy_rc, "")
+            if a[0] == "flatpak":
+                return cp(127, "")          # not installed: skipped cleanly
+            return cp(0, "")
+        return run, calls
+
+    def _runs(self):
+        return sorted(d for d in self.logs.iterdir()) if self.logs.is_dir() else []
+
+    def test_an_upstream_only_run_writes_a_journal_that_ends_done(self):
+        run, _calls = self._runner(pending=True)
+        rc = cli._system_update(self._cfg(), FakeXbps(), Sink(), run, input,
+                                True, service_root=self.tmp / "sv")
+        self.assertEqual(rc, cli.EXIT_OK)
+        runs = self._runs()
+        self.assertEqual(len(runs), 1)
+        j = json.loads((runs[0] / "journal.json").read_text())
+        self.assertEqual(j["phase"], "done")
+        self.assertIsNone(j["failure"])
+
+    def test_a_run_with_nothing_pending_still_journals(self):
+        # Otherwise a box that is already up to date can never clear a stale
+        # failure notice -- which is the state the testbed was actually in.
+        run, _calls = self._runner(pending=False)
+        rc = cli._system_update(self._cfg(), FakeXbps(), Sink(), run, input,
+                                True, service_root=self.tmp / "sv")
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertEqual(len(self._runs()), 1)
+        j = json.loads((self._runs()[0] / "journal.json").read_text())
+        self.assertEqual(j["phase"], "done")
+
+    def test_the_stale_failure_notice_is_actually_replaced(self):
+        # The promise in the notice, asserted end to end.
+        self.logs.mkdir(parents=True)
+        old = self.logs / "run-20260906T132024Z"
+        old.mkdir()
+        (old / "journal.json").write_text(json.dumps(
+            {"schema": 1, "run_id": "20260906T132024Z", "phase": "failed",
+             "pkgs": {}, "deploy_bins": [],
+             "failure": {"exit": 31, "pkg": None, "reason": "only 19.9 GiB free"}}),
+            encoding="utf-8")
+        (old / "journal.log").write_text("", encoding="utf-8")
+        cfg = self._cfg()
+        self.assertIn("REFUSED", cli.last_run_summary(cfg))     # ghost present
+        run, _calls = self._runner(pending=True)
+        cli._system_update(cfg, FakeXbps(), Sink(), run, input, True,
+                           service_root=self.tmp / "sv")
+        self.assertEqual(cli.last_run_summary(cfg), "")         # ghost gone
+        self.assertIsNone(cli.last_run_failure(cfg))
+
+    def test_a_failed_upstream_deploy_is_recorded_with_its_reason(self):
+        run, _calls = self._runner(pending=True, deploy_rc=1)
+        rc = cli._system_update(self._cfg(), FakeXbps(), Sink(), run, input,
+                                True, service_root=self.tmp / "sv")
+        self.assertNotEqual(rc, cli.EXIT_OK)
+        j = json.loads((self._runs()[0] / "journal.json").read_text())
+        self.assertEqual(j["phase"], "failed")
+        self.assertIn("upstream", j["failure"]["reason"])
+
+    def test_run_logs_are_pruned_to_twenty(self):
+        # §7.6 said "keep 20" and nothing implemented it; it matters more now
+        # that every --commit journals, not only ones that build.
+        self.logs.mkdir(parents=True)
+        for i in range(25):
+            d = self.logs / f"run-2026090{i // 10}T{i:02d}0000Z"
+            d.mkdir()
+            (d / "journal.json").write_text("{}", encoding="utf-8")
+        cli.prune_run_logs(self._cfg(), keep=20)
+        self.assertEqual(len(self._runs()), 20)
+        # the newest survive
+        self.assertTrue((self.logs / "run-20260902T240000Z").exists())
 
 if __name__ == "__main__":
     unittest.main()
