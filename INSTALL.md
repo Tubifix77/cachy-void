@@ -215,7 +215,9 @@ or want different targets. The full default:
 void_packages = "/home/YOURUSER/void-packages"
 
 [build]
-jobs = 0        # 0 = nproc
+jobs = 0            # 0 = nproc
+min_free_gib = 30   # §7.5 pre-flight: refuse to build with less free on the
+                    # build filesystem. A kernel build tree alone reaches 20 GB.
 
 [packages]
 # The ONLY packages compiled locally. Seed set:

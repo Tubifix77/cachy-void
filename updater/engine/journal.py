@@ -96,10 +96,21 @@ class Journal:
         self._data["deploy_bins"] = list(bins)
         self._commit("deploy_bins", count=len(bins))
 
-    def fail(self, pkg: Optional[str], exit_code: int) -> None:
-        self._data["failure"] = {"pkg": pkg, "exit": exit_code}
+    def fail(self, pkg: Optional[str], exit_code: int,
+             reason: Optional[str] = None) -> None:
+        """Record the failure. ``reason`` is the human sentence -- "[Errno 28]
+        No space left on device", "xbps-src exited 1", the preflight refusal.
+        It was missing for the first real unattended failure, which left the
+        window able to say only "exit 40" about a six-hour kernel build that
+        died for disk space; the log line that knew why lived in a runit log
+        directory nobody reads. Witness-only like everything here (§7.6)."""
+        failure: dict = {"pkg": pkg, "exit": exit_code}
+        if reason:
+            failure["reason"] = reason
+        self._data["failure"] = failure
         self._data["phase"] = "failed"
-        self._commit("failed", pkg=pkg, exit=exit_code)
+        extra = {"reason": reason} if reason else {}
+        self._commit("failed", pkg=pkg, exit=exit_code, **extra)
 
     def finish(self) -> None:
         self._data["phase"] = "done"

@@ -220,7 +220,8 @@ class CommitResilienceTests(unittest.TestCase):
             return _cp(0, "")
 
         rc = cli.cmd_commit(xb, fx.config, assume_yes=True,
-                            dry_run=False, out=lambda *_: None, run=run)
+                            dry_run=False, out=lambda *_: None, run=run,
+                            preflight=lambda *a, **k: "")   # tested in test_cli
         self.assertEqual(rc, cli.EXIT_OK)                 # userspace succeeded
         self.assertEqual(fx.state_name(), "AWAIT_HUMAN_PATCH")   # kernel withheld
         self.assertTrue(any(c[:2] == ["sudo", "xbps-install"] for c in calls))

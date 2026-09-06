@@ -380,6 +380,27 @@ class Updater(QWidget):
         kb.addWidget(self.kernel_label, 1)
         self.kernel_notice.hide()
         root.addWidget(self.kernel_notice)
+
+        # -- failed-run notice ------------------------------------------------
+        # "The last run failed, and this is why" is the one fact about a 3am
+        # unattended run that no surface carried at 11am: the window said
+        # nothing about six wasted hours and a full disk. Amber (the notice
+        # style), because a failed run is something that needs you. Text is a
+        # transcription of --status, like the kernel card: one source of truth.
+        self.run_notice = QFrame()
+        self.run_notice.setObjectName("notice")
+        rb = QHBoxLayout(self.run_notice)
+        rb.setContentsMargins(12, 10, 12, 10)
+        rb.setSpacing(10)
+        ricon = QLabel("!")
+        ricon.setObjectName("noticeIcon")
+        self.run_label = QLabel()
+        self.run_label.setObjectName("noticeText")
+        self.run_label.setWordWrap(True)
+        rb.addWidget(ricon, 0, Qt.AlignVCenter)
+        rb.addWidget(self.run_label, 1)
+        self.run_notice.hide()
+        root.addWidget(self.run_notice)
         self.notice.hide()
 
         # -- status overview (read-only --status output) ------------------------
@@ -745,6 +766,7 @@ class Updater(QWidget):
         self.btn_rollback.setVisible("rollback available" in text)
         self._update_headline(text)
         self._update_kernel_notice(text)
+        self._update_run_notice(text)
 
     def _update_headline(self, text):
         """Summarise --status into one line: what is waiting, and nothing else.
@@ -844,6 +866,28 @@ class Updater(QWidget):
                 tail = ". " + tail[0].upper() + tail[1:]
             self.kernel_label.setText(head + tail)
         self.kernel_notice.setVisible(bool(keep))
+
+    def _update_run_notice(self, text):
+        """Lift the CLI's "last update run FAILED/REFUSED" block into a card.
+
+        Transcription, not re-derivation: the CLI already read the journal and
+        decided what to say (which run, which package, the reason, the log).
+        The block is the header line plus its indented continuation lines,
+        minus the housekeeping note about a later run replacing it.
+        """
+        keep = []
+        for line in text.splitlines():
+            if line.startswith("last update run "):
+                keep = [line.strip().rstrip(":")]
+            elif keep and line.startswith("  ") and line.strip():
+                if not line.strip().startswith("(a later successful run"):
+                    keep.append(line.strip())
+            elif keep:
+                break
+        if keep:
+            head = keep[0][0].upper() + keep[0][1:]
+            self.run_label.setText(head + ("\n" + "\n".join(keep[1:]) if keep[1:] else ""))
+        self.run_notice.setVisible(bool(keep))
 
     def rollback(self):
         self._run(["--rollback"], self.out, done=lambda _c: self.check(),
@@ -976,8 +1020,10 @@ class Updater(QWidget):
             body = text[text.find("orphaned packages to remove:"):].strip() or text
             if QMessageBox.question(
                     self, "Confirm cleanup",
-                    "This will remove the following and clean the obsolete "
-                    "package cache. Old kernels are never touched.\n\n" + body +
+                    "This will remove the following, clean the obsolete package "
+                    "cache, and drop any debug-symbol packages listed (they are "
+                    "never installed from). Old kernels are never touched.\n\n"
+                    + body +
                     "\n\nProceed?",
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No) != QMessageBox.Yes:

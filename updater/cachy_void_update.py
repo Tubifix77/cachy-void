@@ -28,6 +28,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -82,6 +83,7 @@ DEFAULT_CONFIG = "/etc/cachy-void/updater.toml"
 class Config:
     void_packages: Path
     jobs: int = 0                                   # 0 -> nproc
+    min_free_gib: int = 30                          # §7.5 preflight floor
     targets: list[str] = field(default_factory=list)
     blacklist: list[str] = field(default_factory=list)
     restart_skip: list[str] = field(default_factory=list)
@@ -140,6 +142,7 @@ def load_config(path: str | Path) -> Config:
     cfg = Config(
         void_packages=Path(vp),
         jobs=int(build.get("jobs", 0)),
+        min_free_gib=int(build.get("min_free_gib", 30)),
         targets=list(pkgs.get("targets", [])),
         blacklist=list(pkgs.get("blacklist", [])),
         restart_skip=list(svc.get("restart_skip", [])),
@@ -403,6 +406,16 @@ def _kernel_synthesis(config: Config, xbps, out, *, fetcher=None) -> None:
         out(f"warning: cannot read kernel state ({exc}); skipping kernel synthesis")
         return
 
+    # §8.8: a frozen state is a human gate, and until now it gated nothing --
+    # the next run re-synthesised (overwriting the state with READY) and
+    # rebuilt, which is how a box could fail the same six-hour build every
+    # night while its "frozen" kernel path sat in a file nobody enforced.
+    if state.get("state") in FROZEN_STATES:
+        out(f"kernel: state is {state['state']} — the kernel path is frozen until "
+            "a human acknowledges it (§8.8): no template regeneration and no "
+            "build this run; userspace updates continue. Resume with: "
+            "cachy-void-update --kernel-ack")
+        return
     series = state.get("base_series") or ""
     if not series:
         out("kernel: no base_series tracked — synthesis needs a human to bootstrap "
@@ -798,8 +811,32 @@ SCHED_LINK = pathlib.Path("/var/service") / SCHED_SERVICE
 SCHED_CONF = pathlib.Path("/etc/sv") / SCHED_SERVICE / "conf"
 
 
+def _sv_state(link, run) -> str:
+    """'run' | 'down' | '' for a runit service, via `sv status`.
+
+    The supervise directory is 0700 root, so an unprivileged reader cannot see
+    that a service was stopped with `sv down`. `sv` is inside the updater's own
+    §4.1 grant (service cycling), so the sudo fallback is the same one the
+    deploy stage already uses -- read-only here.
+    """
+    if run is None:
+        return ""
+    for argv in (["sv", "status", str(link)],
+                 ["sudo", "-n", "sv", "status", str(link)]):
+        try:
+            cp = run(argv)
+        except OSError:
+            continue
+        text = (cp.stdout or "").strip()
+        if text.startswith("run:"):
+            return "run"
+        if text.startswith("down:"):
+            return "down"
+    return ""
+
+
 def scheduled_run_line(*, link: pathlib.Path = SCHED_LINK,
-                       conf: pathlib.Path = SCHED_CONF) -> str:
+                       conf: pathlib.Path = SCHED_CONF, run=None) -> str:
     """One line for the §4.9 unattended run when it is ON, else "".
 
     This exists because of a real surprise: the owner found the laptop's fans
@@ -845,6 +882,15 @@ def scheduled_run_line(*, link: pathlib.Path = SCHED_LINK,
     except OSError:
         when = ""      # say nothing rather than assume the shipped default
 
+    # Enabled is not the same as running: `sv down` stops a service without
+    # removing its link, and a report that said ON while the owner had just
+    # stopped it would be the plausible-but-false message this project keeps
+    # hunting. Only claimed when sv can actually be asked.
+    if _sv_state(link, run) == "down":
+        return ("scheduled updates: enabled but currently STOPPED (sv down) — nothing "
+                f"runs unattended until: sudo sv up {SCHED_SERVICE}\n"
+                f"  (when up, it runs --sync then --commit --yes by itself{when}, "
+                "kernel INCLUDED)")
     return ("scheduled updates: ON — this box runs --sync then --commit --yes by "
             f"itself{when},\n"
             "  kernel INCLUDED (the same work as the \"Update kernel\" button, not "
@@ -852,7 +898,8 @@ def scheduled_run_line(*, link: pathlib.Path = SCHED_LINK,
             f"  so a build can start unattended. Turn it off: sudo rm {SCHED_LINK}")
 
 
-def cmd_pending(config: Config, out=print, run=_run) -> int:
+def cmd_pending(config: Config, out=print, run=_run,
+                disk_usage=shutil.disk_usage) -> int:
     """Fast, machine-readable "is anything waiting?" probe — JSON on stdout.
 
     Why this exists next to ``--status``: that command is a *human report* and
@@ -949,6 +996,16 @@ def cmd_pending(config: Config, out=print, run=_run) -> int:
                 payload["attention"].append(ATTN_KERNEL_PORT)
     except (grub.GrubError, OSError, ValueError) as exc:
         payload["notes"].append(f"kernel state unreadable: {exc}")
+
+    # A failed newest run is "something needs you" -- the tray badges it
+    # amber and the window shows the reason. A later good run clears it.
+    _last = last_run_failure(config)
+    if _last:
+        payload["last_run"] = _last
+        payload["attention"].append(ATTN_RUN_FAILED)
+    _free = _free_gib("/", disk_usage)
+    if _free is not None and _free < 1.0:
+        payload["notes"].append(f"disk nearly full: {_free * 1024:.0f} MiB free")
 
     out(json.dumps(payload, indent=2, sort_keys=True))
     return EXIT_OK
@@ -1082,9 +1139,11 @@ ATTN_KERNEL_UNHEALTHY = "kernel-unhealthy"
 ATTN_KERNEL_FROZEN = "kernel-frozen"
 ATTN_KERNEL_PORT = "kernel-port"
 ATTN_BORE_PIN_MISSING = "bore-pin-missing"
+ATTN_RUN_FAILED = "run-failed"
 ATTENTION_TOKENS = frozenset({
     ATTN_UPDATES, ATTN_KERNEL_STAGED, ATTN_KERNEL_UNHEALTHY,
     ATTN_KERNEL_FROZEN, ATTN_KERNEL_PORT, ATTN_BORE_PIN_MISSING,
+    ATTN_RUN_FAILED,
 })
 
 
@@ -1233,7 +1292,8 @@ def _march_label(config: Config) -> str:
     return f" / {m.group(1)}" if m else ""
 
 
-def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
+def cmd_status(xbps, config: Config, out=print, run=_run,
+               disk_usage=shutil.disk_usage) -> int:
     """Read-only overview of every update tier — the 'what's pending' view.
 
     Groups into the four sections the front-end presents: [1] upstream Void,
@@ -1249,9 +1309,16 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
     # Before the tiers, not after: whether this box updates itself changes how
     # every count below should be read (those pending updates may install
     # themselves tonight, kernel and all).
-    _sched = scheduled_run_line()
+    _sched = scheduled_run_line(run=run)
     if _sched:
         out(_sched)
+        out("")
+    # And whether the newest run FAILED. The 3am failure was visible only in
+    # a runit log directory; the window that people actually look at said
+    # nothing, two hours later, about six wasted hours and a full disk.
+    _last = last_run_summary(config)
+    if _last:
+        out(_last)
         out("")
     # A failing tier must not swallow the tiers below it. Tier [2] used to
     # `return EXIT_QUERY` on a broken/unbootstrapped void-packages, which hid
@@ -1265,7 +1332,15 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
     # The SAME counting path as --pending, deliberately: see upstream_counts().
     n, held, fresh, drivers = upstream_counts(run)
     if n is None:
-        out("    unknown — xbps-install unavailable")
+        # Say WHY when the reason is knowable. On a full disk xbps cannot
+        # even memory-sync an index, and "unavailable" reads as a network
+        # problem -- which sends the reader to the wrong fix.
+        _why = ""
+        _free = _free_gib("/", disk_usage)
+        if _free is not None and _free < 0.5:
+            _why = (f" — the disk is full ({_free * 1024:.0f} MiB free); nothing "
+                    "can be checked until space is freed")
+        out("    unknown — xbps-install could not run" + _why)
     else:
         # Split rather than one lump: "is a driver in there?" is the question
         # this tier gets asked, and a total cannot answer it.
@@ -1321,6 +1396,13 @@ def cmd_status(xbps, config: Config, out=print, run=_run) -> int:
             out(f"    package cache on disk: {cp.stdout.split()[0]}")
     except OSError:
         pass
+    for line in disk_lines(config, disk_usage):
+        out("    " + line)
+    _dbg = _debug_pkgs(config)
+    if _dbg:
+        out(f"    debug-symbol packages in the local repo: {len(_dbg)} "
+            f"({sum(sz for _f, sz in _dbg) / GIB:.1f} GiB; never installed from — "
+            "Clean up removes them)")
 
     out("\n[5] GPU & drivers")
     try:
@@ -1533,9 +1615,303 @@ def cmd_sync(config: Config, out=print, run=_run) -> int:
         return EXIT_SYNC
 
 
+# ==========================================================================
+# Disk, preflight, and last-run visibility (§7.5, §4.10)
+# ==========================================================================
+# Written after the first real unattended failure: a linux-cachy build ran for
+# six hours and died at the module-link stage with ENOSPC, leaving a 20 GB tree
+# on a 63 GB disk that then sat at 100% -- and --status said nothing about the
+# disk, nothing about why its upstream probe had gone "unavailable", and nothing
+# about a run having failed two hours earlier. §7.5's preflight had specified
+# the guard all along; it was never implemented.
+GIB = 1024 ** 3
+
+
+def _free_gib(path, disk_usage=shutil.disk_usage):
+    """Free GiB on the filesystem holding ``path`` (a missing leaf still has
+    one -- walk up to the nearest existing ancestor), or None if unreadable."""
+    q = Path(path)
+    while not q.exists() and q != q.parent:
+        q = q.parent
+    try:
+        return disk_usage(str(q)).free / GIB
+    except OSError:
+        return None
+
+
+def _masterdirs(config: Config) -> list:
+    try:
+        return sorted(d for d in Path(config.void_packages).glob("masterdir*")
+                      if d.is_dir())
+    except OSError:
+        return []
+
+
+def _du(path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path, onerror=lambda _e: None):
+        for f in files:
+            try:
+                total += os.lstat(os.path.join(root, f)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def _leftover_trees(config: Config) -> list:
+    """``(path, bytes)`` for every tree under ``masterdir*/builddir``.
+
+    §7.5 keeps a build tree on disk after a run -- for forensics after a
+    failure, and simply because nothing removes it after a success -- and the
+    NEXT attempt's ``clean`` takes it away. Correct, and on the testbed it was
+    also 20 GB that nobody knew about. So it is named, with its size and the
+    command, wherever disk is reported.
+    """
+    found = []
+    for md in _masterdirs(config):
+        bd = md / "builddir"
+        if not bd.is_dir():
+            continue
+        try:
+            # xbps-src keeps its own dot-directories beside the trees
+            # (`.xbps-linux-cachy`); those are bookkeeping, not a build.
+            trees = sorted(t for t in bd.iterdir()
+                           if t.is_dir() and not t.name.startswith("."))
+        except OSError:
+            continue
+        for t in trees:
+            size = _du(t)
+            if size >= 1024 * 1024:          # a real tree is never kilobytes
+                found.append((t, size))
+    return found
+
+
+def _srcpkg_of_tree(name: str) -> str:
+    """``linux-cachy-6.12.108`` -> ``linux-cachy`` (the wrksrc naming rule)."""
+    return re.sub(r"-[0-9][^-]*$", "", name)
+
+
+def disk_lines(config: Config, disk_usage=shutil.disk_usage) -> list:
+    """Free space on the build filesystem, the §7.5 floor, and leftover trees."""
+    lines = []
+    root = Path(config.void_packages)
+    try:
+        probe = root if root.exists() else Path("/")
+        du = disk_usage(str(probe))
+    except OSError:
+        return lines
+    free, total = du.free / GIB, du.total / GIB
+    pct = (100 * du.used / du.total) if du.total else 0
+    lines.append(f"disk: {free:.1f} GiB free of {total:.0f} GiB on the build "
+                 f"filesystem ({pct:.0f}% used)")
+    if free < config.min_free_gib:
+        lines.append(f"  below the {config.min_free_gib} GiB a build needs "
+                     "([build] min_free_gib) — the next build will refuse (§7.5)")
+    for tree, size in _leftover_trees(config):
+        lines.append(f"build tree left in masterdir: {tree.name} — {size / GIB:.1f} GiB "
+                     "(the next build cleans it; reclaim now: "
+                     f"./xbps-src clean {_srcpkg_of_tree(tree.name)})")
+    return lines
+
+
+def build_preflight(config: Config, build_list, out,
+                    disk_usage=shutil.disk_usage) -> str:
+    """§7.5 preflight. "" when the build may start, else the refusal text.
+
+    Two checks, both normative in the spec since day one and implemented only
+    now: the masterdir is initialised (``masterdir*/.xbps_chroot_init``), and
+    free disk on the hostdir's and the masterdir's filesystems is at least
+    ``[build] min_free_gib`` (default 30). The number is not arbitrary: a
+    kernel build tree alone reached 20 GB on the testbed before the disk ran
+    out, and packaging wants room on top of that. Refusing at minute one costs
+    nothing; discovering it at hour six cost a night.
+    """
+    if not build_list:
+        return ""
+    problems = []
+    mds = _masterdirs(config)
+    if not mds or not any((md / ".xbps_chroot_init").exists() for md in mds):
+        problems.append(
+            "masterdir is not initialized (no masterdir*/.xbps_chroot_init under "
+            f"{config.void_packages}) — run: cd {config.void_packages} && "
+            "./xbps-src binary-bootstrap")
+    need = config.min_free_gib
+    checked = {}
+    hostdir = Path(config.void_packages) / "hostdir"
+    for label, path in (("hostdir", hostdir),
+                        ("masterdir", mds[0] if mds else Path(config.void_packages))):
+        free = _free_gib(path, disk_usage)
+        if free is not None:
+            checked[label] = free
+    low = {k: v for k, v in checked.items() if v < need}
+    if low:
+        worst = min(low.values())
+        where = " and ".join(sorted(low))
+        problems.append(
+            f"only {worst:.1f} GiB free on the {where} filesystem; a build needs "
+            f"at least {need} GiB ([build] min_free_gib) — a kernel build tree "
+            "alone reached 20 GB before the testbed ran out of disk")
+        for tree, size in _leftover_trees(config):
+            problems.append(
+                f"  a build tree from a previous run holds {size / GIB:.1f} GiB "
+                f"({tree.name}) — reclaim it with: cd {config.void_packages} && "
+                f"./xbps-src clean {_srcpkg_of_tree(tree.name)}")
+    if not problems:
+        return ""
+    return ("refusing to build (§7.5 preflight — nothing has been changed):\n  "
+            + "\n  ".join(problems))
+
+
+def _frozen_kernel_state(config: Config) -> str:
+    """The persisted kernel state if it is a frozen one (§8.8), else ""."""
+    try:
+        name = grub.KernelStateStore(config.kernel_state_path).load().get("state") or ""
+    except (grub.GrubError, OSError, ValueError):
+        return ""
+    return name if name in FROZEN_STATES else ""
+
+
+def _note_kernel_build_failure(config: Config, pkg: str, out) -> None:
+    """G3 (§8.5): a failed linux-cachy build freezes the kernel path.
+
+    Normative in the gate table ("exit 40 → AWAIT_HUMAN_BUILD") and never
+    implemented: the state stayed READY, so the next scheduled run would have
+    tried the identical build again. A human looks first now, and says so
+    with --kernel-ack; userspace is never held up by it.
+    """
+    if pkg != KERNEL_TARGET or not config.kernel_enable:
+        return
+    _record_kernel_state(config, {"state": "AWAIT_HUMAN_BUILD"}, out)
+    out("kernel: G3 build failed → AWAIT_HUMAN_BUILD (§8.5). Kernel updates pause "
+        "until a human has looked; userspace updates continue on later runs. "
+        "Resume with: cachy-void-update --kernel-ack")
+
+
+def last_run_failure(config: Config):
+    """The newest run's failure record as a dict, or None.
+
+    Witness-only (§7.6): nothing here drives control flow. It exists so the
+    report and the tray can say "the last run failed, here is why" -- the one
+    fact about the 3am run that no surface carried at 11am.
+    """
+    root = Path(config.log_root)
+    try:
+        if not root.is_dir():
+            return None
+        runs = sorted(d for d in root.iterdir()
+                      if d.is_dir() and d.name.startswith("run-"))
+    except OSError:
+        return None
+    if not runs:
+        return None
+    rd = runs[-1]
+    try:
+        data = read_json(rd / "journal.json")
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("phase") != "failed":
+        return None
+    failure = data.get("failure") or {}
+    when = ""
+    try:
+        for line in (rd / "journal.log").read_text(encoding="utf-8").splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(ev, dict) and ev.get("event") == "failed":
+                when = str(ev.get("ts") or "")
+    except OSError:
+        pass
+    pkg = failure.get("pkg")
+    log = None
+    if pkg:
+        log = ((data.get("pkgs") or {}).get(pkg) or {}).get("log")
+    return {"run_id": data.get("run_id") or rd.name[4:], "pkg": pkg,
+            "exit": failure.get("exit"), "reason": failure.get("reason") or "",
+            "when": when, "log": log, "dir": str(rd)}
+
+
+def _ago(ts: str, now=None) -> str:
+    try:
+        t = time.mktime(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+    except (ValueError, OverflowError):
+        return ""
+    secs = max(0, int((now if now is not None else time.time()) - t))
+    if secs < 90:
+        return "just now"
+    if secs < 5400:
+        return f"{secs // 60} min ago"
+    if secs < 172800:
+        return f"{secs // 3600} h ago"
+    return f"{secs // 86400} d ago"
+
+
+def last_run_summary(config: Config, now=None) -> str:
+    """Human lines for --status about the newest run, if it failed; else ""."""
+    f = last_run_failure(config)
+    if not f:
+        return ""
+    if f["when"]:
+        stamp = f["when"].replace("T", " ").rstrip("Z") + " UTC"
+        ago = _ago(f["when"], now)
+        when = f"{ago} ({stamp})" if ago else f"at {stamp}"
+    else:
+        when = f"in run {f['run_id']}"
+    if f["exit"] == EXIT_PREFLIGHT:
+        head = f"last update run was REFUSED before building, {when}:"
+        detail = f["reason"] or "the §7.5 preflight check failed"
+    else:
+        head = f"last update run FAILED {when}:"
+        what = f"{f['pkg']}: " if f["pkg"] else ""
+        detail = what + (f["reason"] or f"exit {f['exit']}")
+    lines = [head, "  " + detail]
+    if f["log"]:
+        lines.append(f"  log: {f['log']}")
+    lines.append("  (a later successful run replaces this notice)")
+    return "\n".join(lines)
+
+
+def _debug_pkgs(config: Config) -> list:
+    """``(path, bytes)`` of debug-symbol binpkgs in the local repo's debug dir."""
+    d = Path(config.repos[0]) / "debug"
+    if not d.is_dir():
+        return []
+    found = []
+    try:
+        for f in sorted(d.glob("*.xbps")):
+            found.append((f, f.stat().st_size))
+    except OSError:
+        pass
+    return found
+
+
+def _drop_debug_files(files, config: Config, run) -> int:
+    """Delete debug binpkgs (user-owned; no privilege) and tidy the index."""
+    freed = 0
+    for f, size in files:
+        try:
+            Path(f).unlink()
+            freed += size
+        except OSError:
+            pass
+    d = Path(config.repos[0]) / "debug"
+    try:
+        if any(d.glob("*.xbps")):
+            run(["xbps-rindex", "-c", str(d)])
+        else:
+            for idx in list(d.glob("*-repodata")) + list(d.glob("*-stagedata")):
+                idx.unlink()
+            d.rmdir()
+    except OSError:
+        pass
+    return freed
+
+
 def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
                out=print, run=_run, confirm=input, stage_layout=None,
-               service_root: Path = Path("/var/service")) -> int:
+               service_root: Path = Path("/var/service"),
+               preflight=build_preflight) -> int:
     """Stages 3-4 — build, deploy, gate & stage kernel (§4.4-§4.7, §8.5-§8.6).
 
     The kernel synthesis circuit (§8.2→§8.3→§8.4) runs first: a detected upstream
@@ -1589,6 +1965,20 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
     # any compile. A withheld kernel never blocks userspace (§8 preamble).
     build_list = [*order.order, *order.second_pass]
     q_deploy = list(plan.q_deploy)
+    # §8.8: a frozen kernel path is withheld from the queue as well, not
+    # only from synthesis -- the template already on disk would otherwise
+    # walk straight into the build.
+    if config.kernel_enable and KERNEL_TARGET in build_list:
+        frozen = _frozen_kernel_state(config)
+        if frozen:
+            build_list = [q for q in build_list if q != KERNEL_TARGET]
+            q_deploy = [t for t in q_deploy if t != KERNEL_TARGET]
+            out(f"warning: {KERNEL_TARGET} withheld from this run — kernel "
+                f"state is {frozen} (frozen, §8.8); resume with "
+                "`cachy-void-update --kernel-ack`. Userspace updates continue.")
+            if not build_list and not q_deploy:
+                out("queue empty after kernel withhold.")
+                return EXIT_OK
     if config.kernel_enable and KERNEL_TARGET in build_list:
         if not _g2_gate(config, xbps, out):
             build_list = [p for p in build_list if p != KERNEL_TARGET]
@@ -1612,6 +2002,20 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
     journal.set_phase("build")
     journal.set_order(build_list, order.provenance)
 
+    # §7.5 preflight — refuse BEFORE the first compile, and say why. Specified
+    # from the start, implemented only after six hours of kernel build died
+    # at the module-link stage with ENOSPC. Journaled so --status can report
+    # the refusal; the kernel state is deliberately untouched -- a full disk
+    # is the environment's fault, not the kernel's, and a retry once space
+    # exists needs no human acknowledgement.
+    refusal = preflight(config, build_list, out)
+    if refusal:
+        out(refusal)
+        _lines = refusal.splitlines()
+        journal.fail(None, EXIT_PREFLIGHT,
+                     reason=(_lines[1].strip() if len(_lines) > 1 else refusal))
+        return EXIT_PREFLIGHT
+
     # Stage 3 — build (§7.5)
     for pkg in build_list:
         journal.set_pkg_status(pkg, "building")
@@ -1621,16 +2025,28 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
             rc = xbps.build(pkg, config.effective_jobs, log_path)
         except (XbpsError, OSError) as exc:
             journal.set_pkg_status(pkg, "failed", log=log_path)
-            journal.fail(pkg, EXIT_BUILD)
+            journal.fail(pkg, EXIT_BUILD, reason=f"build environment failure: {exc}")
             out(f"error: build environment failure for {pkg}: {exc}")
+            if getattr(exc, "errno", None) == 28 or "No space left" in str(exc):
+                for line in disk_lines(config):
+                    out("  " + line)
+            _note_kernel_build_failure(config, pkg, out)
             return EXIT_BUILD
         if rc != 0:
             journal.set_pkg_status(pkg, "failed", log=log_path)
-            journal.fail(pkg, EXIT_BUILD)
+            journal.fail(pkg, EXIT_BUILD, reason=f"xbps-src exited {rc}")
             out(f"error: build failed for {pkg} (rc={rc}); see {log_path}")
             _emit_tail(log_path, out)
+            _note_kernel_build_failure(config, pkg, out)
             return EXIT_BUILD
         journal.set_pkg_status(pkg, "built", log=log_path)
+        # The kernel template hand-builds a -dbg package (see
+        # Xbps.drop_debug_pkgs): 2 GB per kernel into a repo nothing installs
+        # from. Dropped here, right after the build that made it.
+        freed = xbps.drop_debug_pkgs(pkg)
+        if freed:
+            out(f"dropped the debug-symbol package(s) of {pkg} "
+                f"({freed / GIB:.1f} GiB; the debug repo is never installed from)")
 
     # §9.5 pre-deploy snapshot — a btrfs rollback net taken IMMEDIATELY before the
     # Stage 4 `-Suy`, and only when something will actually deploy. Witness-only
@@ -1869,8 +2285,10 @@ def _local_origin_orphans(orphan_lines: Sequence[str],
 
 def cmd_clean(config: Config, *, assume_yes: bool, dry_run: bool = False,
               out=print, run=_run, confirm=input) -> int:
-    """Reclaim disk: remove orphaned packages and clean the obsolete package
-    cache. Preview-then-confirm; every removal goes through the §4.1 sudo
+    """Reclaim disk: remove orphaned packages, clean the obsolete package
+    cache, and drop debug-symbol packages from the local repo (user-owned
+    files in ``hostdir/binpkgs/debug`` -- 2 GB per kernel build, never an
+    install source, see Xbps.drop_debug_pkgs). Preview-then-confirm; every removal goes through the §4.1 sudo
     boundary (this adds exactly the two ``xbps-remove`` maintenance forms — the
     minimal widening, nothing that can name a package).
 
@@ -1902,6 +2320,12 @@ def cmd_clean(config: Config, *, assume_yes: bool, dry_run: bool = False,
     for l in orphans:
         out("    " + l)
     out(f"obsolete cached packages to clean: {len(cache)}")
+    dbg = _debug_pkgs(config)
+    if dbg:
+        out(f"debug-symbol packages to drop from the local repo: {len(dbg)} "
+            f"({sum(sz for _f, sz in dbg) / GIB:.1f} GiB)")
+        for f, sz in dbg:
+            out(f"    {Path(f).name}  {sz / GIB:.1f} GiB")
 
     # Refuse a mixed sweep: an orphan we BUILT is a protection gap, not garbage.
     ours = _local_origin_orphans(orphans, config.repo_strs)
@@ -1926,8 +2350,8 @@ def cmd_clean(config: Config, *, assume_yes: bool, dry_run: bool = False,
         for line in old_kernel_lines(inv):
             out(f"    {line}")
 
-    if not orphans and not cache:
-        out("\nnothing to clean — no orphans, cache already tidy.")
+    if not orphans and not cache and not dbg:
+        out("\nnothing to clean — no orphans, cache already tidy, no debug packages.")
         return EXIT_OK
 
     if dry_run:
@@ -1937,7 +2361,8 @@ def cmd_clean(config: Config, *, assume_yes: bool, dry_run: bool = False,
         return EXIT_OK
 
     if not assume_yes:
-        if confirm("\nremove orphans and clean the cache? [y/N] ").strip().lower() \
+        if confirm("\nremove orphans, clean the cache and drop the debug packages "
+                   "listed? [y/N] ").strip().lower() \
                 not in ("y", "yes"):
             out("aborted by user.")
             return EXIT_OK
@@ -1955,6 +2380,9 @@ def cmd_clean(config: Config, *, assume_yes: bool, dry_run: bool = False,
         else:
             out("error: cleaning the cache failed.")
             rc = EXIT_CLEAN
+    if dbg:
+        freed = _drop_debug_files(dbg, config, run)
+        out(f"dropped {len(dbg)} debug-symbol package(s) ({freed / GIB:.1f} GiB).")
     out("cleanup complete." if rc == EXIT_OK else "cleanup finished with errors.")
     return rc
 

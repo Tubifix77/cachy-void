@@ -57,6 +57,7 @@ class FakeXbps:
         self.configure_calls: list[str] = []
         self.build_calls: list[str] = []
         self.clean_calls: list[str] = []
+        self.debug_drops: list[str] = []
 
     def installed(self): return list(self._installed)
     def srcpkg_of(self, b): return self._src_map.get(b)
@@ -78,6 +79,10 @@ class FakeXbps:
 
     def clean(self, pkg):
         self.clean_calls.append(pkg)
+
+    def drop_debug_pkgs(self, pkg):
+        self.debug_drops.append(pkg)
+        return 0
 
     def build(self, pkg, jobs, log_path=None):
         self.build_calls.append(pkg)
@@ -105,6 +110,32 @@ class Sink:
     def __init__(self): self.lines = []
     def __call__(self, *a): self.lines.append(" ".join(str(x) for x in a))
     def text(self): return "\n".join(self.lines)
+
+
+def _no_preflight(config, build_list, out):
+    return ""
+
+
+def _commit(*args, **kw):
+    """cmd_commit with the §7.5 preflight stubbed out.
+
+    The real preflight wants an initialised masterdir marker and 30 GiB free on
+    the fixture's own filesystem -- neither of which a temp directory can
+    promise on every machine that runs this suite. It has its own tests
+    (PreflightTests) that inject exactly those facts; everything else here is
+    about what happens AFTER the preflight lets a run through.
+    """
+    kw.setdefault("preflight", _no_preflight)
+    return cli.cmd_commit(*args, **kw)
+
+
+def _usage(free_gib, total_gib=100.0):
+    """A shutil.disk_usage look-alike for injecting a disk verdict."""
+    import collections
+    U = collections.namedtuple("usage", "total used free")
+    total = int(total_gib * cli.GIB)
+    free = int(free_gib * cli.GIB)
+    return lambda _path: U(total, total - free, free)
 
 
 class ConfigTests(unittest.TestCase):
@@ -265,7 +296,7 @@ class CommitCommandTests(unittest.TestCase):
         # without confirmation in interactive mode.
         out = Sink()
         run, calls = self._runstub()
-        rc = cli.cmd_commit(self._orphaned_takeover_xbps(),
+        rc = _commit(self._orphaned_takeover_xbps(),
                             self._cfg(["gamemode"]),
                             assume_yes=False, dry_run=False, out=out,
                             run=run, confirm=lambda p: "n")
@@ -279,7 +310,7 @@ class CommitCommandTests(unittest.TestCase):
         out = Sink()
         xb = self._orphaned_takeover_xbps()
         run, calls = self._takeover_run(xb)
-        rc = cli.cmd_commit(xb, self._cfg(["gamemode"]),
+        rc = _commit(xb, self._cfg(["gamemode"]),
                             assume_yes=True, dry_run=False, out=out, run=run)
         self.assertEqual(rc, cli.EXIT_OK)
         self.assertTrue(any(c[:2] == ["sudo", "xbps-install"] and "-Suy" in c
@@ -298,7 +329,7 @@ class CommitCommandTests(unittest.TestCase):
                       local_updates=["linux-cachy"])
         out = Sink()
         run, calls = self._runstub()
-        rc = cli.cmd_commit(xb, self._cfg(["linux-cachy"]),
+        rc = _commit(xb, self._cfg(["linux-cachy"]),
                             assume_yes=True, dry_run=False, out=out, run=run)
         self.assertEqual(rc, cli.EXIT_OK)
         self.assertIn("withheld", out.text())
@@ -331,7 +362,7 @@ class CommitCommandTests(unittest.TestCase):
                       files_map={"linux-cachy": ["/boot/vmlinuz-6.12.35_1"]})
         out = Sink()
         run, calls = self._runstub()
-        rc = cli.cmd_commit(xb, self._cfg(["linux-cachy"], void_packages=vp),
+        rc = _commit(xb, self._cfg(["linux-cachy"], void_packages=vp),
                             assume_yes=True, dry_run=False, out=out, run=run,
                             stage_layout=layout)
         self.assertEqual(rc, cli.EXIT_OK)
@@ -373,7 +404,7 @@ class CommitCommandTests(unittest.TestCase):
                       files_map={"linux-cachy": ["/boot/vmlinuz-6.12.35_1"]})
         out = Sink()
         run, calls = self._runstub()
-        rc = cli.cmd_commit(xb, self._cfg(["linux-cachy"], void_packages=vp),
+        rc = _commit(xb, self._cfg(["linux-cachy"], void_packages=vp),
                             assume_yes=True, dry_run=False, out=out, run=run,
                             stage_layout=layout)
         self.assertEqual(rc, cli.EXIT_OK)
@@ -400,7 +431,7 @@ class CommitCommandTests(unittest.TestCase):
                       origins={"linux-cachy": "https://upstream"})
         out = Sink()
         run, calls = self._runstub()
-        rc = cli.cmd_commit(xb, self._cfg(["linux-cachy"]),
+        rc = _commit(xb, self._cfg(["linux-cachy"]),
                             assume_yes=True, dry_run=False, out=out, run=run,
                             stage_layout=layout)
         self.assertEqual(rc, cli.EXIT_KERNEL)
@@ -419,7 +450,7 @@ class CommitCommandTests(unittest.TestCase):
             xb, xcheckrestart="631 /usr/bin/sshd (openssh)\n",
             sv_status="run: sshd: (pid 631) 42s\n")
         out = Sink()
-        rc = cli.cmd_commit(xb, self._cfg(["gamemode"]),
+        rc = _commit(xb, self._cfg(["gamemode"]),
                             assume_yes=True, dry_run=False, out=out, run=run,
                             service_root=svcroot)
         self.assertEqual(rc, cli.EXIT_OK)
@@ -447,7 +478,7 @@ class CommitCommandTests(unittest.TestCase):
             return cp(0, stdout="")
 
         out = Sink()
-        rc = cli.cmd_commit(xb, self._cfg(["gamemode"]),
+        rc = _commit(xb, self._cfg(["gamemode"]),
                             assume_yes=True, dry_run=False, out=out, run=run)
         self.assertEqual(rc, cli.EXIT_OK)
         snap_i = next(i for i, c in enumerate(calls)
@@ -474,7 +505,7 @@ class CommitCommandTests(unittest.TestCase):
         cfg = self._cfg(["gamemode"])
         cfg.snapshot_enable = True                      # force snapshots
         out = Sink()
-        rc = cli.cmd_commit(xb, cfg, assume_yes=True, dry_run=False, out=out, run=run)
+        rc = _commit(xb, cfg, assume_yes=True, dry_run=False, out=out, run=run)
         self.assertEqual(rc, cli.EXIT_SNAPSHOT_UNAVAIL)
         self.assertFalse(any(c[:2] == ["sudo", "xbps-install"] for c in calls),
                          "must abort before any deploy")
@@ -526,7 +557,7 @@ class SystemPassTests(unittest.TestCase):
             "bar-2.0_1 update x86_64 https://repo 10 10",
             "linux6.12-6.12.98_1 hold x86_64 https://repo 10 10",  # pinned: not counted
         ])
-        rc = cli.cmd_commit(self._insync_xbps(), self._cfg(),
+        rc = _commit(self._insync_xbps(), self._cfg(),
                             assume_yes=True, dry_run=False, out=out, run=run)
         self.assertEqual(rc, cli.EXIT_OK)
         self.assertIn("2 upstream update(s) pending", out.text())
@@ -538,7 +569,7 @@ class SystemPassTests(unittest.TestCase):
         out = Sink()
         run, calls = self._run_with_pending(
             ["linux6.12-6.12.98_1 hold x86_64 https://repo 10 10"])
-        rc = cli.cmd_commit(self._insync_xbps(), self._cfg(),
+        rc = _commit(self._insync_xbps(), self._cfg(),
                             assume_yes=True, dry_run=False, out=out, run=run)
         self.assertEqual(rc, cli.EXIT_OK)
         self.assertIn("base already up to date", out.text())
@@ -548,7 +579,7 @@ class SystemPassTests(unittest.TestCase):
         out = Sink()
         run, calls = self._run_with_pending(
             ["foo-1.1_1 update x86_64 https://repo 10 10"])
-        rc = cli.cmd_commit(self._insync_xbps(), self._cfg(),
+        rc = _commit(self._insync_xbps(), self._cfg(),
                             assume_yes=False, dry_run=False, out=out, run=run,
                             confirm=lambda p: "n")
         self.assertEqual(rc, cli.EXIT_OK)
@@ -559,7 +590,7 @@ class SystemPassTests(unittest.TestCase):
         out = Sink()
         run, calls = self._run_with_pending(
             ["foo-1.1_1 update x86_64 https://repo 10 10"])
-        rc = cli.cmd_commit(self._insync_xbps(), self._cfg(),
+        rc = _commit(self._insync_xbps(), self._cfg(),
                             assume_yes=True, dry_run=True, out=out, run=run)
         self.assertEqual(rc, cli.EXIT_OK)
         self.assertFalse(any(c and c[0] == "sudo" for c in calls))
@@ -573,7 +604,7 @@ class SystemPassTests(unittest.TestCase):
             if args[:3] == ["sudo", "xbps-install", "-Sun"]:
                 return cp(1, stderr="repo unreachable")
             return cp(0, stdout="")
-        rc = cli.cmd_commit(self._insync_xbps(), self._cfg(),
+        rc = _commit(self._insync_xbps(), self._cfg(),
                             assume_yes=True, dry_run=False, out=out, run=run)
         self.assertEqual(rc, cli.EXIT_QUERY)
         self.assertFalse(any("-Suy" in c for c in calls))
@@ -1346,7 +1377,7 @@ class FlatpakTests(unittest.TestCase):
                       local_updates=[], origins={"mesa": origin})
         run, calls = self._fp(present=True)
         out = Sink()
-        rc = cli.cmd_commit(xb, cfg, assume_yes=True, dry_run=False, out=out, run=run)
+        rc = _commit(xb, cfg, assume_yes=True, dry_run=False, out=out, run=run)
         self.assertEqual(rc, cli.EXIT_OK)
         self.assertIn("queue empty", out.text())
         self.assertIn(["flatpak", "update", "--user", "-y"], calls)
@@ -1358,7 +1389,7 @@ class FlatpakTests(unittest.TestCase):
                       inst_ver={"mesa": "1.0_1"}, repo_ver={"mesa": "1.0_1"},
                       local_updates=[], origins={"mesa": origin})
         run, calls = self._fp(present=True)
-        cli.cmd_commit(xb, cfg, assume_yes=True, dry_run=True, out=Sink(), run=run)
+        _commit(xb, cfg, assume_yes=True, dry_run=True, out=Sink(), run=run)
         self.assertFalse(any(c[:2] == ["flatpak", "update"] for c in calls))
 
 
@@ -1659,6 +1690,36 @@ class ScheduledRunVisibilityTests(unittest.TestCase):
         self.assertIn("-H */6", t)
         self.assertNotIn(":00 daily", t)
 
+    def test_a_stopped_service_is_not_reported_as_on(self):
+        # `sv down` leaves the link in place; the supervise dir is 0700 root.
+        # Found live: the owner stopped the service and --status said ON.
+        self.link.mkdir()
+        self.conf.write_text("SNOOZE_HOUR=5\nSNOOZE_MINUTE=30\n")
+        def run(args, cwd=None):
+            if args[:3] == ["sudo", "-n", "sv"] or args[:2] == ["sv", "status"]:
+                return cp(0, "down: cachy-void-update: 1641s, normally up\n")
+            return cp(0, "")
+        t = cli.scheduled_run_line(link=self.link, conf=self.conf, run=run)
+        self.assertIn("STOPPED", t)
+        self.assertIn("sv up cachy-void-update", t)
+        self.assertNotIn("scheduled updates: ON", t)
+
+    def test_a_running_service_is_on(self):
+        self.link.mkdir()
+        self.conf.write_text("SNOOZE_HOUR=5\nSNOOZE_MINUTE=30\n")
+        run = lambda args, cwd=None: cp(0, "run: cachy-void-update: (pid 1) 5s\n")
+        self.assertIn("scheduled updates: ON",
+                      cli.scheduled_run_line(link=self.link, conf=self.conf, run=run))
+
+    def test_without_a_runner_the_state_is_not_guessed(self):
+        # No runner means no sv probe: the link exists, so it WILL fire unless
+        # someone stopped it -- say ON, never STOPPED, rather than inventing.
+        self.link.mkdir()
+        self.conf.write_text("SNOOZE_HOUR=5\nSNOOZE_MINUTE=30\n")
+        t = cli.scheduled_run_line(link=self.link, conf=self.conf)
+        self.assertIn("scheduled updates: ON", t)
+        self.assertNotIn("STOPPED", t)
+
     def test_an_unreadable_conf_omits_the_time_rather_than_assuming_it(self):
         # 05:30 is the SHIPPED default, not necessarily this box's -- the box
         # that prompted all this had been changed from it.
@@ -1667,6 +1728,487 @@ class ScheduledRunVisibilityTests(unittest.TestCase):
         self.assertIn("scheduled updates: ON", t)
         self.assertNotIn("05:30", t)
         self.assertNotIn("daily", t)
+
+
+class PreflightTests(unittest.TestCase):
+    """§7.5 preflight: refuse before the first compile, and say why.
+
+    Specified from the start ("free disk ≥ build.min_free_gib, default 30, on
+    both hostdir's and the masterdir's filesystems; masterdir initialised"),
+    never implemented. The price was paid on 2026-09-06: a linux-cachy build
+    ran six hours and died at the module-link stage with ENOSPC on a disk that
+    then sat at 100%. Refusing at minute one is free.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.vp = self.tmp / "vp"
+        (self.vp / "hostdir").mkdir(parents=True)
+        self.md = self.vp / "masterdir-x86_64"
+        self.md.mkdir()
+        # an upstream template at the ported version: the kernel circuit
+        # sees no bump and leaves the state alone
+        up = self.vp / "srcpkgs" / "linux6.12"
+        up.mkdir(parents=True)
+        (up / "template").write_text("pkgname=linux6.12\nversion=6.12.34\n"
+                                     "revision=1\n", encoding="utf-8")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _cfg(self, targets=("linux-cachy",), **kw):
+        return cli.Config(void_packages=self.vp, targets=list(targets),
+                          state_dir=self.tmp / "state", log_root=self.tmp / "log",
+                          fragment_path=self.tmp / "fragment.config", **kw)
+
+    def _mark_bootstrapped(self):
+        (self.md / ".xbps_chroot_init").write_text("", encoding="utf-8")
+
+    def test_nothing_to_build_means_nothing_to_check(self):
+        self.assertEqual(cli.build_preflight(self._cfg(), [], Sink(),
+                                             disk_usage=_usage(0.1)), "")
+
+    def test_an_uninitialised_masterdir_is_named_with_its_fix(self):
+        t = cli.build_preflight(self._cfg(), ["gamemode"], Sink(),
+                                disk_usage=_usage(200))
+        self.assertIn("not initialized", t)
+        self.assertIn("binary-bootstrap", t)
+
+    def test_low_disk_names_the_number_and_the_floor(self):
+        self._mark_bootstrapped()
+        t = cli.build_preflight(self._cfg(), ["linux-cachy"], Sink(),
+                                disk_usage=_usage(17.6))
+        self.assertIn("17.6 GiB free", t)
+        self.assertIn("at least 30 GiB", t)
+        self.assertIn("min_free_gib", t)
+
+    def test_the_floor_is_configurable(self):
+        self._mark_bootstrapped()
+        cfg = self._cfg(min_free_gib=10)
+        self.assertEqual(cli.build_preflight(cfg, ["gamemode"], Sink(),
+                                             disk_usage=_usage(17.6)), "")
+
+    def test_enough_disk_and_a_marker_pass(self):
+        self._mark_bootstrapped()
+        self.assertEqual(cli.build_preflight(self._cfg(), ["linux-cachy"], Sink(),
+                                             disk_usage=_usage(45)), "")
+
+    def test_a_leftover_build_tree_is_named_with_its_reclaim_command(self):
+        # The 20 GB nobody knew about: §7.5 keeps a tree after a run, and the
+        # NEXT attempt cleans it -- but when the next attempt is refused for
+        # space, the tree is the reason, so it has to be named.
+        self._mark_bootstrapped()
+        tree = self.md / "builddir" / "linux-cachy-6.12.108"
+        tree.mkdir(parents=True)
+        (tree / "vmlinux.o").write_bytes(b"x" * (2 * 1024 * 1024))   # a real tree, not a stamp
+        t = cli.build_preflight(self._cfg(), ["linux-cachy"], Sink(),
+                                disk_usage=_usage(17.6))
+        self.assertIn("linux-cachy-6.12.108", t)
+        self.assertIn("./xbps-src clean linux-cachy", t)
+
+    def test_a_refused_commit_exits_31_journals_it_and_freezes_nothing(self):
+        # End to end through cmd_commit with the REAL preflight injected.
+        self._mark_bootstrapped()
+        cfg = self._cfg(targets=("gamemode",))
+        store = grub_mod.KernelStateStore(cfg.kernel_state_path)
+        store.save(grub_mod.default_state(base_series="6.12",
+                                          ported_version="6.12.34_1"))
+        xb = FakeXbps(installed=["gamemode"], src_map={"gamemode": "gamemode"},
+                      inst_ver={"gamemode": "gamemode-1.0_1"},
+                      repo_ver={"gamemode": "gamemode-1.0_1"},
+                      local_updates=["gamemode"])
+        out = Sink()
+        run = lambda args, cwd=None: cp(0, "abc\n" if args[:2] == ["git", "rev-parse"] else "")
+        import functools
+        rc = cli.cmd_commit(xb, cfg, assume_yes=True, dry_run=False, out=out, run=run,
+                            preflight=functools.partial(cli.build_preflight,
+                                                        disk_usage=_usage(3.0)))
+        self.assertEqual(rc, cli.EXIT_PREFLIGHT)
+        self.assertEqual(xb.build_calls, [])                  # nothing compiled
+        self.assertIn("refusing to build", out.text())
+        runs = sorted((self.tmp / "log").iterdir())
+        j = json.loads((runs[-1] / "journal.json").read_text())
+        self.assertEqual(j["phase"], "failed")
+        self.assertEqual(j["failure"]["exit"], cli.EXIT_PREFLIGHT)
+        self.assertIn("GiB free", j["failure"]["reason"])
+        # A full disk is the environment's fault, not the kernel's.
+        self.assertNotIn(store.load()["state"], cli.FROZEN_STATES)
+
+
+class KernelBuildFailureTests(unittest.TestCase):
+    """G3 (§8.5): a failed linux-cachy build freezes the kernel path.
+
+    The gate table says "exit 40 → AWAIT_HUMAN_BUILD"; the code never recorded
+    it, so the state stayed READY and the next scheduled run would have started
+    the identical six-hour build again. And a persisted frozen state gated
+    nothing at all: synthesis overwrote it and the queue ignored it.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.vp = self.tmp / "vp"
+        dot = self.vp / "masterdir-x86_64" / "builddir" / "linux-6.12.35"
+        dot.mkdir(parents=True)
+        (dot / ".config").write_text("CONFIG_SCHED_BORE=y\n", encoding="utf-8")
+        (self.tmp / "fragment.config").write_text("CONFIG_SCHED_BORE=y\n",
+                                                  encoding="utf-8")
+        up = self.vp / "srcpkgs" / "linux6.12"
+        up.mkdir(parents=True)
+        (up / "template").write_text("pkgname=linux6.12\nversion=6.12.34\n"
+                                     "revision=1\n", encoding="utf-8")
+        self.grub_cfg = self.tmp / "grub.cfg"
+        self.grub_cfg.write_text(GRUB_CFG, encoding="utf-8")
+        self.layout = grub_mod.BootLayout(grub_mod.MODE_ONESHOT, "test",
+                                          grub_cfg=str(self.grub_cfg))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _cfg(self):
+        return cli.Config(void_packages=self.vp, targets=["linux-cachy"],
+                          state_dir=self.tmp / "state", log_root=self.tmp / "log",
+                          fragment_path=self.tmp / "fragment.config")
+
+    def _xb(self, **kw):
+        return FakeXbps(installed=["linux-cachy"],
+                        src_map={"linux-cachy": "linux-cachy"},
+                        inst_ver={"linux-cachy": "linux-cachy-6.12.35_1"},
+                        repo_ver={"linux-cachy": "linux-cachy-6.12.35_1"},
+                        local_updates=["linux-cachy"], **kw)
+
+    @staticmethod
+    def _run(args, cwd=None):
+        if args[:3] == ["git", "rev-parse", "HEAD"]:
+            return cp(0, "abc\n")
+        if args[0] == "uname":
+            return cp(0, "6.12.34_1\n")
+        return cp(0, "")
+
+    def _state(self, cfg):
+        return grub_mod.KernelStateStore(cfg.kernel_state_path).load()["state"]
+
+    def test_a_failed_kernel_build_freezes_and_names_the_ack(self):
+        cfg = self._cfg()
+        grub_mod.KernelStateStore(cfg.kernel_state_path).save(
+            grub_mod.default_state(base_series="6.12", ported_version="6.12.34_1"))
+        xb = self._xb(build_rc=1)
+        out = Sink()
+        rc = _commit(xb, cfg, assume_yes=True, dry_run=False, out=out, run=self._run)
+        self.assertEqual(rc, cli.EXIT_BUILD)
+        self.assertEqual(xb.build_calls, ["linux-cachy"])
+        self.assertEqual(self._state(cfg), "AWAIT_HUMAN_BUILD")
+        self.assertIn("--kernel-ack", out.text())
+        runs = sorted((self.tmp / "log").iterdir())
+        j = json.loads((runs[-1] / "journal.json").read_text())
+        self.assertEqual(j["failure"]["reason"], "xbps-src exited 1")
+
+    def test_an_environment_failure_carries_its_reason(self):
+        cfg = self._cfg()
+        grub_mod.KernelStateStore(cfg.kernel_state_path).save(
+            grub_mod.default_state(base_series="6.12", ported_version="6.12.34_1"))
+        xb = self._xb()
+        def boom(pkg, jobs, log_path=None):
+            raise OSError(28, "No space left on device")
+        xb.build = boom
+        out = Sink()
+        rc = _commit(xb, cfg, assume_yes=True, dry_run=False, out=out, run=self._run)
+        self.assertEqual(rc, cli.EXIT_BUILD)
+        runs = sorted((self.tmp / "log").iterdir())
+        j = json.loads((runs[-1] / "journal.json").read_text())
+        self.assertIn("No space left on device", j["failure"]["reason"])
+        self.assertIn("disk:", out.text())            # ENOSPC gets disk context
+
+    def test_a_persisted_frozen_state_withholds_the_kernel(self):
+        # Frozen means frozen: no re-synthesis, no build, state untouched, and
+        # the run still succeeds for userspace (here: an empty queue).
+        cfg = self._cfg()
+        st = grub_mod.default_state(base_series="6.12", ported_version="6.12.34_1")
+        st["state"] = "AWAIT_HUMAN_BUILD"
+        grub_mod.KernelStateStore(cfg.kernel_state_path).save(st)
+        xb = self._xb()
+        out = Sink()
+        rc = _commit(xb, cfg, assume_yes=True, dry_run=False, out=out, run=self._run)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertEqual(xb.build_calls, [])
+        self.assertEqual(xb.configure_calls, [])           # no G2 either
+        self.assertEqual(self._state(cfg), "AWAIT_HUMAN_BUILD")
+        self.assertIn("withheld", out.text())
+        self.assertIn("--kernel-ack", out.text())
+
+    def test_a_good_build_drops_its_debug_package(self):
+        cfg = self._cfg()
+        grub_mod.KernelStateStore(cfg.kernel_state_path).save(
+            grub_mod.default_state(base_series="6.12", ported_version="6.12.34_1"))
+        xb = self._xb(files_map={"linux-cachy": ["/boot/vmlinuz-6.12.35_1"]})
+        out = Sink()
+        rc = _commit(xb, cfg, assume_yes=True, dry_run=False, out=out,
+                     run=self._run, stage_layout=self.layout)
+        self.assertEqual(rc, cli.EXIT_OK, out.text())
+        self.assertEqual(xb.debug_drops, ["linux-cachy"])
+
+
+class LastRunVisibilityTests(unittest.TestCase):
+    """--status and --pending say when the newest run failed, and why.
+
+    The 3am failure was written to a runit log directory. At 11am --status
+    listed six healthy-looking tiers, --pending badged nothing, and the only
+    evidence was a laptop that had gone quiet. The journal knew (phase failed,
+    exit 40, linux-cachy); nothing read it for a human.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.logs = self.tmp / "log"
+        self.logs.mkdir()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _cfg(self):
+        return cli.Config(void_packages=Path("/vp"), targets=[],
+                          state_dir=self.tmp / "state", log_root=self.logs)
+
+    def _run_dir(self, run_id, phase, failure=None, log_events=(), pkgs=None):
+        d = self.logs / f"run-{run_id}"
+        d.mkdir()
+        j = {"schema": 1, "run_id": run_id, "phase": phase, "pkgs": pkgs or {},
+             "failure": failure, "deploy_bins": [], "order": []}
+        (d / "journal.json").write_text(json.dumps(j), encoding="utf-8")
+        (d / "journal.log").write_text(
+            "".join(json.dumps(e) + "\n" for e in log_events), encoding="utf-8")
+        return d
+
+    # the exact shape the box produced on 2026-09-06 (old code: no reason)
+    def _the_real_one(self):
+        return self._run_dir(
+            "20260906T033151Z", "failed",
+            failure={"exit": 40, "pkg": "linux-cachy"},
+            pkgs={"linux-cachy": {"status": "failed",
+                                  "log": "/home/boas/.local/state/cachy-void/log/"
+                                         "run-20260906T033151Z/build-linux-cachy.log"}},
+            log_events=[{"ts": "2026-09-06T03:31:51Z", "event": "start"},
+                        {"ts": "2026-09-06T09:38:10Z", "event": "failed",
+                         "exit": 40, "pkg": "linux-cachy"}])
+
+    def test_a_failed_run_without_a_reason_still_gets_a_summary(self):
+        self._the_real_one()
+        t = cli.last_run_summary(self._cfg(), now=1757166000)   # ~2h later
+        self.assertIn("FAILED", t)
+        self.assertIn("linux-cachy", t)
+        self.assertIn("exit 40", t)
+        self.assertIn("build-linux-cachy.log", t)
+        self.assertIn("2026-09-06 09:38", t)
+
+    def test_a_reason_is_shown_when_the_journal_has_one(self):
+        self._run_dir("20260906T033151Z", "failed",
+                      failure={"exit": 40, "pkg": "linux-cachy",
+                               "reason": "build environment failure: [Errno 28] "
+                                         "No space left on device"},
+                      log_events=[{"ts": "2026-09-06T09:38:10Z", "event": "failed"}])
+        t = cli.last_run_summary(self._cfg())
+        self.assertIn("No space left on device", t)
+
+    def test_a_preflight_refusal_reads_as_refused_not_failed(self):
+        self._run_dir("20260907T033000Z", "failed",
+                      failure={"exit": cli.EXIT_PREFLIGHT, "pkg": None,
+                               "reason": "only 17.6 GiB free on the hostdir filesystem"},
+                      log_events=[{"ts": "2026-09-07T03:30:01Z", "event": "failed"}])
+        t = cli.last_run_summary(self._cfg())
+        self.assertIn("REFUSED", t)
+        self.assertIn("17.6 GiB", t)
+
+    def test_a_later_good_run_clears_the_notice(self):
+        self._the_real_one()
+        self._run_dir("20260907T033000Z", "done")
+        self.assertEqual(cli.last_run_summary(self._cfg()), "")
+        self.assertIsNone(cli.last_run_failure(self._cfg()))
+
+    def test_no_runs_means_no_notice(self):
+        self.assertEqual(cli.last_run_summary(self._cfg()), "")
+
+    def test_status_prints_it_above_the_tiers(self):
+        self._the_real_one()
+        out = Sink()
+        cli.cmd_status(FakeXbps(), self._cfg(), out=out,
+                       run=lambda a, cwd=None: cp(0, ""), disk_usage=_usage(40))
+        t = out.text()
+        self.assertIn("last update run FAILED", t)
+        self.assertLess(t.index("last update run FAILED"), t.index("[1] System"))
+
+    def test_pending_raises_the_run_failed_flag_with_the_record(self):
+        self._the_real_one()
+        out = Sink()
+        cli.cmd_pending(self._cfg(), out=out, run=lambda a, cwd=None: cp(1, ""),
+                        disk_usage=_usage(40))
+        d = json.loads(out.text())
+        self.assertIn("run-failed", d["attention"])
+        self.assertEqual(d["last_run"]["pkg"], "linux-cachy")
+        self.assertEqual(d["last_run"]["exit"], 40)
+
+    def test_a_clean_run_raises_no_flag(self):
+        self._run_dir("20260907T033000Z", "done")
+        out = Sink()
+        cli.cmd_pending(self._cfg(), out=out, run=lambda a, cwd=None: cp(1, ""),
+                        disk_usage=_usage(40))
+        self.assertNotIn("run-failed", json.loads(out.text())["attention"])
+
+
+class DiskVisibilityTests(unittest.TestCase):
+    """--status reports the disk, because a full one broke everything silently.
+
+    At 100% the upstream probe said "xbps-install unavailable" -- which reads
+    as a network problem and sends the reader to the wrong fix -- and no tier
+    mentioned free space at all.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.vp = self.tmp / "vp"
+        (self.vp / "masterdir-x86_64" / "builddir").mkdir(parents=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _cfg(self, **kw):
+        return cli.Config(void_packages=self.vp, targets=[],
+                          state_dir=self.tmp / "state", log_root=self.tmp / "log", **kw)
+
+    @staticmethod
+    def _quiet(args, cwd=None):
+        return cp(0, "")
+
+    def test_the_disk_line_appears_in_maintenance(self):
+        out = Sink()
+        cli.cmd_status(FakeXbps(), self._cfg(), out=out, run=self._quiet,
+                       disk_usage=_usage(40, 63))
+        t = out.text()
+        self.assertIn("disk: 40.0 GiB free of 63 GiB", t)
+        self.assertNotIn("will refuse", t)
+
+    def test_below_the_floor_says_the_next_build_will_refuse(self):
+        out = Sink()
+        cli.cmd_status(FakeXbps(), self._cfg(), out=out, run=self._quiet,
+                       disk_usage=_usage(17.6, 63))
+        t = out.text()
+        self.assertIn("below the 30 GiB", t)
+        self.assertIn("will refuse", t)
+
+    def test_a_leftover_tree_is_listed_with_its_size_and_command(self):
+        tree = self.vp / "masterdir-x86_64" / "builddir" / "linux-cachy-6.12.108"
+        tree.mkdir()
+        (tree / "big").write_bytes(b"z" * (2 * 1024 * 1024))
+        out = Sink()
+        cli.cmd_status(FakeXbps(), self._cfg(), out=out, run=self._quiet,
+                       disk_usage=_usage(40, 63))
+        t = out.text()
+        self.assertIn("build tree left in masterdir: linux-cachy-6.12.108", t)
+        self.assertIn("./xbps-src clean linux-cachy", t)
+
+    def test_xbps_src_marker_dirs_are_not_build_trees(self):
+        # Live find: `.xbps-linux-cachy` under builddir is xbps-src bookkeeping,
+        # and the first version offered `./xbps-src clean .xbps-linux-cachy`.
+        marker = self.vp / "masterdir-x86_64" / "builddir" / ".xbps-linux-cachy"
+        marker.mkdir()
+        (marker / "stamp").write_bytes(b"x")
+        out = Sink()
+        cli.cmd_status(FakeXbps(), self._cfg(), out=out, run=self._quiet,
+                       disk_usage=_usage(40, 63))
+        self.assertNotIn("build tree left", out.text())
+
+    def test_an_unavailable_probe_on_a_full_disk_says_so(self):
+        def run(args, cwd=None):
+            if args[0] == "xbps-install":
+                return cp(1, "")
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_status(FakeXbps(), self._cfg(), out=out, run=run,
+                       disk_usage=_usage(0.0002, 63))
+        self.assertIn("the disk is full", out.text())
+
+    def test_an_unavailable_probe_with_room_blames_no_disk(self):
+        def run(args, cwd=None):
+            if args[0] == "xbps-install":
+                return cp(1, "")
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_status(FakeXbps(), self._cfg(), out=out, run=run,
+                       disk_usage=_usage(40, 63))
+        t = out.text()
+        self.assertIn("could not run", t)
+        self.assertNotIn("the disk is full", t)
+
+
+class CleanDebugPackagesTests(unittest.TestCase):
+    """--clean previews and drops the local repo's debug-symbol packages.
+
+    Two of them held 4.2 GB on the testbed: the kernel template hand-builds a
+    -dbg package into hostdir/binpkgs/debug, a repository the overlay never
+    installs from. User-owned files, so no privilege and no sudoers change.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.vp = self.tmp / "vp"
+        self.dbg = self.vp / "hostdir" / "binpkgs" / "debug"
+        self.dbg.mkdir(parents=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _cfg(self):
+        return cli.Config(void_packages=self.vp, targets=[],
+                          state_dir=self.tmp / "state", log_root=self.tmp / "log")
+
+    def _seed(self, name="linux-cachy-dbg-6.12.95_1.x86_64.xbps", mib=3):
+        f = self.dbg / name
+        f.write_bytes(b"d" * (mib * 1024 * 1024))
+        return f
+
+    @staticmethod
+    def _quiet(args, cwd=None):
+        return cp(0, "")
+
+    def test_preview_lists_them_and_removes_nothing(self):
+        f = self._seed()
+        out = Sink()
+        rc = cli.cmd_clean(self._cfg(), assume_yes=False, dry_run=True, out=out,
+                           run=self._quiet)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("debug-symbol packages to drop from the local repo: 1", out.text())
+        self.assertIn(f.name, out.text())
+        self.assertTrue(f.exists())
+
+    def test_yes_drops_them_and_reports_it(self):
+        f = self._seed()
+        out = Sink()
+        rc = cli.cmd_clean(self._cfg(), assume_yes=True, dry_run=False, out=out,
+                           run=self._quiet)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertFalse(f.exists())
+        self.assertIn("dropped 1 debug-symbol package", out.text())
+        self.assertFalse(self.dbg.exists())        # empty debug repo goes too
+
+    def test_the_index_is_cleaned_when_others_remain(self):
+        self._seed()
+        keep = self._seed("other-dbg-1.0_1.x86_64.xbps", mib=1)
+        calls = []
+        def run(args, cwd=None):
+            calls.append(list(args)); return cp(0, "")
+        # only the kernel's is in scope for a build drop; --clean takes all, so
+        # exercise the engine method directly for the partial case
+        from engine.xbps import Xbps
+        xb = Xbps(void_packages=self.vp,
+                  repos=[self.vp / "hostdir" / "binpkgs"], run=run)
+        freed = xb.drop_debug_pkgs("linux-cachy")
+        self.assertGreater(freed, 0)
+        self.assertTrue(keep.exists())
+        self.assertTrue(any(c[:2] == ["xbps-rindex", "-c"] for c in calls))
+
+    def test_nothing_to_clean_stays_true_without_any(self):
+        out = Sink()
+        cli.cmd_clean(self._cfg(), assume_yes=False, dry_run=True, out=out,
+                      run=self._quiet)
+        self.assertIn("nothing to clean", out.text())
 
 if __name__ == "__main__":
     unittest.main()

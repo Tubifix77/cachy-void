@@ -136,5 +136,32 @@ class AtomicIoTests(unittest.TestCase):
         self.assertEqual(sweep_tmp("/no/such/dir/anywhere"), 0)
 
 
+
+class FailureReasonTests(unittest.TestCase):
+    """fail() keeps the human sentence, not just an exit code.
+
+    The first real unattended failure left the window able to say only
+    "exit 40" about a six-hour build that died for disk space; the line that
+    knew why lived in a runit log nobody reads.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.j = Journal(self.tmp).start("20260906T033151Z", "c7851c1")
+
+    def test_reason_lands_in_both_files(self):
+        self.j.fail("linux-cachy", 40,
+                    reason="build environment failure: [Errno 28] No space left on device")
+        d = read_json(Path(self.tmp) / "journal.json")
+        self.assertEqual(d["failure"]["reason"],
+                         "build environment failure: [Errno 28] No space left on device")
+        last = (Path(self.tmp) / "journal.log").read_text().splitlines()[-1]
+        self.assertIn("No space left on device", last)
+
+    def test_no_reason_keeps_the_old_shape(self):
+        self.j.fail("wine", 40)
+        d = read_json(Path(self.tmp) / "journal.json")
+        self.assertEqual(d["failure"], {"pkg": "wine", "exit": 40})
+
 if __name__ == "__main__":
     unittest.main()

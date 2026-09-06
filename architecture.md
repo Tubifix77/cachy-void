@@ -616,6 +616,22 @@ exec snooze -H 5 -M 30 /usr/local/bin/cachy-void-update --yes
   invents a time — an unreadable `conf` omits it rather than reporting the
   shipped 05:30 default, because a box that changed the schedule is exactly the
   box that would be misled (the one in the incident had).
+- **`--status` also says when the newest run failed, and reports the disk.**
+  Above the tiers: `last update run FAILED <when>: <pkg>: <reason>` with the
+  build log's path (or `REFUSED before building` for a preflight exit 31),
+  read from the newest run's journal — witness-only, §7.6 — and replaced by
+  the next clean run. In tier [4]: free space on the build filesystem, a
+  warning when it is under `[build] min_free_gib`, any build tree left in
+  `masterdir*/builddir` with its size and reclaim command, and any debug-symbol
+  packages in the local repo. Tier [1]'s "unknown" names the disk when it is
+  full, because "xbps-install unavailable" reads as a network fault and sends
+  the reader to the wrong fix. All of it came from one morning (2026-09-06)
+  on which a six-hour unattended kernel build had died for disk space, and
+  `--status` showed six healthy-looking tiers.
+- **`--clean` also drops debug-symbol packages** from `hostdir/binpkgs/debug`
+  (previewed with sizes, like everything else it removes). User-owned files
+  in a repository nothing installs from, so no privilege and no widening of
+  the §4.1 grant — see §7.5 for why they exist at all.
 
 ### 4.10 User-facing actions (amendment)
 
@@ -691,8 +707,11 @@ minimal, non-package-naming set:
   is unreachable it falls back to the cache and says so (`fresh: false`).
   **Policy travels with the data:** the payload carries an `attention` array of
   stable tokens (`updates`, `kernel-port`, `kernel-staged`, `kernel-unhealthy`,
-  `kernel-frozen`, `bore-pin-missing`) so a front-end renders a decision rather
-  than re-deriving one from raw counts and drifting from what the window says.
+  `kernel-frozen`, `bore-pin-missing`, `run-failed`) so a front-end renders a
+  decision rather than re-deriving one from raw counts and drifting from what
+  the window says. `run-failed` (amber) means the *newest* run's journal ends
+  in `phase: failed`; the payload carries the record under `last_run`, and a
+  later successful run clears it without any acknowledgement.
   The vocabulary is **enumerated in code** as `ATTENTION_TOKENS`, and a test
   asserts it equals the tray's `REASON_TEXT`: a front-end filters tokens it does
   not recognise, so an unworded token is not a visible bug but a front-end that
@@ -913,6 +932,12 @@ for S in [*order, *second_pass]:
 - **Timeout** ⇒ SIGKILL the entire process group (builds spawn chroot children; killing the leader alone leaks them), then `./xbps-src clean S`, then exit 40 with build-failure semantics. If subsequent builds fail with chroot/mount errors after a timeout kill, the remedy is `./xbps-src zap && ./xbps-src binary-bootstrap` (§5).
 - No retries, no flag-weakening retries (§4.4 stands). A failed wrksrc is deliberately left on disk for forensics; the `clean` at the next attempt removes it.
 
+**The preflight was specified here from the start and implemented only on 2026-09-06**, after the first unattended kernel build ran six hours and died at the module-link stage with `ENOSPC` — leaving a 20 GB tree on a 63 GB disk that then sat at 100%. Two consequences are now normative alongside the two checks above. *The refusal is journaled* (`failure.exit = 31`, with the reason) so `--status` can report it, and it leaves the kernel state untouched: a full disk is the environment's fault, not the kernel's, and a retry once space exists needs no human acknowledgement. *The leftover tree is named wherever disk is reported*: "kept for forensics" is correct and was also 20 GB nobody knew about, so `--status` and the preflight refusal both list any `masterdir*/builddir/*` tree with its size and the `./xbps-src clean <srcpkg>` that reclaims it. The floor is `[build] min_free_gib` (default 30); the number is not arbitrary — a kernel build tree alone reached 20 GB before the disk ran out, and packaging wants room on top.
+
+**G3 failures freeze the kernel path (§8.5 table), and a frozen path is enforced.** Both were normative and neither was implemented: a failed `linux-cachy` build left the state `READY`, and a persisted `AWAIT_*` state gated nothing — the next run re-synthesised (overwriting the state) and rebuilt, which is how a box could fail the identical six-hour build every night while its "frozen" kernel path sat in a file. Now: exit 40 on the kernel records `AWAIT_HUMAN_BUILD` and names `--kernel-ack`; and a frozen state skips synthesis *and* withholds `linux-cachy` from the queue (build and deploy alike), saying so, while userspace proceeds — the §8 preamble made literal.
+
+**Debug-symbol packages are dropped after a successful build.** Void's kernel templates set `nodebug=yes` and then generate `<pkg>-dbg` by hand (`repository=debug`, `vmove usr/lib/debug`): 2.1 GB per kernel into `hostdir/binpkgs/debug`, a repository the overlay never configures as an install source. No `XBPS_DEBUG_PKGS` knob reaches it — that variable governs the generic mechanism the template already switched off — and stripping the subpackage out of the regenerated template would take two coupled edits to upstream's text (the package *and* the extraction step that fills it), exactly the fragility §8.4 regeneration exists to avoid. So the engine removes `<srcpkg>*-dbg-*.xbps` from the debug repo right after the build that made it and tidies that repo's index; `--clean` sweeps any that already exist (user-owned files, no privilege).
+
 ### 7.6 State journal — witness, never authority
 
 `~/.local/state/cachy-void/journal.json`:
@@ -924,8 +949,10 @@ for S in [*order, *second_pass]:
   "pkgs": { "mesa": { "status": "pending|building|built|failed",
                       "log": "build-mesa.log", "started": "…", "ended": "…" } },
   "deploy_bins": ["mesa-dri", "…"],
-  "failure": { "pkg": "wine", "exit": 40 } }
+  "failure": { "pkg": "wine", "exit": 40, "reason": "xbps-src exited 1" } }
 ```
+
+`failure.reason` (optional) is the human sentence — `build environment failure: [Errno 28] No space left on device`, `xbps-src exited 1`, or the preflight refusal's first line. It was missing for the first real unattended failure, which left the window able to say only "exit 40" about a six-hour build; the line that knew why lived in a runit log directory nobody reads.
 
 Writes are atomic: temp file in the same directory → `fsync` → `os.replace`. An append-only `journal.log` (JSON-lines) accompanies each snapshot as the human audit trail, written **ahead** of the snapshot commit (WAL discipline: after a crash, the log's final line names the transition that may not have reached `journal.json`). Both files tolerate torn final writes; neither is ever read by control flow. Journals archive with the run's log directory (keep 20, §4).
 

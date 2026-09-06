@@ -228,6 +228,52 @@ class Xbps:
         """Purge a template's stale work directory (idempotent, §7.5)."""
         self._xbps_src("clean", srcpkg, check=False)
 
+    def drop_debug_pkgs(self, srcpkg: str) -> int:
+        """Remove the ``-dbg`` binpkgs a build of ``srcpkg`` produced; bytes freed.
+
+        Void's kernel templates set ``nodebug=yes`` and then generate a
+        ``<pkg>-dbg`` package BY HAND (``repository=debug``, ``vmove
+        usr/lib/debug``): 2.1 GB of debugging symbols per kernel on the testbed,
+        landing in a repository (``binpkgs/debug``) the overlay never configures
+        as an install source. No ``XBPS_DEBUG_PKGS`` knob reaches it -- that
+        variable governs the generic mechanism the template has already
+        switched off -- and stripping the subpackage out of the regenerated
+        template would take two coupled edits to upstream's text (the package
+        AND the extraction step that fills it), which is the fragility §8.4
+        regeneration exists to avoid. So the artifact is dropped after the
+        build instead: same result, no divergence from upstream's template.
+
+        Only files named ``<srcpkg>*-dbg-*.xbps`` are touched. The debug repo's
+        index is cleaned of the missing entries, or removed with the directory
+        once nothing is left. Never raises: a cleanup must not turn a good build
+        into a failed one.
+        """
+        if not self.repos:
+            return 0
+        debug_dir = Path(self.repos[0]) / "debug"
+        if not debug_dir.is_dir():
+            return 0
+        freed = 0
+        for f in sorted(debug_dir.glob(f"{srcpkg}*-dbg-*.xbps")):
+            try:
+                size = f.stat().st_size
+                f.unlink()
+                freed += size
+            except OSError:
+                continue
+        try:
+            if any(debug_dir.glob("*.xbps")):
+                self._capture(["xbps-rindex", "-c", str(debug_dir)], check=False)
+            else:
+                for idx in debug_dir.glob("*-repodata"):
+                    idx.unlink()
+                for stage in debug_dir.glob("*-stagedata"):
+                    stage.unlink()
+                debug_dir.rmdir()
+        except OSError:
+            pass
+        return freed
+
     def configure(self, srcpkg: str) -> int:
         """Run template phases through configure (fetch/extract/patch/configure).
 

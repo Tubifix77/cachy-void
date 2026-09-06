@@ -91,10 +91,12 @@ REASON_TEXT = {
     "kernel-unhealthy": "a kernel candidate did not pass its health check",
     "kernel-frozen": "kernel updates are paused pending a look — see the updater",
     "bore-pin-missing": "kernel updates are paused — the BORE patch needs approval",
+    "run-failed": "the last update run failed — open the updater to see why",
 }
 # Amber rather than green: these two mean "something needs you", not "there is
 # something new". Everything else is ordinary news and gets the accent.
-REASON_IS_WARNING = {"kernel-unhealthy", "kernel-frozen", "bore-pin-missing"}
+REASON_IS_WARNING = {"kernel-unhealthy", "kernel-frozen", "bore-pin-missing",
+                     "run-failed"}
 # kernel-port is deliberately NOT a warning: a kernel you could build is
 # news, not a fault, and amber for news is how an indicator gets ignored.
 

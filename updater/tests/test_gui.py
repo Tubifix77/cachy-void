@@ -441,6 +441,63 @@ class UpdateConfirmTests(unittest.TestCase):
                        "    (status unavailable)\n"):
             self.assertIn("Update kernel", self._confirm(status))
 
+
+@unittest.skipUnless(HAVE_QT, "PyQt5 not installed")
+class FailedRunCardTests(unittest.TestCase):
+    """The window says when the last run failed, and why.
+
+    Amber, like the pin banner: a failed run needs a person. A transcription of
+    --status, like the kernel card: the CLI read the journal and decided what
+    to say, so the window must not have an opinion of its own.
+    """
+
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        loader = importlib.machinery.SourceFileLoader("cachygui", str(GUI_PATH))
+        spec = importlib.util.spec_from_loader("cachygui", loader)
+        cls.mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.mod)
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.mod.Updater._run = lambda s, a, t, **kw: None
+        self.w = self.mod.Updater()
+        self.w.show()
+
+    def tearDown(self):
+        self.w.deleteLater()
+
+    FAILED = ("Cachy-Void — status\n"
+              "==============================================\n"
+              "last update run FAILED 2 h ago (2026-09-06 09:38:10 UTC):\n"
+              "  linux-cachy: build environment failure: [Errno 28] No space left on device\n"
+              "  log: /home/boas/.local/state/cachy-void/log/run-20260906T033151Z/build-linux-cachy.log\n"
+              "  (a later successful run replaces this notice)\n"
+              "\n"
+              "[1] System (upstream Void)\n"
+              "    0 upstream package(s) updatable — up to date\n")
+
+    def test_hidden_when_nothing_failed(self):
+        self.w.status.setPlainText("[1] System (upstream Void)\n    0 upstream\n")
+        self.w._update_pin_banner()
+        self.assertFalse(self.w.run_notice.isVisible())
+
+    def test_shown_with_the_package_and_the_reason(self):
+        self.w.status.setPlainText(self.FAILED)
+        self.w._update_pin_banner()
+        self.assertTrue(self.w.run_notice.isVisible())
+        t = self.w.run_label.text()
+        self.assertTrue(t.startswith("Last update run FAILED"), t)
+        self.assertIn("No space left on device", t)
+        self.assertIn("build-linux-cachy.log", t)
+        # the housekeeping note is for the terminal, not the card
+        self.assertNotIn("later successful run", t)
+
+    def test_it_is_the_amber_kind_of_card(self):
+        self.assertEqual(self.w.run_notice.objectName(), "notice")
+
 if __name__ == "__main__":
     unittest.main()
 
