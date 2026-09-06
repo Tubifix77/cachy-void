@@ -1803,11 +1803,21 @@ def disk_lines(config: Config, disk_usage=shutil.disk_usage) -> list:
         return lines
     free, total = du.free / GIB, du.total / GIB
     pct = (100 * du.used / du.total) if du.total else 0
-    lines.append(f"disk: {free:.1f} GiB free of {total:.0f} GiB on the build "
-                 f"filesystem ({pct:.0f}% used)")
-    if free < config.min_free_gib:
-        lines.append(f"  below the {config.min_free_gib} GiB a build needs "
-                     "([build] min_free_gib) — the next build will refuse (§7.5)")
+    relocated = config.masterdir is not None
+    label = "the void-packages filesystem" if relocated else "the build filesystem"
+    lines.append(f"disk: {free:.1f} GiB free of {total:.0f} GiB on {label} "
+                 f"({pct:.0f}% used)")
+    # Only warn about the floor that actually applies here. Once the build
+    # space has been moved, this filesystem holds the hostdir -- packages,
+    # sources and ccache -- and is judged by the smaller floor. Warning about
+    # the kernel floor here said "the next build will refuse" on a box where
+    # the build would have been fine, which is the exact failure mode this
+    # project keeps meeting: true-sounding, wrong for the run in front of you.
+    floor = config.min_free_userspace_gib if relocated else config.min_free_gib
+    key = "min_free_userspace_gib" if relocated else "min_free_gib"
+    if free < floor:
+        lines.append(f"  below the {floor} GiB needed here "
+                     f"([build] {key}) — the next build will refuse (§7.5)")
     for tree, size in _leftover_trees(config):
         lines.append(f"build tree left in masterdir: {tree.name} — {size / GIB:.1f} GiB "
                      "(the next build cleans it; reclaim now: "
@@ -1958,25 +1968,36 @@ def build_preflight(config: Config, build_list, out,
             f"./xbps-src{_m} binary-bootstrap")
     kernel_queued = KERNEL_TARGET in build_list
     need = config.min_free_gib if kernel_queued else config.min_free_userspace_gib
-    checked = {}
     hostdir = Path(config.void_packages) / "hostdir"
-    for label, path in (("hostdir", hostdir),
-                        ("masterdir", mds[0] if mds else config.build_space)):
+    master = mds[0] if mds else config.build_space
+
+    # The two directories have genuinely different appetites, and giving them
+    # the same floor is wrong in the expensive direction. The masterdir holds
+    # the BUILD TREE -- that is where 20 GB went and what min_free_gib is sized
+    # for. The hostdir holds the finished packages, the source tarballs and
+    # ccache: a kernel run adds a few hundred MB plus the transient 2.1 GB of
+    # debug symbols, nowhere near 20 GB.
+    #
+    # Found the moment the build space was first moved for real: the masterdir
+    # had 257 GiB free on another disk and the run was still refused, because
+    # the hostdir's 20.6 GiB failed a floor meant for a build tree that was no
+    # longer even on that filesystem.
+    for label, path, floor, why in (
+            ("masterdir (the build tree)", master, need,
+             " — a kernel build tree alone reached 20 GB before the testbed ran "
+             "out of disk" if kernel_queued else ""),
+            ("hostdir (packages, sources, ccache)", hostdir,
+             config.min_free_userspace_gib, "")):
         free = _free_gib(path, disk_usage)
-        if free is not None:
-            checked[label] = free
-    low = {k: v for k, v in checked.items() if v < need}
-    if low:
-        worst = min(low.values())
-        where = " and ".join(sorted(low))
-        key = "min_free_gib" if kernel_queued else "min_free_userspace_gib"
+        if free is None or free >= floor:
+            continue
+        key = ("min_free_gib" if (floor == config.min_free_gib and kernel_queued)
+               else "min_free_userspace_gib")
         what = ("a kernel build" if kernel_queued else
                 "building " + ", ".join(build_list[:3]))
         problems.append(
-            f"only {worst:.1f} GiB free on the {where} filesystem; {what} needs "
-            f"at least {need} GiB ([build] {key})"
-            + (" — a kernel build tree alone reached 20 GB before the testbed "
-               "ran out of disk" if kernel_queued else ""))
+            f"only {free:.1f} GiB free on the {label} filesystem ({path}); "
+            f"{what} needs at least {floor} GiB ([build] {key})" + why)
         for tree, size in _leftover_trees(config):
             problems.append(
                 f"  a build tree from a previous run holds {size / GIB:.1f} GiB "

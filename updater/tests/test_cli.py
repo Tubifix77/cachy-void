@@ -2574,6 +2574,81 @@ class BuildSpaceTests(unittest.TestCase):
         self.assertIn("not initialized", t)
         self.assertIn(f"-m {self.space}", t)   # the flag the user must pass
 
+    def test_a_roomy_relocated_masterdir_is_not_blocked_by_a_small_hostdir(self):
+        """The bug the first real relocation exposed.
+
+        The masterdir had 257 GiB free on another disk and the run was STILL
+        refused, because the hostdir's 20.6 GiB failed a floor sized for a
+        build tree that was no longer on that filesystem. The two directories
+        do different jobs: the masterdir holds the ~20 GB build tree, the
+        hostdir holds finished packages, tarballs and ccache.
+        """
+        (self.space / ".xbps_chroot_init").write_text("", encoding="utf-8")
+        (self.vp / "hostdir").mkdir()
+        cfg = self._cfg(self.space)
+
+        def usage(path):
+            import collections
+            U = collections.namedtuple("usage", "total used free")
+            roomy = str(path).startswith(str(self.space))
+            gib = 257.0 if roomy else 20.6          # external vs root
+            total = int(300 * cli.GIB)
+            return U(total, total - int(gib * cli.GIB), int(gib * cli.GIB))
+
+        self.assertEqual(cli.build_preflight(cfg, ["linux-cachy"], Sink(),
+                                             disk_usage=usage), "")
+
+    def test_a_genuinely_full_hostdir_is_still_refused(self):
+        # The smaller floor is a floor, not an exemption.
+        (self.space / ".xbps_chroot_init").write_text("", encoding="utf-8")
+        (self.vp / "hostdir").mkdir()
+        cfg = self._cfg(self.space)
+
+        def usage(path):
+            import collections
+            U = collections.namedtuple("usage", "total used free")
+            roomy = str(path).startswith(str(self.space))
+            gib = 257.0 if roomy else 1.2           # hostdir nearly full
+            total = int(300 * cli.GIB)
+            return U(total, total - int(gib * cli.GIB), int(gib * cli.GIB))
+
+        t = cli.build_preflight(cfg, ["linux-cachy"], Sink(), disk_usage=usage)
+        self.assertIn("hostdir", t)
+        self.assertIn("1.2 GiB", t)
+
+    def test_a_full_relocated_masterdir_is_refused_by_the_kernel_floor(self):
+        (self.space / ".xbps_chroot_init").write_text("", encoding="utf-8")
+        (self.vp / "hostdir").mkdir()
+        cfg = self._cfg(self.space)
+
+        def usage(path):
+            import collections
+            U = collections.namedtuple("usage", "total used free")
+            roomy = not str(path).startswith(str(self.space))
+            gib = 200.0 if roomy else 4.0           # build space nearly full
+            total = int(300 * cli.GIB)
+            return U(total, total - int(gib * cli.GIB), int(gib * cli.GIB))
+
+        t = cli.build_preflight(cfg, ["linux-cachy"], Sink(), disk_usage=usage)
+        self.assertIn("masterdir", t)
+        self.assertIn("30 GiB", t)
+
+    def test_the_disk_line_stops_crying_wolf_once_relocated(self):
+        # It used to warn "the next build will refuse" about the kernel floor
+        # on a filesystem that no longer hosts the build.
+        (self.vp / "hostdir").mkdir()
+        cfg = self._cfg(self.space)
+        lines = cli.disk_lines(cfg, _usage(20.6, 62))
+        joined = "\n".join(lines)
+        self.assertIn("void-packages filesystem", joined)
+        self.assertNotIn("will refuse", joined)
+
+    def test_the_disk_line_still_warns_when_the_build_is_local(self):
+        cfg = self._cfg()                       # not relocated
+        joined = "\n".join(cli.disk_lines(cfg, _usage(20.6, 62)))
+        self.assertIn("build filesystem", joined)
+        self.assertIn("will refuse", joined)
+
     def test_xbps_passes_the_masterdir_flag(self):
         calls = []
         def run(args, cwd=None):
