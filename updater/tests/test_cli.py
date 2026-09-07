@@ -2789,7 +2789,11 @@ class StagedCandidateReadoutTests(unittest.TestCase):
                           grub={"mode": grub_mod.MODE_EXTERNAL})
         t = self._report(cfg)
         self.assertIn("did NOT pass", t)
-        self.assertIn("userspace updates continue", t)
+        # The two frozen branches used to phrase this reassurance differently
+        # ("userspace updates continue" here, "Userspace updates are
+        # unaffected" for a candidateless freeze). Same fact, two voices, from
+        # two copies of the explanation — now one shared function, one phrase.
+        self.assertIn("Userspace updates are unaffected", t)
 
     def test_tracking_state_says_nothing_about_candidates(self):
         # No candidate in flight => no noise. The readout must not invent state.

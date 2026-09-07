@@ -348,27 +348,11 @@ def _kernel_report(config: Config, xbps, out, run=_run) -> None:
             # how a frozen kernel path stayed INVISIBLE on real hardware. The
             # freeze is the thing worth reporting, and it can outlive (or never
             # have had) a candidate at all.
-            if cand:
-                out(f"kernel candidate: {cand} did NOT pass ({name}) — the kernel "
-                    "path is frozen until you acknowledge it; userspace updates "
-                    "continue")
-                out("  resume kernel updates with:  cachy-void-update --kernel-ack")
-            elif name == "AWAIT_HUMAN_BUILD":
-                # A build failure legitimately has no candidate -- the build
-                # never produced one. The generic candidateless wording below
-                # blames "a health blip", which sent the reader looking for a
-                # phantom health problem the first time this fired for real
-                # (2026-09-07, a kernel build that died for disk space).
-                out(f"kernel path FROZEN ({name}) — the last linux-cachy BUILD "
-                    "failed, so no kernel was produced (§8.5 G3). Nothing is "
-                    "wrong with the running kernel and userspace updates "
-                    "continue; the last-run notice above says why it failed.")
-                out("  fix the cause, then resume with:  cachy-void-update --kernel-ack")
-            else:
-                out(f"kernel path FROZEN ({name}) with no candidate recorded — "
-                    "most likely a health blip was logged as a kernel failure. "
-                    "Userspace updates are unaffected.")
-                out("  resume kernel updates with:  cachy-void-update --kernel-ack")
+            out(f"kernel path FROZEN ({name})")
+            for line in frozen_explanation(name, cand or ""):
+                out(f"      {line}")
+            out("      Userspace updates are unaffected.")
+            out("      resume kernel updates with:  cachy-void-update --kernel-ack")
 
         # Recovery visibility: if the running kernel is not the recorded
         # known-good one, say that going back is possible. The front-end keys
@@ -1341,13 +1325,8 @@ def cmd_kernel_ack(config: Config, out=print, *, assume_yes: bool = False,
 
     cand = (state.get("candidate") or {}).get("kver")
     out(f"kernel state: {name}")
-    if cand:
-        out(f"  candidate in flight: {cand}")
-    else:
-        # The exact shape of the watchdog bug: a freeze with nothing frozen.
-        out("  no candidate is recorded, so this freeze is not about a kernel "
-            "that failed — most likely a health blip was recorded as one by a "
-            "watchdog older than this version.")
+    for line in frozen_explanation(name, cand or ""):
+        out(f"  {line}")
     health = state.get("health") or {}
     if health:
         out(f"  last health check: ok={health.get('ok')} "
@@ -2019,6 +1998,34 @@ def build_preflight(config: Config, build_list, out,
         return ""
     return ("refusing to build (§7.5 preflight — nothing has been changed):\n  "
             + "\n  ".join(problems))
+
+
+def frozen_explanation(state_name: str, candidate: str = "") -> list:
+    """Why the kernel path is frozen, in the reader's terms. One implementation.
+
+    There were two, and they disagreed. `--status` and `--kernel-ack` both
+    describe the same state file, and the candidateless branch of each said
+    "most likely a health blip" — which is right for a watchdog mislog and
+    flatly wrong for AWAIT_HUMAN_BUILD, where a build genuinely failed and
+    produced no candidate. On 2026-09-07 that sent the reader looking for a
+    phantom health problem instead of the build log named two lines above.
+    Fixing it in one place and not the other is how a fact ends up with two
+    voices, so now there is one.
+    """
+    if candidate:
+        return [f"{candidate} did NOT pass — the kernel path stays frozen until "
+                "you acknowledge it."]
+    if state_name == "AWAIT_HUMAN_BUILD":
+        return ["the last linux-cachy BUILD failed, so no kernel was produced "
+                "(§8.5 G3). Nothing is wrong with the running kernel.",
+                "the last-run notice in --status says why the build failed."]
+    if state_name in ("AWAIT_HUMAN_TEMPLATE", "AWAIT_HUMAN_PATCH",
+                      "AWAIT_HUMAN_SERIES", "HALT_HASH_MISMATCH"):
+        return [f"the kernel path stopped at a human gate ({state_name}) before "
+                "any kernel was built — nothing was installed or staged."]
+    return ["no candidate is recorded, so this freeze is not about a kernel "
+            "that failed — most likely a health blip was recorded as one by a "
+            "watchdog older than this version."]
 
 
 def _frozen_kernel_state(config: Config) -> str:
