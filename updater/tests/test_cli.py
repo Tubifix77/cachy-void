@@ -2649,15 +2649,70 @@ class BuildSpaceTests(unittest.TestCase):
         self.assertIn("build filesystem", joined)
         self.assertIn("will refuse", joined)
 
-    def test_xbps_passes_the_masterdir_flag(self):
+    def test_every_xbps_src_call_carries_the_masterdir_flag(self):
+        """Not just the convenient one.
+
+        The first version of this test asserted on clean(). It passed while
+        build() -- which assembles a longer command for -jN and had its own
+        argv -- silently used the DEFAULT masterdir. So a relocated build space
+        satisfied `configure` (and therefore the G2 gate) and then compiled
+        into the root partition anyway, filling it to 100% overnight. Every
+        method that shells out to xbps-src is checked here for that reason.
+        """
+        from engine.xbps import Xbps
+        methods = (
+            ("build", lambda x: x.build("linux-cachy", 4)),
+            ("clean", lambda x: x.clean("linux-cachy")),
+            ("configure", lambda x: x.configure("linux-cachy")),
+            ("show_local_updates", lambda x: x.show_local_updates()),
+            ("show_build_deps", lambda x: x.show_build_deps("linux-cachy")),
+            ("sort_dependencies", lambda x: x.sort_dependencies(["linux-cachy"])),
+        )
+        for name, call in methods:
+            calls = []
+
+            def run(args, cwd=None):
+                calls.append(list(args))
+                return cp(0, "")
+
+            xb = Xbps(void_packages=self.vp, repos=[], run=run,
+                      masterdir=self.space)
+            call(xb)
+            src = [c for c in calls if c and c[0] == "./xbps-src"]
+            self.assertTrue(src, f"{name} ran no xbps-src call")
+            for argv in src:
+                self.assertEqual(
+                    argv[1:3], ["-m", str(self.space)],
+                    f"{name} lost the masterdir flag: {argv}")
+
+    def test_the_flag_is_absent_for_every_method_when_unset(self):
+        from engine.xbps import Xbps
+        for call in (lambda x: x.build("linux-cachy", 4),
+                     lambda x: x.clean("linux-cachy"),
+                     lambda x: x.configure("linux-cachy")):
+            calls = []
+
+            def run(args, cwd=None):
+                calls.append(list(args))
+                return cp(0, "")
+
+            call(Xbps(void_packages=self.vp, repos=[], run=run))
+            for argv in calls:
+                self.assertNotIn("-m", argv)
+
+    def test_build_keeps_its_jobs_flag_alongside_the_masterdir(self):
+        from engine.xbps import Xbps
         calls = []
+
         def run(args, cwd=None):
             calls.append(list(args))
             return cp(0, "")
-        from engine.xbps import Xbps
-        xb = Xbps(void_packages=self.vp, repos=[], run=run, masterdir=self.space)
-        xb.clean("linux-cachy")
-        self.assertEqual(calls[0][:3], ["./xbps-src", "-m", str(self.space)])
+
+        Xbps(void_packages=self.vp, repos=[], run=run,
+             masterdir=self.space).build("linux-cachy", 4)
+        self.assertEqual(calls[0],
+                         ["./xbps-src", "-m", str(self.space), "-j4",
+                          "pkg", "linux-cachy"])
 
     def test_xbps_omits_the_flag_when_unset(self):
         calls = []
@@ -3182,6 +3237,44 @@ class KernelAckTests(unittest.TestCase):
         rc = cli.main(["--kernel-ack", "--yes"], config=cfg, out=out)
         self.assertEqual(rc, cli.EXIT_OK)
         self.assertEqual(self._state(cfg)["state"], "TRACKING")
+
+
+class BuildFailureWordingTests(unittest.TestCase):
+    """A frozen path must say WHICH kind of freeze it is.
+
+    AWAIT_HUMAN_BUILD legitimately has no candidate -- the build never produced
+    one -- so it fell through to the candidateless wording, which blames "a
+    health blip". The first time this fired for real (2026-09-07, a kernel
+    build that died for disk space) it pointed the reader at a phantom health
+    problem instead of the build log named two lines above.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _report(self, state):
+        cfg = cli.Config(void_packages=Path("/vp"), targets=[],
+                         state_dir=self.tmp, log_root=self.tmp / "log")
+        st = grub_mod.default_state(base_series="6.12", ported_version="6.12.103_1")
+        st["state"] = state
+        grub_mod.KernelStateStore(cfg.kernel_state_path).save(st)
+        out = Sink()
+        cli._kernel_report(cfg, FakeXbps(), out, run=lambda a, cwd=None: cp(0, ""))
+        return out.text()
+
+    def test_a_build_failure_says_the_build_failed(self):
+        t = self._report("AWAIT_HUMAN_BUILD")
+        self.assertIn("BUILD", t)
+        self.assertNotIn("health blip", t)
+        self.assertIn("--kernel-ack", t)
+
+    def test_other_candidateless_freezes_keep_the_blip_hint(self):
+        t = self._report("CANDIDATE_UNHEALTHY")
+        self.assertIn("health blip", t)
+        self.assertIn("--kernel-ack", t)
 
 
 class FrozenStateVisibilityTests(unittest.TestCase):

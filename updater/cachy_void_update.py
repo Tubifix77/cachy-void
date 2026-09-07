@@ -352,11 +352,23 @@ def _kernel_report(config: Config, xbps, out, run=_run) -> None:
                 out(f"kernel candidate: {cand} did NOT pass ({name}) — the kernel "
                     "path is frozen until you acknowledge it; userspace updates "
                     "continue")
+                out("  resume kernel updates with:  cachy-void-update --kernel-ack")
+            elif name == "AWAIT_HUMAN_BUILD":
+                # A build failure legitimately has no candidate -- the build
+                # never produced one. The generic candidateless wording below
+                # blames "a health blip", which sent the reader looking for a
+                # phantom health problem the first time this fired for real
+                # (2026-09-07, a kernel build that died for disk space).
+                out(f"kernel path FROZEN ({name}) — the last linux-cachy BUILD "
+                    "failed, so no kernel was produced (§8.5 G3). Nothing is "
+                    "wrong with the running kernel and userspace updates "
+                    "continue; the last-run notice above says why it failed.")
+                out("  fix the cause, then resume with:  cachy-void-update --kernel-ack")
             else:
                 out(f"kernel path FROZEN ({name}) with no candidate recorded — "
                     "most likely a health blip was logged as a kernel failure. "
                     "Userspace updates are unaffected.")
-            out("  resume kernel updates with:  cachy-void-update --kernel-ack")
+                out("  resume kernel updates with:  cachy-void-update --kernel-ack")
 
         # Recovery visibility: if the running kernel is not the recorded
         # known-good one, say that going back is possible. The front-end keys

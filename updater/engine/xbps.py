@@ -132,7 +132,19 @@ class Xbps:
             raise XbpsError(f"command failed ({cp.returncode}): {' '.join(args)}\n{cp.stderr}")
         return cp
 
-    def _xbps_src(self, *args: str, check: bool = True) -> "subprocess.CompletedProcess":
+    def xbps_src_argv(self, *args: str) -> list:
+        """The argv for an xbps-src invocation, with the global flags applied.
+
+        EVERY call must be built here. This is not tidiness: ``build()``
+        constructs a longer command (it needs -jN) and used to assemble its own
+        argv, so when ``-m`` was added to the shared helper the one method that
+        actually compiles never received it. The result was a relocated build
+        space that worked for `configure` and `clean` -- so the G2 gate passed
+        -- while the build itself went to the default masterdir and filled the
+        root partition to 100% overnight. The unit test missed it too, because
+        it asserted on ``clean()``, the convenient method rather than the
+        important one.
+        """
         argv = ["./xbps-src"]
         if self.masterdir:
             # xbps-src's own flag (XBPS_ARG_MASTERDIR), so the setting travels
@@ -140,8 +152,11 @@ class Xbps:
             # void-packages/etc/conf -- which deploy.sh regenerates and would
             # silently clobber on the next run.
             argv += ["-m", str(self.masterdir)]
-        argv += list(args)
-        return self._capture(argv, cwd=str(self.void_packages), check=check)
+        return argv + list(args)
+
+    def _xbps_src(self, *args: str, check: bool = True) -> "subprocess.CompletedProcess":
+        return self._capture(self.xbps_src_argv(*args),
+                             cwd=str(self.void_packages), check=check)
 
     # -- name-domain mapping (§7.1) -------------------------------------
     def srcpkg_of(self, binpkg: str) -> Optional[str]:
@@ -241,7 +256,8 @@ class Xbps:
         Combined output is written to ``log_path`` when given, so the caller can
         emit the tail on failure (§7.5).
         """
-        cp = self.run(["./xbps-src", f"-j{jobs}", "pkg", srcpkg], str(self.void_packages))
+        cp = self.run(self.xbps_src_argv(f"-j{jobs}", "pkg", srcpkg),
+                      str(self.void_packages))
         if log_path is not None:
             with open(log_path, "w", encoding="utf-8") as fh:
                 fh.write(cp.stdout or "")
