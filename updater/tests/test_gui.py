@@ -549,6 +549,111 @@ class BuildSpaceButtonTests(unittest.TestCase):
         self.assertIn("20 GB", tip)
         self.assertIn("30 GB", tip)
 
+
+@unittest.skipUnless(HAVE_QT, "PyQt5 not installed")
+class MachineFactsStripTests(unittest.TestCase):
+    """Two standing facts get to BE interface, not text in a report.
+
+    The owner's words (2026-09-09), about the nightly schedule and the kernel
+    build space: "that is not evident from the updater's screen ... it is like
+    a completely hidden function". Both were only ever lines inside --status's
+    scrolling output -- and that pane follows its tail, so the schedule block
+    at the very top scrolled out of view as soon as the report finished.
+
+    They are configuration, not pending work, so they live in a fixed strip
+    below the buttons: it never scrolls, it sits beside the button that changes
+    the build space, and it stays out of the way of the headline, which owns
+    the one question the window exists to answer.
+
+    Transcribed from --status, never re-derived.
+    """
+
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        loader = importlib.machinery.SourceFileLoader("cachygui", str(GUI_PATH))
+        spec = importlib.util.spec_from_loader("cachygui", loader)
+        cls.mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.mod)
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.mod.Updater._run = lambda s, a, t, **kw: None
+        self.w = self.mod.Updater()
+        self.w.show()
+
+    def tearDown(self):
+        self.w.deleteLater()
+
+    def _facts(self, text):
+        self.w.status.setPlainText(text)
+        self.w._update_pin_banner()
+        return self.w.fact_sched, self.w.fact_space
+
+    ON = ("scheduled updates: ON — this box runs --sync then --commit --yes by "
+          "itself at 01:00 daily,\n"
+          "  kernel INCLUDED (the same work as the \"Update kernel\" button)\n"
+          "    kernel build space: /mnt/ExternLinux/cachy-build  [configured]  "
+          "256.9 GiB free\n")
+
+    def test_it_names_the_time_and_that_the_kernel_is_included(self):
+        sched, _ = self._facts(self.ON)
+        self.assertIn("01:00", sched.text())
+        self.assertIn("incl. kernel", sched.text())
+
+    def test_a_nightly_kernel_build_earns_the_accent(self):
+        # The one fact an owner must not discover by hearing the fans.
+        sched, _ = self._facts(self.ON)
+        self.assertEqual(sched.objectName(), "machineFactOn")
+
+    def test_it_names_the_relocated_build_space_and_its_free_room(self):
+        _, space = self._facts(self.ON)
+        self.assertIn("/mnt/ExternLinux/cachy-build", space.text())
+        self.assertIn("256.9 GiB", space.text())
+
+    def test_a_stopped_service_is_not_shown_as_on(self):
+        sched, _ = self._facts(
+            "scheduled updates: enabled but currently STOPPED (sv down) — "
+            "nothing runs unattended\n")
+        self.assertIn("STOPPED", sched.text())
+        self.assertNotIn("ON", sched.text())
+        self.assertEqual(sched.objectName(), "machineFact")
+
+    def test_no_schedule_line_reads_as_off_rather_than_blank(self):
+        # The shipped default. Blank would read as "unknown", which is worse.
+        sched, _ = self._facts("[1] System (upstream Void)\n    0 upstream\n")
+        self.assertEqual(sched.text(), "Nightly: off")
+
+    def test_the_default_build_space_says_default_not_a_path(self):
+        _, space = self._facts(
+            "    kernel build space: /home/boas/void-packages  "
+            "[default (the void-packages checkout)]  20.6 GiB free\n")
+        self.assertIn("default", space.text())
+        self.assertNotIn("/home/boas", space.text())
+
+    def test_the_space_half_hides_when_status_never_said(self):
+        _, space = self._facts("[1] System\n")
+        self.assertFalse(space.isVisible())
+
+    def test_the_strip_sits_below_the_buttons(self):
+        # Not above the pending list: the headline owns that space, and these
+        # are reference rather than news.
+        root = self.w.layout()
+        idx = {}
+        for i in range(root.count()):
+            item = root.itemAt(i)
+            if item.layout() is not None:
+                for j in range(item.layout().count()):
+                    wdg = item.layout().itemAt(j).widget()
+                    if wdg is self.w.btn_update:
+                        idx["buttons"] = i
+                    if wdg is self.w.fact_sched:
+                        idx["facts"] = i
+        self.assertIn("buttons", idx)
+        self.assertIn("facts", idx)
+        self.assertGreater(idx["facts"], idx["buttons"])
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -132,6 +132,14 @@ QLabel#noticeIcon {{
 }}
 QLabel#noticeText {{ color: {FG}; }}
 
+/* Standing machine facts: how this box behaves when nobody is watching.
+   Small and dim, because they are reference rather than news -- except a
+   nightly run that includes the kernel, which gets the accent, because a
+   box that compiles a kernel at 3am unasked is the one fact an owner must
+   not have to discover by hearing the fans. */
+QLabel#machineFact {{ color: {FG_DIM}; font-size: 11px; }}
+QLabel#machineFactOn {{ color: {ACCENT}; font-size: 11px; }}
+
 /* The headline answers the only question this window exists for: should I
    press Update? So it is the largest text in the pane, on purpose. */
 QLabel#headline {{ color: {ACCENT}; font-size: 13px; font-weight: bold; }}
@@ -493,6 +501,31 @@ class Updater(QWidget):
         root.addLayout(actions)
         self.btn_rollback.hide()
 
+        # -- standing machine facts -------------------------------------------
+        # Both of these lived only inside --status's scrolling text, which is a
+        # report rather than part of the interface -- and the pane follows its
+        # tail, so the schedule block at the top scrolled out of sight anyway.
+        # The owner's point (2026-09-09): 'it is like a completely hidden
+        # function'. They are configuration, not pending work, so they get a
+        # fixed strip that never scrolls, beside the button that changes one of
+        # them, and below the headline that owns the press-Update question.
+        #
+        # Transcribed from --status, never re-derived: the CLI already decides
+        # what is true here, and a second opinion computed in the window is how
+        # the two drift apart.
+        facts = QHBoxLayout()
+        facts.setContentsMargins(2, 0, 2, 0)
+        self.fact_sched = QLabel()
+        self.fact_sched.setObjectName("machineFact")
+        self.fact_space = QLabel()
+        self.fact_space.setObjectName("machineFact")
+        self.fact_space.setToolTip(
+            "Where the BORE kernel compiles. Change it with 'Kernel build space…'")
+        facts.addWidget(self.fact_sched, 0, Qt.AlignLeft)
+        facts.addStretch(1)
+        facts.addWidget(self.fact_space, 0, Qt.AlignRight)
+        root.addLayout(facts)
+
         # -- live command output -----------------------------------------------
         out_box = QGroupBox("Output")
         ob = QVBoxLayout(out_box)
@@ -774,6 +807,7 @@ class Updater(QWidget):
         self._update_headline(text)
         self._update_kernel_notice(text)
         self._update_run_notice(text)
+        self._update_machine_facts(text)
 
     def _update_headline(self, text):
         """Summarise --status into one line: what is waiting, and nothing else.
@@ -909,6 +943,69 @@ class Updater(QWidget):
         # the pane behind it rather than after the fact.
         self._run(["--build-space"], self.out, done=after_show,
                   activity="Reading the current build space…")
+
+    def _update_machine_facts(self, text):
+        """Fill the standing-facts strip from --status's own lines.
+
+        Both facts are parsed out of the report rather than queried again. The
+        markers are the CLI's stable sentences:
+
+          "scheduled updates: ON — ... by itself at 01:00 daily,"
+          "scheduled updates: enabled but currently STOPPED (sv down)"
+          "kernel build space: <path>  [configured]  257.4 GiB free"
+
+        Absent means absent: no schedule line at all means the service is not
+        enabled, which is the shipped default and worth stating plainly rather
+        than leaving blank.
+        """
+        # -- nightly run ---------------------------------------------------
+        on = warn = False
+        when = ""
+        for line in text.splitlines():
+            t = line.strip()
+            if t.startswith("scheduled updates:"):
+                on = "ON —" in t or "ON -" in t
+                warn = "STOPPED" in t
+                m = re.search(r"at (\d{2}:\d{2}) daily", t)
+                if m:
+                    when = m.group(1)
+            elif when and "kernel INCLUDED" in t:
+                pass
+        incl = "kernel INCLUDED" in text
+        if warn:
+            self.fact_sched.setText("Nightly: enabled but STOPPED")
+            self.fact_sched.setObjectName("machineFact")
+        elif on:
+            bits = ["Nightly: ON"]
+            if when:
+                bits.append(when)
+            if incl:
+                bits.append("(incl. kernel)")
+            self.fact_sched.setText(" ".join(bits))
+            # the accent is earned by the surprising case, not by every state
+            self.fact_sched.setObjectName(
+                "machineFactOn" if incl else "machineFact")
+        else:
+            self.fact_sched.setText("Nightly: off")
+            self.fact_sched.setObjectName("machineFact")
+
+        # -- build space ---------------------------------------------------
+        space = ""
+        m = re.search(r"kernel build space: (\S+)\s+\[([^\]]+)\]\s+(.*)", text)
+        if m:
+            path, tag, rest = m.group(1), m.group(2), m.group(3).strip()
+            free = ""
+            fm = re.match(r"([\d.]+ GiB free)", rest)
+            if fm:
+                free = fm.group(1)
+            where = "default" if tag.startswith("default") else path
+            space = "Build space: " + where + (f" · {free}" if free else "")
+        self.fact_space.setText(space)
+        self.fact_space.setVisible(bool(space))
+
+        for w in (self.fact_sched, self.fact_space):
+            w.style().unpolish(w)
+            w.style().polish(w)
 
     def _update_run_notice(self, text):
         """Lift the CLI's "last update run FAILED/REFUSED" block into a card.
