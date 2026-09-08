@@ -2723,6 +2723,130 @@ class BuildSpaceTests(unittest.TestCase):
         Xbps(void_packages=self.vp, repos=[], run=run).clean("linux-cachy")
         self.assertNotIn("-m", calls[0])
 
+
+class StagedCandidateIsNotANewBumpTests(unittest.TestCase):
+    """A staged candidate has already been acted on.
+
+    The loop this closes, observed on the testbed 2026-09-09 and reported by
+    the owner as "the updater says there is a new bore, can that be true just
+    a few days after we installed one?":
+
+      1. 6.12.108 is regenerated, built, installed and STAGED.
+      2. §8.8 advances ported_version only on PROMOTE, so it still reads
+         6.12.103.
+      3. The next scheduled run compares upstream (6.12.108) against
+         ported_version (6.12.103), calls it a fresh bump, regenerates the
+         template and writes state READY over STAGED.
+      4. §8.7's confirm service exits when the state is not STAGED/CONFIRMING,
+         so the boot that follows promotes nothing.
+      5. ported_version never advances -> back to step 3, for ever, with the
+         updater offering to build the kernel the box is already running.
+
+    §8.8's STAGED->discard transition is for a *new* upstream bump. The same
+    version is not a bump at all.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _state(name, cand="", ported="6.12.103_1"):
+        d = {"state": name, "ported_version": ported, "base_series": "6.12"}
+        if cand:
+            d["candidate"] = {"kver": cand}
+        return d
+
+    # -- the baseline helper ---------------------------------------------
+    def test_a_staged_candidate_is_the_baseline(self):
+        st = self._state("STAGED", "6.12.108_1-cachy")
+        self.assertEqual(cli.acted_version(st), "6.12.108_1")
+
+    def test_so_is_one_on_trial(self):
+        st = self._state("CONFIRMING", "6.12.108_1-cachy")
+        self.assertEqual(cli.acted_version(st), "6.12.108_1")
+
+    def test_the_fork_suffix_is_stripped_to_compare_with_a_template(self):
+        # template/ported versions carry no -cachy; candidate kvers do.
+        self.assertEqual(
+            cli.acted_version(self._state("STAGED", "6.12.108_1-cachy")),
+            "6.12.108_1")
+
+    def test_in_steady_state_it_is_the_ported_version(self):
+        for name in ("TRACKING", "READY", "PROMOTED"):
+            self.assertEqual(cli.acted_version(self._state(name)), "6.12.103_1")
+
+    def test_a_frozen_state_does_not_borrow_its_candidate(self):
+        # CANDIDATE_UNHEALTHY means the candidate FAILED; it must not count as
+        # acted on, or a bad kernel would suppress the offer to try a new one.
+        st = self._state("CANDIDATE_UNHEALTHY", "6.12.108_1-cachy")
+        self.assertEqual(cli.acted_version(st), "6.12.103_1")
+
+    # -- the report ------------------------------------------------------
+    def _verdict(self, st, template="6.12.108", repo=""):
+        vp = self.tmp / "vp"
+        up = vp / "srcpkgs" / "linux6.12"
+        up.mkdir(parents=True)
+        (up / "template").write_text(
+            f"pkgname=linux6.12\nversion={template}\nrevision=1\n",
+            encoding="utf-8")
+        cfg = cli.Config(void_packages=vp, targets=[], state_dir=self.tmp,
+                         log_root=self.tmp / "log")
+
+        def run(args, cwd=None):
+            if args[:2] == ["xbps-query", "-R"]:
+                return cp(0, f"linux6.12-{repo}\n" if repo else "")
+            return cp(0, "")
+
+        return cli.kernel_port_available(cfg, st, run, _vercmp)
+
+    def test_the_staged_version_is_not_offered_again(self):
+        v = self._verdict(self._state("STAGED", "6.12.108_1-cachy"))
+        self.assertFalse(v.available,
+                         "offered to build the kernel that is already staged")
+
+    def test_a_genuinely_newer_upstream_is_still_offered(self):
+        # The real §8.8 STAGED->discard case must keep working.
+        v = self._verdict(self._state("STAGED", "6.12.108_1-cachy"),
+                          template="6.12.109")
+        self.assertTrue(v.available)
+        self.assertEqual(v.upstream_version, "6.12.109_1")
+
+    def test_without_a_candidate_the_ported_version_still_governs(self):
+        v = self._verdict(self._state("TRACKING"))
+        self.assertTrue(v.available)          # 6.12.108 > 6.12.103
+
+    # -- synthesis -------------------------------------------------------
+    def test_synthesis_leaves_a_staged_state_alone(self):
+        """The write that broke the promote path: READY over STAGED."""
+        vp = self.tmp / "vp"
+        up = vp / "srcpkgs" / "linux6.12"
+        (up / "files").mkdir(parents=True)
+        (up / "template").write_text(
+            "pkgname=linux6.12\nversion=6.12.108\nrevision=1\n",
+            encoding="utf-8")
+        cfg = cli.Config(void_packages=vp, targets=[], state_dir=self.tmp,
+                         log_root=self.tmp / "log",
+                         fragment_path=self.tmp / "frag")
+        store = grub_mod.KernelStateStore(cfg.kernel_state_path)
+        st = grub_mod.default_state(base_series="6.12",
+                                    ported_version="6.12.103_1")
+        st["state"] = "STAGED"
+        st["candidate"] = {"kver": "6.12.108_1-cachy"}
+        store.save(st)
+
+        out = Sink()
+        cli._kernel_synthesis(cfg, FakeXbps(), out)
+
+        after = store.load()
+        self.assertEqual(after["state"], "STAGED",
+                         "synthesis clobbered the staging record")
+        self.assertEqual((after.get("candidate") or {}).get("kver"),
+                         "6.12.108_1-cachy")
+        self.assertNotIn("regenerated", out.text())
+
 if __name__ == "__main__":
     unittest.main()
 

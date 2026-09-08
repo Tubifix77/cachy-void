@@ -272,12 +272,40 @@ class HealthDaemon:
             state["state"] = "TRACKING"
             state["known_good"] = {"kver": cand,
                                    "grub_ref": (state.get("grub") or {}).get("candidate_ref")}
-            if cand_obj.get("pkgver"):
-                state["ported_version"] = cand_obj["pkgver"]
+            ported = _ported_from_pkgver(cand_obj.get("pkgver") or "")
+            if ported:
+                state["ported_version"] = ported
             state["candidate"] = None
             self.state_store.save(state)
         except OSError:
             pass
+
+
+def _ported_from_pkgver(pkgver: str) -> str:
+    """``linux-cachy-6.12.108_1`` -> ``6.12.108_1``; a bare version passes through.
+
+    ``ported_version`` is a BARE ``<version>_<revision>``: §8.2 hands it to
+    ``vercmp`` against the upstream template's version, and every other writer
+    of the field stores it that way. The candidate object, by contrast, holds a
+    name-prefixed ``pkgver`` because that is what ``xbps-query -p pkgver``
+    returns — and promotion used to copy it across verbatim.
+
+    Caught on the testbed the first time the promote path ran after the
+    2026-09 fixes: a promotion wrote ``linux-cachy-6.12.108_1``, which
+    ``xbps-uhelper cmpver`` would then have compared against ``6.12.109_1`` on
+    the next release. Not a crash — a silently meaningless comparison, in the
+    one field that decides whether a new kernel is noticed at all.
+    """
+    token = (pkgver or "").strip()
+    if not token:
+        return ""
+    try:
+        from .xbps import split_pkgver
+        return split_pkgver(token)[1]
+    except Exception:
+        # Already bare (has a revision but no name), or unparseable: keep a
+        # bare-looking value, drop anything we cannot vouch for.
+        return token if "_" in token and "-" not in token else ""
 
 
 # ==========================================================================

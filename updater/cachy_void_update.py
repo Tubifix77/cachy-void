@@ -453,7 +453,7 @@ def _kernel_synthesis(config: Config, xbps, out, *, fetcher=None) -> None:
         tpath = config.void_packages / "srcpkgs" / f"linux{series}" / "template"
         text = tpath.read_text(encoding="utf-8") if tpath.exists() else None
         ev, tmpl = grub.classify_bump(series_template_text=text,
-                                      ported_version=state.get("ported_version", ""),
+                                      ported_version=acted_version(state),
                                       vercmp=xbps.vercmp)
     except (grub.GrubError, XbpsError, OSError) as exc:
         out(f"warning: kernel bump classification failed ({exc}); skipping")
@@ -1272,6 +1272,36 @@ PortVerdict = collections.namedtuple(
     "PortVerdict", "available upstream_version ported_version source event")
 
 
+def acted_version(state: dict) -> str:
+    """The newest kernel version the kernel path has ALREADY acted on.
+
+    ``ported_version`` is the version proven by a healthy boot, and in steady
+    state it is the right baseline for "is there something new upstream?".
+    Between staging and promotion it is not: there is a version already
+    regenerated, built, installed and staged that ``ported_version`` does not
+    know about yet, because §8.8 advances it only on PROMOTE.
+
+    Comparing upstream against ``ported_version`` in that window re-detects the
+    SAME version as a fresh bump on every run — and §8.4 synthesis then writes
+    state READY over STAGED, discarding the staging record. The §8.7 confirm
+    service exits when the state is not STAGED/CONFIRMING, so the candidate can
+    never be promoted, ``ported_version`` never advances, and the box reports
+    "a newer BORE kernel is available" for the kernel it is already running.
+
+    Observed exactly that way on the testbed (2026-09-09): 6.12.108 built and
+    staged on the 8th, the 01:00 run on the 9th re-detected it and reset the
+    state, and the reboot came up running 6.12.108 while the updater still
+    offered to build it. §8.8's STAGED→discard transition is for a *new*
+    upstream bump; the same version is not a bump at all.
+    """
+    cand = (state.get("candidate") or {}).get("kver") or ""
+    if state.get("state") in ("STAGED", "CONFIRMING") and cand:
+        # candidate kvers carry the fork suffix ("6.12.108_1-cachy"); template
+        # and ported versions do not.
+        return re.sub(r"-cachy$", "", cand)
+    return state.get("ported_version", "") or ""
+
+
 def kernel_port_available(config: "Config", state: dict, run, vercmp) -> PortVerdict:
     """(available, upstream_ver, ported_ver) — the §2.6/§8.4 drift verdict.
 
@@ -1304,7 +1334,10 @@ def kernel_port_available(config: "Config", state: dict, run, vercmp) -> PortVer
     repository knew first also learns their checkout is behind.
     """
     series = state.get("base_series") or ""
-    ported = state.get("ported_version", "") or ""
+    # NOT ported_version: see acted_version(). A staged candidate has
+    # already been acted on, and calling it "available" tells the user to
+    # build what they are about to boot.
+    ported = acted_version(state)
     if not series:
         return PortVerdict(False, "", ported, "", "")
     try:

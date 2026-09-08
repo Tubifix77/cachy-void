@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from engine import health as _health
+from engine.health_daemon import _ported_from_pkgver
 from engine.grub import KernelStateStore, default_state
 from engine.health_daemon import HealthDaemon, DaemonConfig, DEGRADED, HEALTHY, TRIPPED
 
@@ -218,7 +219,12 @@ class ConfirmLayerTests(unittest.TestCase):
         state = d.state_store.load()
         self.assertEqual(state["state"], "TRACKING")
         self.assertEqual(state["known_good"]["kver"], "6.12.35_1")
-        self.assertEqual(state["ported_version"], "linux-cachy-6.12.35_1")
+        # BARE version, not the name-prefixed pkgver. This assertion used to
+        # demand "linux-cachy-6.12.35_1" -- it encoded the bug rather than
+        # the requirement, and so the promote path shipped writing a value
+        # §8.2 would later hand to vercmp against a bare template version.
+        # Do not "restore" the prefix; see _ported_from_pkgver.
+        self.assertEqual(state["ported_version"], "6.12.35_1")
 
     def test_unhealthy_candidate_is_passive_rollback(self):
         promoted = []
@@ -329,6 +335,37 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(rc, cli.EXIT_OK)
         self.assertEqual(calls, ["confirm", "loop"])
 
+
+
+class PortedVersionShapeTests(unittest.TestCase):
+    """``ported_version`` is a bare ``<version>_<revision>``, always.
+
+    §8.2 compares it with ``vercmp`` against the upstream template's version.
+    A name-prefixed value there is not a crash — it is a silently meaningless
+    comparison, in the one field that decides whether a new kernel is noticed
+    at all. Found on the testbed the first time the promote path ran after the
+    2026-09 fixes: it had written ``linux-cachy-6.12.108_1``.
+    """
+
+    def test_a_pkgver_is_reduced_to_its_version(self):
+        self.assertEqual(
+            _ported_from_pkgver("linux-cachy-6.12.108_1"),
+            "6.12.108_1")
+
+    def test_a_hyphenated_pkgname_still_splits_on_the_last_hyphen(self):
+        self.assertEqual(
+            _ported_from_pkgver("linux6.12-headers-6.12.108_1"),
+            "6.12.108_1")
+
+    def test_an_already_bare_version_passes_through(self):
+        self.assertEqual(_ported_from_pkgver("6.12.108_1"),
+                         "6.12.108_1")
+
+    def test_junk_is_dropped_rather_than_stored(self):
+        # Storing something unvouched-for here poisons every later comparison,
+        # so an unparseable value leaves the field alone (the caller skips it).
+        for bad in ("", "   ", "no-revision-here", "linux-cachy"):
+            self.assertEqual(_ported_from_pkgver(bad), "")
 
 if __name__ == "__main__":
     unittest.main()
