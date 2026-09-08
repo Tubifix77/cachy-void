@@ -2847,6 +2847,70 @@ class StagedCandidateIsNotANewBumpTests(unittest.TestCase):
                          "6.12.108_1-cachy")
         self.assertNotIn("regenerated", out.text())
 
+
+class CliTrayPokeTests(unittest.TestCase):
+    """The CLI tells the tray too, not just the GUI.
+
+    The GUI has poked the tray over its instance-lock socket since f0c0296 --
+    but only the GUI. The §4.9 scheduled service, a terminal `--commit`, and
+    `--kernel-ack` all change exactly the state the tray displays and told it
+    nothing, so a badge could stay wrong for the poll interval (3 hours).
+
+    Seen the long way round on the testbed 2026-09-09: a kernel was promoted at
+    03:03 and the tray still offered to build it, because every step of the
+    repair had happened outside the GUI. The owner asked whether to restart the
+    tray -- the answer should never have to be yes.
+
+    Raw AF_UNIX on purpose: QLocalServer on Unix is a plain stream socket at
+    $TMPDIR/<name>, so the core CLI needs no PyQt5 (optional dependency; a
+    headless box has neither GUI nor tray). Verified against the real running
+    tray by A/B with a control window before this was written.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_the_poke_arrives_over_a_plain_socket(self):
+        import socket
+        import threading
+        path = self.tmp / cli.TRAY_SOCKET_NAME
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(path))
+        srv.listen(1)
+        got = []
+
+        def accept():
+            conn, _ = srv.accept()
+            got.append(conn.recv(64))
+            conn.close()
+
+        t = threading.Thread(target=accept, daemon=True)
+        t.start()
+        self.assertTrue(cli.poke_tray(sockdir=str(self.tmp)))
+        t.join(timeout=3)
+        srv.close()
+        self.assertEqual(got, [cli.TRAY_POKE])
+
+    def test_no_listener_is_not_an_error(self):
+        # A server or a bare WM has no tray at all; that is ordinary, and a
+        # failed poke must never affect a run's outcome.
+        self.assertFalse(cli.poke_tray(sockdir=str(self.tmp)))
+
+    def test_a_stale_socket_file_is_not_an_error(self):
+        # Left behind by a killed tray: connect() fails, nothing raises.
+        (self.tmp / cli.TRAY_SOCKET_NAME).write_text("", encoding="utf-8")
+        self.assertFalse(cli.poke_tray(sockdir=str(self.tmp)))
+
+    def test_the_keyword_matches_what_the_tray_listens_for(self):
+        # Same anti-drift check as the GUI's: two files, one literal.
+        tray = (Path(__file__).resolve().parents[2] / "system" / "bin"
+                / "cachy-updater-tray").read_text(encoding="utf-8")
+        self.assertIn(f'SOCKET_NAME = "{cli.TRAY_SOCKET_NAME}"', tray)
+        self.assertIn(f'POKE = b"{cli.TRAY_POKE.decode()}"', tray)
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -2114,6 +2114,45 @@ def _note_kernel_build_failure(config: Config, pkg: str, out) -> None:
         "Resume with: cachy-void-update --kernel-ack")
 
 
+TRAY_SOCKET_NAME = "cachy-updater-tray"
+TRAY_POKE = b"refresh"
+
+
+def poke_tray(sockdir: str = "/tmp") -> bool:
+    """Tell the tray to re-probe. True if the poke was delivered.
+
+    The GUI has done this since f0c0296 over the tray's instance-lock socket,
+    but only the GUI: the §4.9 scheduled service, a terminal `--commit`, and
+    `--kernel-ack` all change exactly the state the tray displays and told it
+    nothing, leaving a stale badge for up to the poll interval (3 hours by
+    default). Observed the long way round on the testbed (2026-09-09): a kernel
+    promoted at 03:03 and the tray still offered to build it, because every
+    step of the repair had happened outside the GUI.
+
+    A RAW AF_UNIX socket on purpose — QLocalServer on Unix is a plain stream
+    socket at ``$TMPDIR/<name>``, so this needs no PyQt5. That matters: PyQt5
+    is an optional dependency (a headless box has no GUI and no tray), and the
+    core CLI must not acquire a GUI toolkit to send seven bytes. Verified
+    against the running tray by A/B with a control window, not assumed.
+
+    Never raises and never blocks for long: no tray is the ordinary case on a
+    server or a bare WM, and a poke failing must never affect a run's outcome.
+    """
+    import socket
+    path = os.path.join(sockdir, TRAY_SOCKET_NAME)
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        try:
+            sock.connect(path)
+            sock.sendall(TRAY_POKE)
+        finally:
+            sock.close()
+        return True
+    except (OSError, AttributeError):
+        return False
+
+
 def prune_run_logs(config: Config, keep: int = 20) -> None:
     """Keep the newest ``keep`` run directories (§7.6: "keep 20").
 
@@ -3490,8 +3529,11 @@ def main(argv: Optional[Sequence[str]] = None, *,
         if args.rollback:
             return cmd_rollback(config, out=out)
         if args.clean:
-            return cmd_clean(config, assume_yes=args.yes,
-                             dry_run=args.dry_run, out=out)
+            rc = cmd_clean(config, assume_yes=args.yes,
+                           dry_run=args.dry_run, out=out)
+            if not args.dry_run:
+                poke_tray()      # orphans/cache/debug packages just changed
+            return rc
         if args.health_daemon:
             daemon = build_health_daemon(config, out=out)
             # §8.7 confirm layer FIRST (once per boot): decide the fate of any
@@ -3510,7 +3552,9 @@ def main(argv: Optional[Sequence[str]] = None, *,
                              "with no supervisor changes (sv down to stop).")
             return EXIT_OK if outcome == HEALTHY else EXIT_KERNEL
         if args.kernel_ack:
-            return cmd_kernel_ack(config, out=out, assume_yes=args.yes)
+            rc = cmd_kernel_ack(config, out=out, assume_yes=args.yes)
+            poke_tray()          # the freeze it just cleared is on the badge
+            return rc
         if args.snapshots:
             # No solver either: the inventory is a btrfs list plus a journal read.
             return cmd_snapshots(config, out=out)
@@ -3533,8 +3577,13 @@ def main(argv: Optional[Sequence[str]] = None, *,
         if args.sync:
             return cmd_sync(config, out=out)
         if args.commit:
-            return cmd_commit(xbps, config, assume_yes=args.yes,
-                              dry_run=args.dry_run, out=out)
+            rc = cmd_commit(xbps, config, assume_yes=args.yes,
+                            dry_run=args.dry_run, out=out)
+            if not args.dry_run:
+                # Whatever the outcome, the tray's picture of the world moved:
+                # packages deployed, a kernel staged, or a freeze recorded.
+                poke_tray()
+            return rc
         return EXIT_USAGE  # unreachable (group is required)
     except Exception as exc:  # last-resort boundary (§4.8: no tracebacks)
         out(f"fatal: unhandled {type(exc).__name__}: {exc}")
