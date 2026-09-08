@@ -340,6 +340,20 @@ def _kernel_report(config: Config, xbps, out, run=_run) -> None:
             elif mode:
                 out(f"  the boot default stays on {good or 'the known-good kernel'}; "
                     "select the candidate in the menu to try it")
+            # §8.6b, said HERE and not only in the deploy log. The moment a
+            # person most needs "will a reboot actually land on the candidate?"
+            # is while reading this and deciding whether to reboot -- and that
+            # was the one moment it stayed silent. It fired correctly during
+            # the deploy hours earlier, into a runit log nobody reads.
+            #
+            # It matters most on exactly this host class: an `external` boot
+            # class means nothing was staged with GRUB, so the whole question
+            # is whether the operator's own convention -- an evergreen symlink,
+            # a versioned menuentry -- currently resolves to the new kernel. A
+            # stale symlink boots the OLD kernel and looks like success.
+            _boot_layout = _boot_layout_for_report(config, run)
+            if _boot_layout is not None:
+                _report_boot_path(_boot_layout, cand, out, indent="  ")
         elif cand and name == "CONFIRMING":
             out(f"kernel candidate: {cand} booted and is ON TRIAL — the confirm "
                 "service promotes it once its health battery passes")
@@ -556,7 +570,21 @@ def _snapshot_services(run, service_root: str = "/var/service") -> list[str]:
     return up
 
 
-def _report_boot_path(layout, kver: str, out) -> None:
+def _boot_layout_for_report(config: Config, run) -> "object | None":
+    """The boot layout for a READ-ONLY report, or None if it cannot be read.
+
+    Separate from the staging path's resolution on purpose: a status readout
+    must never fail, never mutate, and never make the caller handle an
+    exception. Anything unreadable simply means the boot-path line is omitted
+    rather than the whole tier collapsing.
+    """
+    try:
+        return grub.detect_boot_layout(run=run)
+    except (grub.GrubError, OSError, ValueError):
+        return None
+
+
+def _report_boot_path(layout, kver: str, out, indent: str = "") -> None:
     """§8.6b: say out loud whether the freshly installed kernel can be booted.
 
     Read-only and never fatal — a probe that cannot look degrades to a stated
@@ -568,12 +596,12 @@ def _report_boot_path(layout, kver: str, out) -> None:
     try:
         chk = grub.verify_bootable(layout=layout, kver=kver)
     except OSError as exc:
-        out(f"boot check skipped: {exc}")
+        out(f"{indent}boot check skipped: {exc}")
         return
     prefix = "WARNING — boot check" if chk.status == grub.BOOT_ABSENT else "boot check"
-    out(f"{prefix}: {chk.detail}")
+    out(f"{indent}{prefix}: {chk.detail}")
     if chk.hint:
-        out(f"  {chk.hint}")
+        out(f"{indent}  {chk.hint}")
 
 
 def _stage_kernel(config: Config, xbps, out, run, layout=None) -> int:
