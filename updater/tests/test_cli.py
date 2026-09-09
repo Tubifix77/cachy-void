@@ -3331,6 +3331,66 @@ class SystemPassUsesAFreshIndexTests(unittest.TestCase):
         self.assertIn("1 upstream update(s) pending", t)
         self.assertIn("held back", t)
 
+
+class HeldPackageNamesTests(unittest.TestCase):
+    """A hold is a standing decision, so say what it pins.
+
+    The owner asked who set the four holds and whether they are named anywhere.
+    Nothing in this project sets holds -- every xbps-pkgdb call in the codebase
+    is `-m manual` -- so they were pinned by hand, and the report said only
+    "(+4 on hold)", from which you can learn neither what is pinned nor
+    whether the pin is still wanted.
+
+    It also exposed two different numbers worth keeping apart: tier [1]'s
+    count is holds with an update WAITING, while this lists every hold. On the
+    testbed five packages are held but `linux` (the meta) has no newer version,
+    so it never appears as pending. Comparing 4 with 5 is exactly what
+    prompted the question.
+    """
+
+    @staticmethod
+    def _runner(out_text, rc=0):
+        def run(args, cwd=None):
+            if args[:2] == ["xbps-query", "-H"]:
+                return cp(rc, out_text)
+            return cp(0, "")
+        return run
+
+    def test_every_hold_is_listed_sorted(self):
+        run = self._runner("linux6.18-6.18.38_1\nlinux-6.18_1\n")
+        self.assertEqual(cli.held_packages(run),
+                         ["linux-6.18_1", "linux6.18-6.18.38_1"])
+
+    def test_no_holds_is_an_empty_list_not_a_fault(self):
+        self.assertEqual(cli.held_packages(self._runner("")), [])
+
+    def test_a_failed_query_is_silent(self):
+        self.assertEqual(cli.held_packages(self._runner("x", rc=1)), [])
+
+    def test_status_names_them_and_gives_the_unhold_command(self):
+        def run(args, cwd=None):
+            if args[:2] == ["xbps-query", "-H"]:
+                return cp(0, "linux6.12-6.12.95_1\nlinux-6.18_1\n")
+            if args[:1] == ["xbps-install"] and "-Mun" in args:
+                return cp(0, "foo-1_1 update x86_64 https://m 1 1\n"
+                          )
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_status(FakeXbps(), _config([]), out=out, run=run)
+        t = out.text()
+        self.assertIn("linux6.12-6.12.95_1", t)
+        self.assertIn("linux-6.18_1", t)
+        self.assertIn("xbps-pkgdb -m unhold", t)
+        # and it must not imply the updater did the pinning
+        self.assertIn("not by this updater", t)
+
+    def test_a_box_with_no_holds_gains_no_lines(self):
+        def run(args, cwd=None):
+            return cp(0, "")
+        out = Sink()
+        cli.cmd_status(FakeXbps(), _config([]), out=out, run=run)
+        self.assertNotIn("held back", out.text())
+
 if __name__ == "__main__":
     unittest.main()
 

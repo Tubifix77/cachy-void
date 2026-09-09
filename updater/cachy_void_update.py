@@ -819,6 +819,33 @@ def _split_drivers(cp) -> int:
     return n
 
 
+def held_packages(run) -> list:
+    """Every package pinned with ``xbps-pkgdb -m hold``, newest-first by name.
+
+    Worth naming, and it never was. A hold is a standing decision that a
+    package will NEVER update, and the report said only "(+4 on hold)" — from
+    which you cannot tell whether the pin is still the one you wanted, or what
+    it is even pinning.
+
+    Note this is not the same number as that "+4": the count in tier [1] is
+    holds that have an update WAITING, while this is every hold. On the testbed
+    they differ — five packages are held, but `linux` (the meta) has no newer
+    version, so it is never a pending line. The owner compared the two numbers
+    and was right to ask.
+
+    Nothing in this project sets holds: every `xbps-pkgdb` call in the codebase
+    is `-m manual`. So these were pinned by hand, and the report says so rather
+    than leaving the impression the updater did it.
+    """
+    try:
+        cp = run(["xbps-query", "-H"])
+    except OSError:
+        return []
+    if cp.returncode != 0:
+        return []
+    return sorted(l.strip() for l in (cp.stdout or "").splitlines() if l.strip())
+
+
 def upstream_counts(run) -> tuple:
     """``(updatable, held, fresh, drivers)`` from a dry-run system update.
 
@@ -1620,6 +1647,13 @@ def cmd_status(xbps, config: Config, out=print, run=_run,
                 + ("" if n else " — up to date")
                 + (f"   (+{held} on hold)" if held else "")
                 + ("" if fresh else "   (mirror unreachable; from the local cache)"))
+
+    _held = held_packages(run)
+    if _held:
+        out(f"    held back ({len(_held)}, pinned by hand — not by this updater; "
+            "they never update):")
+        out("      " + ", ".join(_held))
+        out("      release one with:  sudo xbps-pkgdb -m unhold <package>")
 
     out(f"\n[2] Performance overlay (rebuilt at -O3{_march_label(config)})")
     try:
