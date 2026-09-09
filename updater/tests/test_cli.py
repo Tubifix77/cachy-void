@@ -1741,6 +1741,31 @@ class ScheduledRunVisibilityTests(unittest.TestCase):
         self.assertIn("-H */6", t)
         self.assertNotIn(":00 daily", t)
 
+    def test_a_userspace_only_schedule_says_so(self):
+        """SCHEDULE_KERNEL=no must not still claim 'kernel INCLUDED'.
+
+        The knob exists because the only alternative to a nightly kernel
+        compile used to be disabling the service outright -- a poor choice to
+        force on someone who wants the base current every night and a
+        multi-hour build at a moment they pick. Default stays yes: changing
+        what an existing install already does, silently, is what this project
+        avoids.
+        """
+        self.link.mkdir()
+        self.conf.write_text("SNOOZE_HOUR=1\nSNOOZE_MINUTE=0\nSCHEDULE_KERNEL=no\n")
+        t = cli.scheduled_run_line(link=self.link, conf=self.conf)
+        self.assertIn("USERSPACE ONLY", t)
+        self.assertIn("--no-kernel", t)
+        self.assertNotIn("kernel INCLUDED", t)
+
+    def test_the_default_is_still_a_full_commit(self):
+        self.link.mkdir()
+        self.conf.write_text("SNOOZE_HOUR=1\nSNOOZE_MINUTE=0\n")
+        t = cli.scheduled_run_line(link=self.link, conf=self.conf)
+        self.assertIn("kernel INCLUDED", t)
+        # names the knob that changes it, rather than leaving it to be found
+        self.assertIn("SCHEDULE_KERNEL=no", t)
+
     def test_a_stopped_service_is_not_reported_as_on(self):
         # `sv down` leaves the link in place; the supervise dir is 0700 root.
         # Found live: the owner stopped the service and --status said ON.

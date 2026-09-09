@@ -12,8 +12,18 @@
 # SNOOZE_MINUTE — minute-of-hour for the run (0-59), snooze -M field.
 #                 Both accept snooze patterns for finer control, e.g.
 #                 SNOOZE_HOUR="*/6" (every 6 hours) or SNOOZE_MINUTE="0,30".
+# SCHEDULE_KERNEL — may the unattended run build the BORE kernel? (yes|no)
+#                 yes (default, and what this service has always done): the run
+#                   is a full `--commit --yes`, so a kernel bump compiles
+#                   overnight without anyone pressing anything.
+#                 no: the run is `--commit --yes --no-kernel` — the base and the
+#                   performance overlay are kept current, and kernel builds wait
+#                   for you to press "Update kernel". Choose this if a
+#                   multi-hour compile starting on its own is not what you want;
+#                   `--status` and the updater window say which mode is in force.
 CACHY_USER=@USER@
 CACHY_ENGINE=@ENGINE@
 CACHY_CONFIG=/etc/cachy-void/updater.toml
 SNOOZE_HOUR=5
 SNOOZE_MINUTE=30
+SCHEDULE_KERNEL=yes

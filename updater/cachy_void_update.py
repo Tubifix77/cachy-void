@@ -932,11 +932,32 @@ def scheduled_run_line(*, link: pathlib.Path = SCHED_LINK,
                 f"runs unattended until: sudo sv up {SCHED_SERVICE}\n"
                 f"  (when up, it runs --sync then --commit --yes by itself{when}, "
                 "kernel INCLUDED)")
+    # Which SCOPE the unattended run has. Read from the same conf as the time,
+    # because a report that says "kernel INCLUDED" on a box configured
+    # otherwise is the plausible-but-false message this project keeps hunting.
+    kernel = True
+    try:
+        m = re.search(r"^SCHEDULE_KERNEL=(\S+)", text, re.M)
+        if m and m.group(1).strip().strip('"').strip("'").lower() in (
+                "no", "false", "0"):
+            kernel = False
+    except (OSError, NameError):
+        pass
+
+    if not kernel:
+        return ("scheduled updates: ON — this box runs --sync then --commit --yes "
+                f"--no-kernel by itself{when},\n"
+                "  USERSPACE ONLY: the base and the performance overlay are kept "
+                "current,\n"
+                "  and BORE kernel builds wait for the \"Update kernel\" button.\n"
+                f"  Turn it off entirely: sudo rm {SCHED_LINK}")
     return ("scheduled updates: ON — this box runs --sync then --commit --yes by "
             f"itself{when},\n"
             "  kernel INCLUDED (the same work as the \"Update kernel\" button, not "
             "\"Update\"),\n"
-            f"  so a build can start unattended. Turn it off: sudo rm {SCHED_LINK}")
+            f"  so a build can start unattended. Turn it off: sudo rm {SCHED_LINK}\n"
+            "  Userspace-only instead: set SCHEDULE_KERNEL=no in "
+            f"{SCHED_CONF}")
 
 
 def cmd_build_space(config: Config, path=None, out=print, run=_run,

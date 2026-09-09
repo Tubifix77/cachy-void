@@ -32,7 +32,21 @@ UPDATER="$CACHY_ENGINE/cachy_void_update.py"
 # conflict, §4.2) then, only if that succeeds, --commit --yes (build + deploy,
 # fail-fast + system-intact, §4). exec keeps the final process supervised so a
 # `sv restart`/`sv down` reaches the running update, not a leftover shell.
+#
+# SCHEDULE_KERNEL decides whether the unattended run may build the BORE kernel.
+# Until now it always could -- `--commit --yes` with no way to say otherwise --
+# and the only alternative was disabling the service entirely. That is a poor
+# choice to force: an owner may well want the base kept current every night and
+# a multi-hour kernel compile kept for a moment they choose. The default is
+# `yes`, unchanged, because altering what an existing install already does
+# silently is exactly what this project avoids; `no` is opt-in.
+: "${SCHEDULE_KERNEL:=yes}"
+case "$SCHEDULE_KERNEL" in
+    no|NO|false|0) _scope="--no-kernel" ;;
+    *)             _scope="" ;;
+esac
+
 exec chpst -u "$CACHY_USER" \
     snooze -H "$SNOOZE_HOUR" -M "$SNOOZE_MINUTE" \
-    sh -c 'python3 "$1" --config "$2" --sync && exec python3 "$1" --config "$2" --commit --yes' \
-        cachy-void-update "$UPDATER" "$CACHY_CONFIG"
+    sh -c 'python3 "$1" --config "$2" --sync && exec python3 "$1" --config "$2" --commit --yes $3' \
+        cachy-void-update "$UPDATER" "$CACHY_CONFIG" "$_scope"
