@@ -960,6 +960,102 @@ def scheduled_run_line(*, link: pathlib.Path = SCHED_LINK,
             f"{SCHED_CONF}")
 
 
+def cmd_schedule(config: Config, action=None, out=print, run=_run,
+                 link=None, conf=None) -> int:
+    """Report the §4.9 unattended run, and pause/resume it.
+
+    Why an action at all: the owner asked whether the nightly run was
+    configurable "from a cachy void updater gui perspective", and the answer
+    was no for all three settings — on/off, time, and whether it may build the
+    kernel. A behaviour that compiles a kernel at 3am was reachable only
+    through a terminal and a root-owned file, which is squarely against "the
+    window is the product; nothing that matters is CLI-only".
+
+    What this can and cannot do is decided by the §4.1 boundary, not by taste:
+
+      * PAUSE / RESUME is real work here, because ``sv`` is already inside the
+        grant (it is there for §4.7 service cycling). No new privilege, no
+        widening, nothing added to sudoers for this.
+      * The TIME and the KERNEL SCOPE live in a root-owned conf, and the
+        updater must not acquire the ability to rewrite root-owned machine
+        config — the same line held for ``--build-space``. So those are
+        reported with the exact command that changes them.
+
+    Pausing is deliberately `sv down` rather than removing the service link:
+    it is reversible from here, survives nothing (a reboot re-arms it), and so
+    cannot quietly become a permanent change nobody remembers making. The
+    permanent form is printed for anyone who wants it.
+    """
+    link = Path(link) if link else SCHED_LINK
+    conf = Path(conf) if conf else SCHED_CONF
+
+    try:
+        enabled = link.exists()
+    except OSError:
+        enabled = False
+
+    out("Cachy-Void — unattended updates (§4.9)")
+    out("=" * 46)
+    if not enabled:
+        out("")
+        out("not enabled: nothing runs on its own.")
+        out("  enable it:  sudo ln -s /etc/sv/cachy-void-update /var/service/")
+        out("  (or re-run deploy.sh --with-schedule)")
+        return EXIT_OK
+
+    state = _sv_state(link, run)
+    line = scheduled_run_line(link=link, conf=conf, run=run)
+
+    if action in ("pause", "resume"):
+        want_down = action == "pause"
+        if want_down and state == "down":
+            out("")
+            out("already paused — nothing to do.")
+            return EXIT_OK
+        if not want_down and state == "run":
+            out("")
+            out("already running — nothing to do.")
+            return EXIT_OK
+        verb = "down" if want_down else "up"
+        try:
+            cp = run(["sudo", "-n", "sv", verb, str(link)])
+        except OSError as exc:
+            out(f"error: could not run sv {verb}: {exc}")
+            return EXIT_SERVICES
+        if cp.returncode != 0:
+            out(f"error: sv {verb} failed: {(cp.stderr or cp.stdout or '').strip()}")
+            return EXIT_SERVICES
+        out("")
+        out("paused — nothing will run unattended until it is resumed."
+            if want_down else
+            "resumed — the next scheduled run will happen as configured.")
+        out("")
+        out(scheduled_run_line(link=link, conf=conf, run=run) or "")
+        return EXIT_OK
+
+    # -- report ---------------------------------------------------------
+    out("")
+    for l in (line or "").splitlines():
+        out(l)
+    out("")
+    out("what you can change, and how:")
+    if state == "down":
+        out("  resume it        cachy-void-update --schedule resume")
+    else:
+        out("  pause it         cachy-void-update --schedule pause")
+        out("                   (reversible; a reboot re-arms it)")
+    out(f"  the time         sudo $EDITOR {conf}   "
+        "(SNOOZE_HOUR / SNOOZE_MINUTE)")
+    out(f"  kernel or not    sudo $EDITOR {conf}   "
+        "(SCHEDULE_KERNEL=yes|no)")
+    out(f"  turn it off      sudo rm {link}")
+    out("")
+    out("The time and the kernel scope live in a root-owned file on purpose:")
+    out("they are machine configuration, and the updater deliberately holds no")
+    out("privilege to rewrite it. Pausing needs none — sv is already granted.")
+    return EXIT_OK
+
+
 def cmd_build_space(config: Config, path=None, out=print, run=_run,
                     config_path=None, disk_usage=shutil.disk_usage) -> int:
     """Show where kernel builds happen, or validate and set a new location.
@@ -3476,6 +3572,10 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--snapshots", action="store_true",
                        help="list pre-deploy snapshots and how to restore one "
                             "on this host (read-only)")
+    action.add_argument("--schedule", dest="schedule", nargs="?", const="",
+                       metavar="pause|resume",
+                       help="report the §4.9 unattended run (time, scope, "
+                            "state), or pause/resume it")
     action.add_argument("--build-space", dest="build_space", nargs="?",
                        const="", metavar="PATH",
                        help="show where kernel builds happen (§7.5), or "
@@ -3579,6 +3679,16 @@ def main(argv: Optional[Sequence[str]] = None, *,
         if args.snapshots:
             # No solver either: the inventory is a btrfs list plus a journal read.
             return cmd_snapshots(config, out=out)
+        if args.schedule is not None:
+            # No solver: a service question, not a package one.
+            act = (args.schedule or '').strip().lower() or None
+            if act not in (None, 'pause', 'resume'):
+                out(f"error: --schedule takes pause or resume, not {act!r}")
+                return EXIT_USAGE
+            rc = cmd_schedule(config, act, out=out)
+            if act:
+                poke_tray()      # the badge's picture of the box changed
+            return rc
         if args.build_space is not None:
             # No solver: this is a directory question, not a package one.
             return cmd_build_space(config, args.build_space or None, out=out,

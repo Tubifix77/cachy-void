@@ -2936,6 +2936,134 @@ class CliTrayPokeTests(unittest.TestCase):
         self.assertIn(f'SOCKET_NAME = "{cli.TRAY_SOCKET_NAME}"', tray)
         self.assertIn(f'POKE = b"{cli.TRAY_POKE.decode()}"', tray)
 
+
+class ScheduleCommandTests(unittest.TestCase):
+    """--schedule: report the nightly run, and pause/resume it.
+
+    The owner asked whether the nightly was configurable "from a cachy void
+    updater gui perspective", and for all three settings -- on/off, time, and
+    whether it may build the kernel -- the answer was no. A behaviour that
+    compiles a kernel at 3am was reachable only through a terminal and a
+    root-owned file, against "the window is the product; nothing that matters
+    is CLI-only".
+
+    What this may do is decided by the §4.1 boundary, not by taste. Pause and
+    resume are real work, because `sv` is ALREADY granted (§4.7 service
+    cycling) -- no widening for this. The time and the kernel scope live in a
+    root-owned conf and are reported with the command that changes them: the
+    updater must not gain the ability to rewrite root-owned machine config,
+    the same line held for --build-space.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.link = self.tmp / "svc"
+        self.conf = self.tmp / "conf"
+        self.conf.write_text("SNOOZE_HOUR=1\nSNOOZE_MINUTE=0\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _cfg(self):
+        return cli.Config(void_packages=Path("/vp"), targets=[],
+                          state_dir=self.tmp, log_root=self.tmp / "log")
+
+    def _runner(self, sv_state="run", rc=0):
+        calls = []
+
+        def run(args, cwd=None):
+            calls.append(list(args))
+            if "sv" in args and "status" in args:
+                return cp(0, sv_state + ": cachy-void-update: (pid 1) 5s\n")
+            if "sv" in args and (("down" in args) or ("up" in args)):
+                return cp(rc, "")
+            return cp(0, "")
+        return run, calls
+
+    # -- reporting --------------------------------------------------------
+    def test_not_enabled_says_so_and_how_to_enable(self):
+        run, _ = self._runner()
+        out = Sink()
+        rc = cli.cmd_schedule(self._cfg(), None, out=out, run=run,
+                              link=self.link, conf=self.conf)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("not enabled", out.text())
+        self.assertIn("ln -s", out.text())
+
+    def test_it_reports_the_time_and_names_every_knob(self):
+        self.link.mkdir()
+        run, _ = self._runner()
+        out = Sink()
+        cli.cmd_schedule(self._cfg(), None, out=out, run=run,
+                         link=self.link, conf=self.conf)
+        t = out.text()
+        self.assertIn("01:00", t)
+        self.assertIn("SNOOZE_HOUR", t)
+        self.assertIn("SCHEDULE_KERNEL", t)
+        self.assertIn("--schedule pause", t)
+
+    def test_a_paused_service_offers_resume_not_pause(self):
+        self.link.mkdir()
+        run, _ = self._runner(sv_state="down")
+        out = Sink()
+        cli.cmd_schedule(self._cfg(), None, out=out, run=run,
+                         link=self.link, conf=self.conf)
+        self.assertIn("--schedule resume", out.text())
+        self.assertNotIn("--schedule pause", out.text())
+
+    # -- pausing / resuming -----------------------------------------------
+    def test_pause_runs_sv_down_through_the_existing_grant(self):
+        self.link.mkdir()
+        run, calls = self._runner(sv_state="run")
+        out = Sink()
+        rc = cli.cmd_schedule(self._cfg(), "pause", out=out, run=run,
+                              link=self.link, conf=self.conf)
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertTrue(any(c[:4] == ["sudo", "-n", "sv", "down"] for c in calls),
+                        calls)
+        self.assertIn("paused", out.text())
+
+    def test_resume_runs_sv_up(self):
+        self.link.mkdir()
+        run, calls = self._runner(sv_state="down")
+        out = Sink()
+        cli.cmd_schedule(self._cfg(), "resume", out=out, run=run,
+                         link=self.link, conf=self.conf)
+        self.assertTrue(any(c[:4] == ["sudo", "-n", "sv", "up"] for c in calls),
+                        calls)
+        self.assertIn("resumed", out.text())
+
+    def test_pausing_an_already_paused_service_changes_nothing(self):
+        self.link.mkdir()
+        run, calls = self._runner(sv_state="down")
+        out = Sink()
+        cli.cmd_schedule(self._cfg(), "pause", out=out, run=run,
+                         link=self.link, conf=self.conf)
+        self.assertIn("already paused", out.text())
+        self.assertFalse(any("down" in c for c in calls), calls)
+
+    def test_a_failed_sv_is_reported_not_swallowed(self):
+        self.link.mkdir()
+        run, _ = self._runner(sv_state="run", rc=1)
+        out = Sink()
+        rc = cli.cmd_schedule(self._cfg(), "pause", out=out, run=run,
+                              link=self.link, conf=self.conf)
+        self.assertEqual(rc, cli.EXIT_SERVICES)
+        self.assertIn("failed", out.text())
+
+    def test_it_never_tries_to_write_the_root_owned_conf(self):
+        # The line that must hold: reporting a command is allowed, rewriting
+        # machine configuration as root is not.
+        self.link.mkdir()
+        before = self.conf.read_text()
+        run, calls = self._runner()
+        cli.cmd_schedule(self._cfg(), None, out=Sink(), run=run,
+                         link=self.link, conf=self.conf)
+        self.assertEqual(self.conf.read_text(), before)
+        for c in calls:
+            self.assertNotIn("tee", c)
+            self.assertNotIn("sed", c)
+
 if __name__ == "__main__":
     unittest.main()
 

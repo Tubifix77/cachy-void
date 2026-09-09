@@ -654,6 +654,51 @@ class MachineFactsStripTests(unittest.TestCase):
         self.assertIn("facts", idx)
         self.assertGreater(idx["facts"], idx["buttons"])
 
+
+@unittest.skipUnless(HAVE_QT, "PyQt5 not installed")
+class NightlyButtonTests(unittest.TestCase):
+    """The nightly run becomes reachable from the window.
+
+    It was the biggest thing this software does unattended and the only way to
+    see or change any of it was a terminal plus a root-owned file. Pause and
+    resume are real here because `sv` is already granted; the time and the
+    kernel scope are shown with their command, because the updater holds no
+    privilege to rewrite machine config and should say so rather than offer a
+    button that cannot work.
+    """
+
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        loader = importlib.machinery.SourceFileLoader("cachygui", str(GUI_PATH))
+        spec = importlib.util.spec_from_loader("cachygui", loader)
+        cls.mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.mod)
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.calls = []
+        self.mod.Updater._run = lambda s, a, t, **kw: self.calls.append(list(a))
+        self.w = self.mod.Updater()
+        self.w.show()
+
+    def tearDown(self):
+        self.w.deleteLater()
+
+    def test_the_button_exists_beside_the_build_space_one(self):
+        self.assertTrue(self.w.btn_sched.isVisible())
+        self.assertIn("nightly", self.w.btn_sched.text().lower())
+
+    def test_it_reads_before_it_offers_anything(self):
+        self.calls.clear()
+        self.w.nightly()
+        self.assertEqual(self.calls, [["--schedule"]])
+
+    def test_the_tooltip_says_what_it_cannot_do(self):
+        tip = self.w.btn_sched.toolTip()
+        self.assertIn("command", tip)
+
 if __name__ == "__main__":
     unittest.main()
 

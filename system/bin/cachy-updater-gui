@@ -467,6 +467,12 @@ class Updater(QWidget):
         # says so in --status). Until now rollback existed only as a CLI flag,
         # which is exactly the wrong place for the one action you want when a
         # kernel misbehaves.
+        self.btn_sched = QPushButton("Nightly updates…")
+        self.btn_sched.setToolTip(
+            "Whether this box updates itself unattended, when, and whether "
+            "that includes compiling the BORE kernel. Pause or resume it from "
+            "here; the time and the kernel scope are machine settings and are "
+            "shown with the command that changes them.")
         self.btn_space = QPushButton("Kernel build space…")
         self.btn_space.setToolTip(
             "Where the BORE kernel is compiled. A kernel build needs ~20 GB of "
@@ -497,6 +503,7 @@ class Updater(QWidget):
         actions.addWidget(self.btn_clean)
         actions.addWidget(self.btn_snapshots)
         actions.addWidget(self.btn_gpu)
+        actions.addWidget(self.btn_sched)
         actions.addWidget(self.btn_space)
         root.addLayout(actions)
         self.btn_rollback.hide()
@@ -575,6 +582,7 @@ class Updater(QWidget):
         self.btn_gpu.clicked.connect(self.gpu)
         self.btn_snapshots.clicked.connect(self.snapshots)
         self.btn_pin.clicked.connect(self.pin_bore)
+        self.btn_sched.clicked.connect(self.nightly)
         self.btn_space.clicked.connect(self.build_space)
         self.btn_rollback.clicked.connect(self.rollback)
 
@@ -907,6 +915,59 @@ class Updater(QWidget):
                 tail = ". " + tail[0].upper() + tail[1:]
             self.kernel_label.setText(head + tail)
         self.kernel_notice.setVisible(bool(keep))
+
+    def nightly(self):
+        """Show the unattended-update settings, and offer pause/resume.
+
+        The owner asked whether the nightly run was configurable "from a cachy
+        void updater gui perspective". It was not -- not the on/off, not the
+        time, not whether it may build a kernel -- even though a kernel
+        compiling at 3am is about the most consequential thing this software
+        does on its own. That is the "nothing that matters is CLI-only" rule
+        broken by the biggest behaviour in the product.
+
+        What this dialog offers is bounded by the §4.1 sudo boundary rather
+        than by what would be convenient. Pause and resume are real buttons,
+        because `sv` is already granted for §4.7 service cycling — no widening
+        for this. The time and the kernel scope live in a root-owned conf, and
+        the updater must not gain the ability to rewrite root-owned machine
+        config, so those are shown with the exact command. Saying so is better
+        than a button that silently cannot work.
+        """
+        def after(_code):
+            text = self.out.toPlainText()
+            if "not enabled" in text:
+                QMessageBox.information(
+                    self, "Nightly updates",
+                    "Unattended updates are not enabled on this machine — "
+                    "nothing runs on its own.\n\nThe Output pane shows the "
+                    "command that enables them (it needs root).")
+                return
+            paused = "--schedule resume" in text
+            box = QMessageBox(self)
+            box.setWindowTitle("Nightly updates")
+            box.setIcon(QMessageBox.NoIcon)
+            head = ("This box updates itself unattended.\n\n" if not paused
+                    else "Unattended updates are enabled but PAUSED.\n\n")
+            # The settings block, transcribed from the CLI's own report.
+            keep = [l for l in text.splitlines()
+                    if l.startswith("scheduled updates:") or l.startswith("  ")]
+            box.setText(head + "\n".join(keep[:6]))
+            box.setInformativeText(
+                "The time and whether it includes the kernel are machine "
+                "settings in a root-owned file — the Output pane shows the "
+                "command for each. This window holds no privilege to rewrite "
+                "them.")
+            act = box.addButton("Resume it" if paused else "Pause it",
+                                QMessageBox.AcceptRole)
+            box.addButton("Close", QMessageBox.RejectRole)
+            box.exec_()
+            if box.clickedButton() is act:
+                self._run(["--schedule", "resume" if paused else "pause"],
+                          self.out, clear=False, done=lambda _c: self.check(),
+                          activity="Changing the nightly run…")
+        self._run(["--schedule"], self.out, done=after,
+                  activity="Reading the nightly-update settings…")
 
     def build_space(self):
         """Show where kernel builds happen, and let the user move them.
