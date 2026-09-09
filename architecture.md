@@ -520,8 +520,22 @@ Reached only when every build in Stage 3 succeeded — partial overlays are neve
 An empty overlay queue (`Q = ∅`) must not leave the rolling base stale: `--status`
 tier [1] reports pending upstream updates, and an Update that then does nothing
 breaks the "update everything" promise (same failure class as skipping Flatpak).
-When `--commit` finds nothing to build or deploy it still queries
-`xbps-install -Sun`; if upstream updates are pending it runs the same Stage-4
+When `--commit` finds nothing to build or deploy it still asks whether upstream
+updates are pending — **through `upstream_counts()`, the same memory-synced query
+`--status` and `--pending` use, and this is normative.** It used to ask `sudo
+xbps-install -Sun`, on the assumption that `-S` refreshes the index. **It does
+not when `-n` is also given:** a dry run performs no sync, so the answer comes
+from whatever on-disk index exists — and that index is only ever written by a
+real `-Suy`, i.e. by the *previous successful deploy*. Days later it is stale and
+the pass concludes there is nothing to do, silently. Measured on the testbed
+(2026-09-09, after the owner pressed Update twice and nothing installed): `sudo
+xbps-install -Sun` returned 4 lines and printed no sync output at all, while
+`xbps-install -Mun` returned 36 — identical repositories, 14777 packages each,
+and the stale index even disagreed on a version (6.18.49 against the remote's
+6.18.50). Three consumers, one query: a fourth path that counts upstream updates
+its own way is a bug waiting to be found by a user.
+
+If upstream updates are pending it runs the same Stage-4
 choreography with an empty deploy set — §9.5 pre-deploy snapshot, one `-Suy`
 (same single call site as §4.5; the §4.6 takeover loop is vacuous), §4.7 service
 cycling, then Flatpak. "Reached only when every build succeeded" holds vacuously:
@@ -595,6 +609,19 @@ exec snooze -H 5 -M 30 /usr/local/bin/cachy-void-update --yes
   with `--with-schedule`. An unattended build+deploy is a deliberate choice, so
   the default install leaves it disabled and one `ln -s` (or a re-run with the
   flag) away.
+- **Scope: `SCHEDULE_KERNEL=yes|no`** in the service `conf`. `yes` (the default,
+  and what the service has always done) makes the unattended run a full
+  `--commit --yes`, so a kernel bump compiles overnight unattended. `no` makes it
+  `--commit --yes --no-kernel`: the base and the performance overlay are kept
+  current and BORE builds wait for a human press. The default is deliberately
+  unchanged, because silently altering what an existing install already does is
+  precisely what this project avoids; and `--status` states which mode is in
+  force rather than assuming, since a report claiming "kernel INCLUDED" on a box
+  configured otherwise would be the same true-sounding falsehood the visibility
+  work exists to prevent. Before this knob the only way to avoid an unattended
+  multi-hour compile was disabling the service outright — a poor choice to force
+  on someone who wants the base current nightly and the kernel built at a moment
+  they pick.
 - **And opt-in is not enough on its own — being ON is normative to SAY.**
   `--status` prints a line naming the scheduled run whenever the service is
   enabled: that it runs `--sync` then `--commit --yes`, that the **kernel is
@@ -616,6 +643,42 @@ exec snooze -H 5 -M 30 /usr/local/bin/cachy-void-update --yes
   invents a time — an unreadable `conf` omits it rather than reporting the
   shipped 05:30 default, because a box that changed the schedule is exactly the
   box that would be misled (the one in the incident had).
+- **`--schedule [pause|resume]`** — reports the §4.9 unattended run (state, time,
+  scope) and pauses or resumes it. What it may do is decided by the §4.1 boundary,
+  not by convenience: pause/resume is real work because `sv` is **already** in the
+  grant for §4.7 service cycling, so this widened nothing; the time and the kernel
+  scope live in a root-owned `conf` and are *reported with the exact command*,
+  because the updater must not acquire the ability to rewrite root-owned machine
+  configuration — the same line held for `--build-space`. Pausing is `sv down`
+  rather than removing the service link: reversible from the same place, and a
+  reboot re-arms it, so it cannot quietly become a permanent change nobody
+  remembers making.
+- **Held packages are named, never managed.** Tier [1]'s `(+N on hold)` counts
+  holds with an update *waiting*; the list beneath it names **every** hold with
+  `xbps-pkgdb -m unhold <package>`. The two numbers differ in practice (a held
+  meta-package with no newer version never appears as pending), which is what
+  prompted the question. Nothing in this project ever sets, clears or suggests a
+  hold — every `xbps-pkgdb` call in the codebase is `-m manual` — so the report
+  says "pinned by hand — not by this updater". Same line as kernel purges (§2.5).
+- **The GPU findings that need a person reach `--status`, not just `--gpu`.**
+  `gpu_attention()` computes two, from the same sources the panel uses so the two
+  can never disagree about one machine: an installed kernel with **no**
+  out-of-tree module (boot it and the proprietary driver is gone), and a legacy
+  driver series on a card too new for it. Both used to exist only inside the
+  panel, so a box one reboot from losing its GPU said nothing until someone
+  thought to press a button about it. Everything else the panel prints stays
+  there as reference, which is what a detail view is for.
+  **Driver-series claims are limited to what the repository supports.** Void
+  labels only its *legacy* series by GPU family (`xbps-query -R -p short_desc`:
+  `nvidia470` = "GKxxx Kepler", `nvidia390` = "GeForce 400, 500 series"), while
+  `nvidia` and `nvidia580` are both described only as "NVIDIA drivers for linux".
+  So a legacy series on a newer card is assertably wrong and *any* current branch
+  is plausible; asserting one specific current branch told anyone correctly
+  running `nvidia580` that their driver was wrong. Which current branch suits a
+  given card is NVIDIA's matrix to answer, and the advice says so. A detected
+  mismatch now prints both halves of the swap in one transaction, the 32-bit
+  libraries, and that a reboot is needed — as advice, because §7.1's no-widen
+  rule forbids the updater installing a package that is not already installed.
 - **`--status` also says when the newest run failed, and reports the disk.**
   Above the tiers: `last update run FAILED <when>: <pkg>: <reason>` with the
   build log's path (or `REFUSED before building` for a preflight exit 31),
@@ -1230,6 +1293,31 @@ The service is named **`cachy-health`** (`system/sv/cachy-health/run`); it is th
 - **Confirm layer (one-shot, normative §8.7):** exactly the `kernel-confirm` logic below — run once per boot (guarded by a `boot_id` sentinel), decide PROMOTE / CANDIDATE_UNHEALTHY / ROLLED_BACK. Rollback here is **passive**: during the trial boot the GRUB default is *already* the known-good kernel (§8.6), so leaving it untouched is the rollback.
 - **Watchdog layer (continuous, operational extension):** after a candidate has been PROMOTED — when the default has *become* the candidate — the daemon keeps sampling the H1–H5 battery on short telemetry intervals, writing each result to the state store's `health` field. If the battery fails **`kernel.trip_after` (default 3) consecutive** intervals it fires an **active** rollback (`cmd_rollback` → re-pin default to known-good), since here there is no armed one-shot to fall back on. This is the only place active rollback is warranted.
 
+**A staged candidate counts as already acted on (normative).** §8.2 must compare
+upstream against `acted_version(state)` — the candidate's version while
+`STAGED`/`CONFIRMING`, else `ported_version` — and *not* against `ported_version`
+alone. Because §8.8 advances `ported_version` only on PROMOTE, the window between
+staging and the trial boot has a version that is already regenerated, built,
+installed and staged which `ported_version` does not know about. Comparing
+against it there re-detects the SAME version as a fresh bump on every run, §8.4
+synthesis then writes `READY` over `STAGED`, and §8.7's confirm service exits
+because the state is no longer `STAGED`/`CONFIRMING` — so the candidate can never
+be promoted, `ported_version` never advances, and the box offers to build the
+kernel it is already running, for ever. Observed exactly that way on 2026-09-09.
+The `STAGED → discard` row below is for a **newer** upstream bump; the same
+version is not a bump at all. A frozen state deliberately does *not* borrow its
+candidate: `CANDIDATE_UNHEALTHY` means the candidate failed, and it must not
+suppress the offer to try a newer one.
+
+**`ported_version` is a bare version, and promotion must reduce the pkgver to
+one.** The candidate object holds a name-prefixed `pkgver` because that is what
+`xbps-query -p pkgver` returns; §8.2 hands `ported_version` to
+`xbps-uhelper cmpver` against a bare template version. Promotion copied it across
+verbatim until 2026-09-09, writing `linux-cachy-6.12.108_1` — not a crash, a
+silently meaningless comparison in the one field that decides whether a new
+kernel is ever noticed. The pre-existing test asserted the prefixed value, so it
+had locked in the bug rather than the requirement.
+
 **The watchdog only ever judges a CANDIDATE (normative).** The trip path writes `CANDIDATE_UNHEALTHY`, and §8.8 lists that state exclusively as a transition out of `STAGED`/`CONFIRMING` — it is a verdict on a kernel being tried, not a general health opinion. But the daemon runs on **every** boot forever, so a trip must be **guarded**: it fires only when the state is `STAGED`/`CONFIRMING` *and* a candidate is actually recorded. Failing that guard, `trip_after` consecutive failures produce a **health warning** (said once per episode, counter reset, loop continues) and the kernel state is left untouched.
 
 *Why this is normative rather than a detail:* without the guard, any run of failures on a stable system is recorded as a failed kernel candidate, which freezes the kernel path (§8 preamble) with nothing staged to be unhealthy about — and the trip's own advice ("select the known-good kernel in the boot menu") is nonsense when the running kernel *is* the known-good one. Found on real hardware, and not as an edge case: the H4 network check fails transiently on most days of a laptop's life (WiFi roaming, suspend/resume, being carried out of range), and a 90-second outage on 2026-08-22 parked a fully healthy Medion in `CANDIDATE_UNHEALTHY` with `candidate: null` while all five checks read green. A laptop would hit this eventually with certainty.
@@ -1283,7 +1371,7 @@ elif boot_id ≠ s.staged_boot_id:      # a reboot happened, but not into the ca
 | READY | DDRE built + installed candidate | §8.6 staging | STAGED |
 | READY | DDRE exit 40 on `linux-cachy` | forensics per §7 | AWAIT_HUMAN_BUILD |
 | STAGED | new upstream bump before reboot | clear one-shot (`grub-editenv - unset next_entry`); discard candidate | BUMP_PATCHLEVEL |
-| STAGED / CONFIRMING | boot, uname == candidate, battery passes | promote; advance `ported_version` | TRACKING |
+| STAGED / CONFIRMING | boot, uname == candidate, battery passes | promote; advance `ported_version` (a **bare** `<version>_<revision>`, never the candidate's name-prefixed `pkgver`) | TRACKING |
 | STAGED / CONFIRMING | battery fails | no GRUB change; banner | CANDIDATE_UNHEALTHY |
 | STAGED | boot, uname ≠ candidate, boot_id changed | alert | ROLLED_BACK |
 | CANDIDATE_UNHEALTHY / ROLLED_BACK / AWAIT_* / HALT_* | `cachy-void-update --kernel-ack` after human fix | archive candidate to history | TRACKING |

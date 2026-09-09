@@ -72,12 +72,15 @@ Once `deploy.sh` has finished, **`cachy-updater-gui` is the part of Cachy-Void y
 | **Update** | Sync `void-packages`, then rebuild any overlay package that needs it and update the system (kernel untouched). Whether anything compiles depends on the queue — the confirm dialog says which. |
 | **Update kernel** | The same, including the BORE kernel: compiles, then a reboot switches to it. |
 | **Clean up** | Orphans + package cache + the local repo's debug-symbol packages (2 GB per kernel build, never installed from). **Previews first** and lists exactly what will go; never removes kernels. |
-| **GPU / drivers** | Card, driver + pending update, whether the module is really loaded, DKMS builds per kernel — and a warning for any installed kernel with **no** module built. |
+| **GPU / drivers** | Card, driver + pending update, whether the module is really **loaded**, which DKMS build is the running kernel, and whether the installed driver series suits the card. The two findings that need you — a kernel with no module, or a legacy series on a newer card — also appear in the status on their own, so this is the detail view rather than the only route to a warning. |
+| **Nightly updates** | Whether this box updates itself unattended, when, and whether that includes compiling the kernel. Pause and resume from here; the time and the kernel scope are machine settings, shown with the command that changes them (the updater holds no privilege to rewrite root-owned config). |
 | **Kernel build space** | Where the BORE kernel compiles. A build needs ~20 GB of scratch and refuses below 30 GB free — rather than reserving that much of your root disk forever, point it at another one. Validates the choice (space, filesystem, `noexec`, USB) before anything is written. |
 | **Snapshots** | Every pre-deploy btrfs snapshot with what that update actually did, which ones are pruned automatically, and the exact commands to go back to one on *your* layout (or an honest refusal where that cannot work). Read-only — it never restores anything for you. |
 | **Boot known-good kernel** | Appears *only* when the running kernel isn't the recorded known-good one; re-points the bootloader default, uninstalls nothing. |
 | **Review & pin…** | Appears *only* when your kernel series has no approved BORE patch: it fetches the patch, shows commit + checksum, and records it when you approve. Until then kernel updates pause while everything else still updates. |
 | **i** | What each status tier means, what maintains itself, and what needs you. Stays open and readable while a command runs. |
+
+Below the buttons a fixed strip carries the two facts that decide how the machine behaves when nobody is watching — whether the nightly run is on, at what time, and whether it includes the kernel; and where the kernel compiles, with the free space there. Both used to live only inside the status report, which scrolls.
 | *checked N minutes ago* + **Re-check** | The pending list is a point-in-time read; the age says how stale, and re-reading is one quiet click (it also runs on open and after every command). |
 
 Three rules shape it, learned by using it on real hardware:
@@ -149,7 +152,7 @@ assets/                  Wallpapers + icons (the mark)
 updater/
   cachy_void_update.py   Unified CLI (--sync/--check/--status/--commit/--rollback/--clean/--gpu/…)
   engine/                Solver, XBPS layer, journal, kernel state machine, trust, health, snapshot
-  tests/                 Mock-driven unit + integration suites (528 tests) +
+  tests/                 Mock-driven unit + integration suites (667 tests) +
                          dispatch-isolation.sh (real appliers, disjoint HOMEs)
 ```
 
@@ -157,7 +160,7 @@ updater/
 
 ## Status
 
-The whole spec is implemented and covered by a **528-test** mock-driven suite (run in a Void WSL2 sandbox): the update engine, dependency solver, trust pipeline, template synthesis, kernel state machine, health daemon, installer, and the desktop detector/dispatcher. Desktop branding is verified in three layers, because only one of them needs hardware: the *decision* (which desktop, on what evidence) is unit-tested against fake filesystem trees and by `cachy-branding --dry-run`; the *files written* are checked by `updater/tests/dispatch-isolation.sh`, which runs the real appliers into disjoint `HOME`s and asserts no desktop's config lands in another's (plus one shared `HOME`, since two appliers editing the same file is its own failure mode); only the *look* needs a real login.
+The whole spec is implemented and covered by a **667-test** mock-driven suite (run in a Void WSL2 sandbox): the update engine, dependency solver, trust pipeline, template synthesis, kernel state machine, health daemon, installer, and the desktop detector/dispatcher. Desktop branding is verified in three layers, because only one of them needs hardware: the *decision* (which desktop, on what evidence) is unit-tested against fake filesystem trees and by `cachy-branding --dry-run`; the *files written* are checked by `updater/tests/dispatch-isolation.sh`, which runs the real appliers into disjoint `HOME`s and asserts no desktop's config lands in another's (plus one shared `HOME`, since two appliers editing the same file is its own failure mode); only the *look* needs a real login.
 
 **Validated on real hardware** (a Void + LXQt laptop): the updater's own `--commit` built `linux-cachy` end-to-end (BORE patch trust → template regen → G2 config gate → compile → deploy), the kernel **booted** (BORE live, 1000 Hz, full preempt), the **NVIDIA DKMS driver built against the BORE kernel**, and games ran on it. The **post-boot health daemon** has also run its full §8.7 confirm cycle on metal: candidate confirmed, the H1–H5 battery passed, and the kernel was **promoted** to tracked/known-good. The performance overlay, zram/sysctl tuning, service cycling, btrfs snapshots, and gaming layer are all exercised on bare metal.
 
