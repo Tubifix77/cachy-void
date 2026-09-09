@@ -3322,15 +3322,37 @@ def _system_update(config: Config, xbps, out, run, confirm, assume_yes,
     journal.set_phase("deploy")
     prune_run_logs(config)
 
-    cp = run(["sudo", "xbps-install", "-Sun"])
-    if cp.returncode != 0:
-        out("error: could not query upstream updates (xbps-install -Sun)")
+    # THE SAME counting path as --status and --pending, and it has to be.
+    #
+    # This used to ask `sudo xbps-install -Sun`, on the assumption that -S
+    # refreshes the index. It does not when -n is also given: a dry run
+    # performs no sync, so the query is answered from whatever on-disk index
+    # happens to be there -- and that index is only ever written by a real
+    # `-Suy`, i.e. by the previous successful deploy. Days later it is stale,
+    # and the pass concludes there is nothing to do.
+    #
+    # Which is exactly what the owner hit (2026-09-09): --status said 32
+    # packages, and pressing Update printed "queue empty" then "base already up
+    # to date" and installed nothing, twice. Measured afterwards on the box:
+    # `sudo xbps-install -Sun` returned 4 lines with no sync output at all,
+    # while `xbps-install -Mun` returned 36 -- and after one real `xbps-install
+    # -S` the same -Sun returned 36 too.
+    #
+    # upstream_counts() memory-syncs (-M): current, unprivileged, no cache
+    # write, and it degrades honestly when the mirror is unreachable. Three
+    # consumers, one query -- the rule already written into that function after
+    # the tray said 20 and the window said 16.
+    n, held, fresh, _drv = upstream_counts(run)
+    if n is None:
+        out("error: could not query upstream updates")
         journal.fail(None, EXIT_QUERY, reason="could not query upstream updates")
         return EXIT_QUERY
-    pending = [l for l in (cp.stdout or "").splitlines()
-               if len(l.split()) > 1 and l.split()[1] in ("update", "install")]
-    if not pending:
-        out("system: base already up to date.")
+    if not fresh:
+        out("note: the mirror was unreachable; counts come from the on-disk "
+            "cache and may be stale.")
+    if not n:
+        out("system: base already up to date."
+            + (f"   ({held} held back)" if held else ""))
         rc_flatpak = _update_flatpak(config, out, run)
         if rc_flatpak != EXIT_OK:
             journal.fail(None, rc_flatpak, reason="flatpak update failed")
@@ -3338,7 +3360,8 @@ def _system_update(config: Config, xbps, out, run, confirm, assume_yes,
             journal.finish()
         return rc_flatpak
 
-    out(f"system: {len(pending)} upstream update(s) pending — applying (§4.5a).")
+    out(f"system: {n} upstream update(s) pending — applying (§4.5a)."
+        + (f"   ({held} held back)" if held else ""))
     if not assume_yes:
         ans = confirm("apply upstream system updates now? [y/N] ").strip().lower()
         if ans not in ("y", "yes"):

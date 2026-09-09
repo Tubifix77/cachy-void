@@ -256,6 +256,12 @@ class CommitCommandTests(unittest.TestCase):
                 return cp(0, stdout="abc123\n")
             if args[0] == "uname":
                 return cp(0, stdout="6.12.34_1\n")
+            # The §4.5a system pass decides from upstream_counts() (a memory
+            # sync), so a stub that answers nothing means "nothing pending"
+            # and the pass correctly does nothing. These tests are about what
+            # happens when it DOES run.
+            if args[:2] == ["xbps-install", "-Mun"]:
+                return cp(0, stdout="foo-1.2_3 update x86_64 https://m 1 1\n")
             return cp(0, stdout="")
         return run, calls
 
@@ -593,6 +599,11 @@ class SystemPassTests(unittest.TestCase):
 
         def run(args, cwd=None):
             calls.append(list(args))
+            # The system pass now decides from upstream_counts() -- a memory
+            # sync (-M), because -S is inert under -n and answered from a
+            # possibly days-old on-disk index.
+            if args[:2] == ["xbps-install", "-Mun"]:
+                return cp(0, stdout="\n".join(pending_lines))
             if args[:3] == ["sudo", "xbps-install", "-Sun"]:
                 return cp(0, stdout="\n".join(pending_lines))
             return cp(0, stdout="")
@@ -649,6 +660,12 @@ class SystemPassTests(unittest.TestCase):
 
         def run(args, cwd=None):
             calls.append(list(args))
+            # Both the memory sync and the cache fallback fail: that is what
+            # "could not determine the count at all" means.
+            if args[:2] == ["xbps-install", "-Mun"]:
+                return cp(1, stderr="repo unreachable")
+            if args[:2] == ["xbps-install", "-un"]:
+                return cp(1, stderr="repo unreachable")
             if args[:3] == ["sudo", "xbps-install", "-Sun"]:
                 return cp(1, stderr="repo unreachable")
             return cp(0, stdout="")
@@ -2323,6 +2340,8 @@ class SystemPassJournalTests(unittest.TestCase):
             calls.append(a)
             if a[:3] == ["git", "rev-parse", "HEAD"]:
                 return cp(0, "abc123\n")
+            if a[:1] == ["xbps-install"] and "-Mun" in a:
+                return cp(0, "foo-1.2_3 update x86_64\n" if pending else "")
             if a[:2] == ["sudo", "xbps-install"] and "-Sun" in a:
                 return cp(0, "foo-1.2_3 update x86_64\n" if pending else "")
             if a[:2] == ["sudo", "xbps-install"] and "-Suy" in a:
@@ -3216,6 +3235,101 @@ class GpuAttentionTests(unittest.TestCase):
     def test_no_dkms_at_all_is_silent_not_a_fault(self):
         run = self._runner("", "")
         self.assertEqual(cli.gpu_attention(FakeXbps(), run), [])
+
+
+class SystemPassUsesAFreshIndexTests(unittest.TestCase):
+    """The §4.5a pass must not decide from a stale on-disk index.
+
+    The bug the owner hit twice: --status reported 32 packages, pressing
+    Update printed "queue empty" then "base already up to date", and nothing
+    installed. The pass asked `sudo xbps-install -Sun`, on the assumption that
+    -S refreshes the index. It does not when -n is also given -- a dry run
+    performs no sync -- so the answer came from whatever on-disk index existed,
+    and that index is only written by a real `-Suy`, i.e. by the PREVIOUS
+    successful deploy. A day later it is stale and the pass sees nothing.
+
+    Measured on the box before fixing it: `sudo xbps-install -Sun` returned 4
+    lines and printed no sync output at all, while `xbps-install -Mun`
+    returned 36; after one real `xbps-install -S` the same -Sun returned 36.
+
+    So the pass now shares upstream_counts() with --status and --pending.
+    Three consumers, one query -- the rule already written into that function
+    after the tray said 20 while the window said 16.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _cfg(self):
+        return cli.Config(void_packages=Path("/vp"), targets=[],
+                          state_dir=self.tmp, log_root=self.tmp / "log",
+                          snapshot_enable=False)
+
+    @staticmethod
+    def _runner(memory_sync_lines, on_disk_lines):
+        """A box whose on-disk index is STALE and whose remote is current."""
+        calls = []
+
+        def run(args, cwd=None):
+            a = list(args)
+            calls.append(a)
+            if a[:3] == ["git", "rev-parse", "HEAD"]:
+                return cp(0, "abc\n")
+            if a[:1] == ["xbps-install"] and "-Mun" in a:
+                return cp(0, memory_sync_lines)
+            if a[:2] == ["sudo", "xbps-install"] and "-Sun" in a:
+                return cp(0, on_disk_lines)
+            if a[:2] == ["sudo", "xbps-install"] and "-Suy" in a:
+                return cp(0, "")
+            if a[0] == "flatpak":
+                return cp(127, "")
+            return cp(0, "")
+        return run, calls
+
+    def test_a_stale_on_disk_index_does_not_suppress_the_update(self):
+        # The exact shape of the box: the remote has updates, the on-disk
+        # index (last written by the previous deploy) shows only held kernels.
+        fresh = ("aurorae-6.7.5_1 update x86_64 https://m 1 1\n"
+                 "kwin-6.7.5_1 update x86_64 https://m 1 1\n")
+        stale = "linux6.12-6.12.108_1 hold x86_64 https://m 1 1\n"
+        run, calls = self._runner("".join(fresh), stale)
+        out = Sink()
+        rc = cli._system_update(self._cfg(), FakeXbps(), out, run, input,
+                               True, service_root=self.tmp / "sv")
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("2 upstream update(s) pending", out.text())
+        self.assertTrue(any("-Suy" in c for c in calls),
+                        "the deploy never ran: " + repr(calls))
+
+    def test_it_never_asks_the_query_that_does_not_sync(self):
+        run, calls = self._runner("foo-1_1 update x86_64 https://m 1 1\n", "")
+        cli._system_update(self._cfg(), FakeXbps(), Sink(), run, input,
+                          True, service_root=self.tmp / "sv")
+        self.assertFalse(any("-Sun" in c for c in calls),
+                         "-S is inert under -n; the decision must use -M")
+
+    def test_a_genuinely_current_box_still_does_nothing(self):
+        run, calls = self._runner("", "")
+        out = Sink()
+        rc = cli._system_update(self._cfg(), FakeXbps(), out, run, input,
+                               True, service_root=self.tmp / "sv")
+        self.assertEqual(rc, cli.EXIT_OK)
+        self.assertIn("already up to date", out.text())
+        self.assertFalse(any("-Suy" in c for c in calls))
+
+    def test_held_packages_are_counted_apart_and_named(self):
+        fresh = ("aurorae-6.7.5_1 update x86_64 https://m 1 1\n"
+                 "linux6.12-6.12.108_1 hold x86_64 https://m 1 1\n")
+        run, _ = self._runner("".join(fresh), "")
+        out = Sink()
+        cli._system_update(self._cfg(), FakeXbps(), out, run, input,
+                          True, service_root=self.tmp / "sv")
+        t = out.text()
+        self.assertIn("1 upstream update(s) pending", t)
+        self.assertIn("held back", t)
 
 if __name__ == "__main__":
     unittest.main()
