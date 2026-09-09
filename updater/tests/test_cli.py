@@ -3064,6 +3064,96 @@ class ScheduleCommandTests(unittest.TestCase):
             self.assertNotIn("tee", c)
             self.assertNotIn("sed", c)
 
+
+class NvidiaSeriesAdviceTests(unittest.TestCase):
+    """Which driver series a card wants -- and what we may claim to know.
+
+    The owner asked what the GPU button is for, comparing it to Mint's driver
+    chooser: 'newest is not always best'. Exactly so, and this is where that
+    judgement lives -- we check the pairing rather than offering a menu.
+
+    Checking it revealed the limit of what the repository can tell us. Void
+    labels only its LEGACY series by GPU family (verified with xbps-query -R
+    -p short_desc: nvidia470 says "GKxxx Kepler", nvidia390 says "GeForce 400,
+    500 series"), while `nvidia` and `nvidia580` are both described only as
+    "NVIDIA drivers for linux". So a legacy pairing can be judged and a current
+    one cannot -- and asserting otherwise told anyone correctly running
+    nvidia580 on a Maxwell-or-newer card that their driver was wrong.
+    """
+
+    @staticmethod
+    def _blob(chip):
+        return f"NVIDIA Corporation {chip} [GeForce Whatever] (rev a1)"
+
+    def test_a_kepler_chip_wants_the_kepler_series(self):
+        want, fam = cli.expected_nvidia_series(self._blob("GK107M"))
+        self.assertEqual((want, fam), ("nvidia470", "Kepler"))
+
+    def test_a_fermi_chip_wants_the_fermi_series(self):
+        want, fam = cli.expected_nvidia_series(self._blob("GF119"))
+        self.assertEqual((want, fam), ("nvidia390", "Fermi"))
+
+    def test_newer_chips_ask_for_a_current_branch_generically(self):
+        for chip, fam in (("GM204", "Maxwell"), ("GP106", "Pascal"),
+                          ("TU116", "Turing"), ("GA104", "Ampere"),
+                          ("AD103", "Ada")):
+            want, family = cli.expected_nvidia_series(self._blob(chip))
+            self.assertEqual(want, "nvidia")
+            self.assertEqual(family, fam)
+
+    def test_the_legacy_set_is_what_void_actually_labels(self):
+        # If Void ever labels a current branch by family, this is the place to
+        # widen -- but only on evidence from the repository, not a guess.
+        self.assertEqual(set(cli._NVIDIA_LEGACY_SERIES),
+                         {"nvidia390", "nvidia470"})
+
+    def test_the_hint_no_longer_names_one_current_branch_as_the_answer(self):
+        # It used to say 'Maxwell and newer -> nvidia (current)', which is a
+        # claim the repository does not support now that nvidia580 exists.
+        h = cli._NVIDIA_LEGACY_HINT
+        self.assertIn("nvidia580", h)
+        self.assertIn("nvidia390", h)
+        self.assertIn("nvidia470", h)
+
+
+class NvidiaSwapAdviceTests(unittest.TestCase):
+    """A detected mismatch must come with the command that fixes it.
+
+    The one branch that finds a real problem was the one branch with no fix in
+    it. It stays advice rather than an action for a spec reason and not only
+    taste: §7.1's no-widen rule says the updater never installs a binpkg that
+    is not already installed, and switching series is precisely that.
+    """
+
+    def test_it_names_both_halves_of_the_swap(self):
+        out = Sink()
+        cli._nvidia_swap_advice(out, ["nvidia", "nvidia-dkms"], "nvidia470",
+                                "Kepler")
+        t = out.text()
+        self.assertIn("xbps-install -Sy nvidia470 nvidia470-dkms", t)
+        self.assertIn("xbps-remove -Ry nvidia", t)
+
+    def test_it_mentions_the_32bit_libraries_for_steam(self):
+        out = Sink()
+        cli._nvidia_swap_advice(out, ["nvidia"], "nvidia470", "Kepler")
+        self.assertIn("nvidia470-libs-32bit", out.text())
+
+    def test_it_says_a_reboot_is_needed(self):
+        out = Sink()
+        cli._nvidia_swap_advice(out, ["nvidia"], "nvidia470", "Kepler")
+        self.assertIn("REBOOT", out.text())
+
+    def test_it_explains_why_it_does_not_do_it_for_you(self):
+        out = Sink()
+        cli._nvidia_swap_advice(out, ["nvidia"], "nvidia470", "Kepler")
+        self.assertIn("no-widen", out.text())
+
+    def test_nothing_to_swap_prints_no_commands(self):
+        out = Sink()
+        cli._nvidia_swap_advice(out, ["nvidia470", "nvidia470-dkms"],
+                                "nvidia470", "Kepler")
+        self.assertNotIn("xbps-install", out.text())
+
 if __name__ == "__main__":
     unittest.main()
 

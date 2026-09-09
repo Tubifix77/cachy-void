@@ -2945,9 +2945,22 @@ def cmd_clean(config: Config, *, assume_yes: bool, dry_run: bool = False,
 # needs a PCI-ID table; this keeps a human-checkable rule of thumb keyed on the
 # marketing name that lspci already prints.
 _NVIDIA_LEGACY_HINT = (
-    "NVIDIA driver series by GPU family: Kepler (GeForce 6xx/7xx) -> nvidia470; "
-    "Fermi (4xx/5xx) -> nvidia390; Maxwell and newer (9xx/10xx/16xx/20xx+) -> "
-    "nvidia (current). Match your card above; the wrong series will not load.")
+    "NVIDIA driver series by GPU family: Fermi (GeForce 4xx/5xx) -> nvidia390; "
+    "Kepler (GeForce 6xx/7xx) -> nvidia470; Maxwell and newer -> one of Void's "
+    "current branches (nvidia, nvidia580, ...). Void labels only the LEGACY "
+    "series by family in its package descriptions, so which current branch a "
+    "newer card wants is a question for NVIDIA's own support matrix, not "
+    "something this tool can read off the repository. The wrong series will "
+    "not load.")
+
+# Series Void itself identifies by GPU family in its package descriptions
+# (verified with `xbps-query -R -p short_desc`: nvidia470 says "GKxxx Kepler",
+# nvidia390 says "GeForce 400, 500 series"). Everything else -- `nvidia`,
+# `nvidia580`, and whatever comes next -- is described only as "NVIDIA drivers
+# for linux", with no family information at all. So legacy pairings can be
+# checked and current ones cannot, and pretending otherwise produced a false
+# warning for anyone correctly running nvidia580 on a Maxwell-or-newer card.
+_NVIDIA_LEGACY_SERIES = ("nvidia390", "nvidia470")
 
 # Chip codes are far more reliable than marketing names for this, and lspci
 # usually prints them ("GK107M [GeForce GT 730M]"): GF=Fermi, GK=Kepler,
@@ -2957,6 +2970,41 @@ _NVIDIA_CHIP_SERIES = {"gf": "nvidia390", "gk": "nvidia470"}
 _NVIDIA_FAMILY_NAME = {"gf": "Fermi", "gk": "Kepler", "gm": "Maxwell",
                        "gp": "Pascal", "gv": "Volta", "tu": "Turing",
                        "ga": "Ampere", "ad": "Ada"}
+
+
+def _nvidia_swap_advice(out, installed, want: str, family: str = "") -> None:
+    """Name the driver swap, and say what it costs. Never performs it.
+
+    The one branch where this command finds a real problem was the one branch
+    with no fix in it: it named the right series and left the reader to work
+    out the packages. That is against the project's own habit -- baloo gets
+    `balooctl6 disable`, old kernels get `vkpurge rm`, snapshots get their
+    restore recipe -- and it is the moment a command is worth most.
+
+    It stays advice rather than an action for a spec reason, not only taste:
+    §7.1's no-widen rule says the updater never installs a binpkg that is not
+    already installed, and switching series is exactly that. It is also a
+    change that can leave a machine on nouveau until someone fixes it by hand,
+    which is not something to start from an informational button.
+    """
+    wrong = sorted({d.split("-")[0] for d in installed}
+                   - {want})
+    out("    " + _NVIDIA_LEGACY_HINT)
+    if not wrong:
+        return
+    out("")
+    out("    to switch series (one transaction, so the box is never left with "
+        "no driver):")
+    pkgs = f"{want} {want}-dkms"
+    out(f"        sudo xbps-install -Sy {pkgs}")
+    out(f"        sudo xbps-remove -Ry {' '.join(wrong)}")
+    out("      add the 32-bit libraries too if you run Steam or Proton:")
+    out(f"        sudo xbps-install -Sy {want}-libs-32bit")
+    out("      then REBOOT: the running kernel keeps the old module loaded "
+        "until you do.")
+    out("      This is a driver swap, so it is yours to run: the updater never "
+        "installs a package that is not already installed (§7.1 no-widen), and "
+        "a half-finished swap leaves the card on nouveau.")
 
 
 def expected_nvidia_series(gpu_blob: str) -> tuple[str, str]:
@@ -3063,13 +3111,32 @@ def cmd_gpu(xbps, config: Config, out=print, run=_run) -> int:
         # matches the detected chip, and print the full table otherwise.
         want, family = expected_nvidia_series(blob)
         if want and drv:
-            if any(d == want or d.startswith(want + "-") for d in drv):
+            legacy_installed = [d for d in drv
+                                if d.split("-")[0] in _NVIDIA_LEGACY_SERIES]
+            if want == "nvidia":
+                # Maxwell and newer: any CURRENT branch is plausible and Void's
+                # metadata cannot tell them apart, so the only thing worth
+                # asserting is that a LEGACY series is not in use.
+                if legacy_installed:
+                    out(f"    WARNING: this looks like a {family or 'newer'} card, "
+                        f"but a legacy series is installed: "
+                        f"{', '.join(legacy_installed)}.")
+                    _nvidia_swap_advice(out, drv, "nvidia", family)
+                else:
+                    out(f"    driver series plausible for this card"
+                        + (f" ({family} -> a current branch: "
+                           f"{', '.join(sorted(drv))})" if family
+                           else f" ({', '.join(sorted(drv))})"))
+                    out("    (Void labels only its legacy series by GPU family, "
+                        "so which current branch is best for this card is "
+                        "NVIDIA's matrix to answer, not the repository's.)")
+            elif any(d == want or d.startswith(want + "-") for d in drv):
                 out(f"    driver series matches this card"
                     + (f" ({family} -> {want})" if family else f" ({want})"))
             else:
                 out(f"    WARNING: this looks like a {family or 'newer'} card, which "
                     f"wants {want} — installed: {', '.join(drv)}.")
-                out("    " + _NVIDIA_LEGACY_HINT)
+                _nvidia_swap_advice(out, drv, want, family)
         else:
             out("    " + _NVIDIA_LEGACY_HINT)
     elif "amd" in blob or "ati" in blob or "radeon" in blob:
