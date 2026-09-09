@@ -3154,6 +3154,69 @@ class NvidiaSwapAdviceTests(unittest.TestCase):
                                 "nvidia470", "Kepler")
         self.assertNotIn("xbps-install", out.text())
 
+
+class GpuAttentionTests(unittest.TestCase):
+    """The GPU findings that must FIND a user, not wait behind a button.
+
+    The owner asked whether the GPU panel is redundant: 'currently its a debug
+    tool, and nothing you would ever touch if things just worked - and the
+    debug gives you no option how to fix?'. The panel is not redundant -- it
+    adds six facts tier [5] never had -- but it WAS the only route to two
+    warnings, which is the same fault as a setting being CLI-only, one level
+    in. Those two now reach --status on their own; the rest of the panel is
+    reference, which is what a detail view should be.
+    """
+
+    @staticmethod
+    def _runner(dkms, kernels, lspci=""):
+        def run(args, cwd=None):
+            if args[:1] == ["dkms"]:
+                return cp(0, dkms)
+            if args[:2] == ["ls", "-1"]:
+                return cp(0, kernels)
+            if args[:1] == ["sh"]:
+                return cp(0, lspci)
+            return cp(0, "")
+        return run
+
+    ONE_BUILT = "nvidia/470, 6.12.108_1-cachy, x86_64: installed\n"
+    RTX = ("01:00.0 VGA compatible controller: NVIDIA GA104 [RTX 3070]\n")
+
+    def test_a_kernel_with_no_module_is_reported(self):
+        run = self._runner(self.ONE_BUILT,
+                           "6.12.108_1-cachy\n6.18.38_1\n")
+        lines = cli.gpu_attention(FakeXbps(), run)
+        self.assertTrue(any("6.18.38_1" in l and "NO out-of-tree" in l
+                            for l in lines), lines)
+
+    def test_a_fully_built_box_says_nothing(self):
+        # Silence is the point: this must not add noise to a healthy tier.
+        run = self._runner(self.ONE_BUILT, "6.12.108_1-cachy\n")
+        self.assertEqual(cli.gpu_attention(FakeXbps(), run), [])
+
+    def test_a_module_that_is_not_installed_is_reported(self):
+        run = self._runner("nvidia/470, 6.12.108_1-cachy, x86_64: built\n",
+                           "6.12.108_1-cachy\n")
+        lines = cli.gpu_attention(FakeXbps(), run)
+        self.assertTrue(any('not ' in l for l in lines), lines)
+
+    def test_a_legacy_series_on_a_new_card_is_reported(self):
+        run = self._runner(self.ONE_BUILT, "6.12.108_1-cachy\n", self.RTX)
+        xb = FakeXbps(installed=["nvidia470", "nvidia470-dkms"])
+        lines = cli.gpu_attention(xb, run)
+        self.assertTrue(any("legacy driver series" in l for l in lines), lines)
+
+    def test_a_current_series_on_a_new_card_is_not_flagged(self):
+        # Including nvidia580, which the old check called wrong.
+        run = self._runner("nvidia/580, 6.12.108_1-cachy, x86_64: installed\n",
+                           "6.12.108_1-cachy\n", self.RTX)
+        xb = FakeXbps(installed=["nvidia580", "nvidia580-dkms"])
+        self.assertEqual(cli.gpu_attention(xb, run), [])
+
+    def test_no_dkms_at_all_is_silent_not_a_fault(self):
+        run = self._runner("", "")
+        self.assertEqual(cli.gpu_attention(FakeXbps(), run), [])
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -1687,6 +1687,11 @@ def cmd_status(xbps, config: Config, out=print, run=_run,
                 out("      " + l)
         else:
             out("    DKMS: none (or driver is not DKMS)")
+        # The findings worth acting on, hoisted out of the GPU panel: they used
+        # to exist only there, so a kernel with no driver module was invisible
+        # until someone thought to press a button about it.
+        for line in gpu_attention(xbps, run):
+            out("    " + line)
     except OSError:
         pass
     # A pending GRAPHICS DRIVER update is worth naming even though it rides the
@@ -2970,6 +2975,79 @@ _NVIDIA_CHIP_SERIES = {"gf": "nvidia390", "gk": "nvidia470"}
 _NVIDIA_FAMILY_NAME = {"gf": "Fermi", "gk": "Kepler", "gm": "Maxwell",
                        "gp": "Pascal", "gv": "Volta", "tu": "Turing",
                        "ga": "Ampere", "ad": "Ada"}
+
+
+def gpu_attention(xbps, run) -> list:
+    """The GPU findings that should FIND a user, not wait behind a button.
+
+    Two of them, and both were reachable only by pressing "GPU / drivers":
+
+      * an installed kernel with NO out-of-tree module — boot it and the
+        proprietary driver is simply gone (nouveau/modesetting instead);
+      * a legacy driver series installed on a card too new for it.
+
+    Everything else that panel prints is reference: which build is the running
+    kernel, the driver's version, the purge commands. That distinction is the
+    answer to "is the GPU button redundant?" — it is not, but it was the only
+    route to two warnings, which is the same fault as a setting being
+    CLI-only, one level in. Tier [5] of --status now calls this, so the
+    findings arrive on their own and the panel becomes the detail view.
+
+    Read-only, and silent when there is nothing to say — a probe that cannot
+    look returns nothing rather than inventing a fault.
+    """
+    lines = []
+    try:
+        ds = [l for l in (run(["dkms", "status"]).stdout or "").splitlines()
+              if l.strip()]
+    except OSError:
+        return lines
+    if not ds:
+        return lines
+    try:
+        kernels = [k for k in (run(["ls", "-1", "/lib/modules"]).stdout
+                               or "").splitlines() if k.strip()]
+    except OSError:
+        kernels = []
+
+    built = dkms_kernels(ds, kernels)
+    for k in [k for k in kernels if k not in built]:
+        lines.append(f"WARNING: kernel {k} has NO out-of-tree module built — "
+                     "booting it would leave you on the in-tree driver "
+                     "(nouveau/modesetting for NVIDIA). See the GPU panel for "
+                     "the rebuild command.")
+    if any("installed" not in l.lower() for l in ds):
+        lines.append("warning: a DKMS module is not 'installed' — it may be "
+                     "missing for the running kernel (see the GPU panel).")
+
+    # A legacy series on a card too new for it. Only asserted where Void's own
+    # package descriptions support the claim (see _NVIDIA_LEGACY_SERIES).
+    #
+    # The card comes from lspci and the installed series from the package db --
+    # the same two sources cmd_gpu uses, deliberately, so the panel and the
+    # tier cannot reach different verdicts about the same machine.
+    try:
+        gpus = [g.split(": ", 1)[-1] if ": " in g else g
+                for g in (run(["sh", "-c",
+                               "lspci | grep -Ei 'vga|3d|display'"]).stdout
+                          or "").splitlines() if g.strip()]
+    except OSError:
+        gpus = []
+    blob = " ".join(gpus).lower()
+    if blob:
+        want, family = expected_nvidia_series(blob)
+        names = graphics_drivers(xbps)
+        legacy = [d for d in names if d.split("-")[0] in _NVIDIA_LEGACY_SERIES]
+        if want == "nvidia" and legacy:
+            lines.append(f"WARNING: this looks like a {family or 'newer'} card "
+                         f"with a legacy driver series installed ({', '.join(legacy)})"
+                         " — see the GPU panel for the switch commands.")
+        elif want and want != "nvidia" and names and not any(
+                d == want or d.startswith(want + "-") for d in names):
+            lines.append(f"WARNING: this looks like a {family or 'newer'} card, "
+                         f"which wants {want} — installed: {', '.join(names)}"
+                         " — see the GPU panel for the switch commands.")
+    return lines
 
 
 def _nvidia_swap_advice(out, installed, want: str, family: str = "") -> None:
