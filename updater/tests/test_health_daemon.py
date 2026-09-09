@@ -367,5 +367,99 @@ class PortedVersionShapeTests(unittest.TestCase):
         for bad in ("", "   ", "no-revision-here", "linux-cachy"):
             self.assertEqual(_ported_from_pkgver(bad), "")
 
+
+class TelemetryWarningRateLimitTests(unittest.TestCase):
+    """One warning per episode, not one per 30-second tick.
+
+    Measured on the testbed: 817 identical 'could not persist health
+    telemetry' lines while the disk was full. 817 x the 30s interval is ~6.8
+    hours, which is exactly how long it stayed full -- so the loop was pacing
+    itself correctly and the daemon was simply saying the same thing 817
+    times. They all share one log timestamp because svlogd could not write to
+    the full disk either: the pipe buffered and it stamped the whole backlog
+    the moment space returned, which made it look like a hot loop. It was not.
+
+    Still worth fixing: a daemon whose answer to a full disk is hundreds of
+    identical log lines is making a full disk worse, and copies 2..817 say
+    nothing the first did not.
+    """
+
+    class _Store:
+        """A state store that can be told to fail on save."""
+
+        def __init__(self):
+            self.err = None
+            self.saved = 0
+
+        def load(self):
+            return {}
+
+        def save(self, state):
+            if self.err:
+                raise OSError(self.err[0], self.err[1])
+            self.saved += 1
+
+    def _daemon(self, store, out):
+        class _Chk:
+            def battery(self, services, require_network):
+                return _health.HealthReport({})
+
+        return HealthDaemon(checker=_Chk(), state_store=store,
+                            rollback=lambda: 0, out=out,
+                            sleep=lambda _s: None, clock=lambda: 0.0,
+                            degraded=lambda: False)
+
+    def test_a_persistent_failure_is_reported_once(self):
+        store = self._Store()
+        store.err = (28, "No space left on device")
+        lines = []
+        d = self._daemon(store, lines.append)
+        rep = _health.HealthReport({})
+        for _ in range(50):
+            d._record(rep, 0)
+        said = [l for l in lines if "could not persist" in l]
+        self.assertEqual(len(said), 1, lines)
+        self.assertTrue(any("suppressed" in l for l in lines), lines)
+
+    def test_a_changed_error_is_reported_again(self):
+        # A different failure is new information: permission denied after a
+        # disk-full episode means someone should look at something else.
+        store = self._Store()
+        store.err = (28, "No space left on device")
+        lines = []
+        d = self._daemon(store, lines.append)
+        rep = _health.HealthReport({})
+        d._record(rep, 0)
+        store.err = (13, "Permission denied")
+        d._record(rep, 0)
+        said = [l for l in lines if "could not persist" in l]
+        self.assertEqual(len(said), 2, lines)
+        self.assertIn("Permission denied", said[1])
+
+    def test_recovery_gets_exactly_one_line(self):
+        # Otherwise silence leaves a reader unable to tell 'fixed' from
+        # 'still broken but no longer complaining'.
+        store = self._Store()
+        store.err = (28, "No space left on device")
+        lines = []
+        d = self._daemon(store, lines.append)
+        rep = _health.HealthReport({})
+        d._record(rep, 0)
+        store.err = None
+        d._record(rep, 0)
+        d._record(rep, 0)
+        back = [l for l in lines if "writable again" in l]
+        self.assertEqual(len(back), 1, lines)
+
+    def test_a_healthy_box_logs_nothing_at_all(self):
+        store = self._Store()
+        lines = []
+        d = self._daemon(store, lines.append)
+        rep = _health.HealthReport({})
+        for _ in range(5):
+            d._record(rep, 0)
+        self.assertEqual(lines, [])
+        self.assertEqual(store.saved, 5)
+
 if __name__ == "__main__":
     unittest.main()

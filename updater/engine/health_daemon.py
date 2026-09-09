@@ -76,6 +76,9 @@ class HealthDaemon:
         self._services_override = list(services) if services is not None else None
         self.out = out
         self.sleep = sleep
+        # Last telemetry-persist error text, so a condition lasting
+        # hours is reported once rather than once per 30s tick.
+        self._last_persist_error: Optional[str] = None
         self.clock = clock
         self._uname = uname or _default_uname
         self._boot_id = boot_id or _default_boot_id
@@ -112,7 +115,37 @@ class HealthDaemon:
             }
             self.state_store.save(state)
         except OSError as exc:
-            self.out(f"warning: could not persist health telemetry: {exc}")
+            # Say it ONCE per episode, not once per tick.
+            #
+            # This loop runs every interval_s (30s) for the life of the boot,
+            # so a condition that lasts hours produced one identical line per
+            # tick: 817 of them on the testbed while the disk was full for
+            # ~6.8 hours (2026-09-07). They all carry the same timestamp in the
+            # log because svlogd could not write to the full disk either -- the
+            # pipe buffered and it stamped the backlog the moment space
+            # returned -- which made it look like a hot loop and is worth
+            # knowing it is not. A daemon whose response to a full disk is to
+            # write hundreds of identical log lines is making a full disk
+            # worse, and 817 copies say nothing the first one did not.
+            #
+            # Same pattern as the watchdog's health warning above: report the
+            # episode, then stay quiet until something actually changes.
+            msg = str(exc)
+            if msg != self._last_persist_error:
+                self.out(f"warning: could not persist health telemetry: {exc}"
+                         + ("" if self._last_persist_error is None else
+                            "   (the previous problem changed)"))
+                self.out("  further identical warnings are suppressed until "
+                         "this clears or changes")
+                self._last_persist_error = msg
+            return
+        # Recovery is worth exactly one line too: silence after an episode
+        # otherwise leaves a reader unable to tell "fixed" from "still broken
+        # but no longer complaining".
+        if self._last_persist_error is not None:
+            self.out("health telemetry is writable again "
+                     f"(was: {self._last_persist_error})")
+            self._last_persist_error = None
 
     def _set_state(self, name: str) -> None:
         try:
