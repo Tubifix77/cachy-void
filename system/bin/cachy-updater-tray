@@ -92,11 +92,22 @@ REASON_TEXT = {
     "kernel-frozen": "kernel updates are paused pending a look — see the updater",
     "bore-pin-missing": "kernel updates are paused — the BORE patch needs approval",
     "run-failed": "the last update run failed — open the updater to see why",
+    # A run happening NOW. The scheduled run is a separate process under runit:
+    # it prints nothing in the window, greys no button and drives no progress
+    # bar, so before this the only evidence a nightly was under way was the
+    # fans. Rendered with the holder's own words (see summary()).
+    "run-active": "an update run is in progress",
+    # About to compile a kernel, unattended, with you sitting there. The one
+    # thing the nightly does that is worth interrupting someone for.
+    "nightly-kernel-soon": "a kernel build starts soon — see the updater",
 }
 # Amber rather than green: these two mean "something needs you", not "there is
 # something new". Everything else is ordinary news and gets the accent.
 REASON_IS_WARNING = {"kernel-unhealthy", "kernel-frozen", "bore-pin-missing",
-                     "run-failed"}
+                     "run-failed", "nightly-kernel-soon"}
+# "run-active" is deliberately NOT a warning and NOT news to badge amber: a run
+# in progress is the machine working, not a problem. It earns a tooltip line
+# and one notification when it starts, nothing more.
 # kernel-port is deliberately NOT a warning: a kernel you could build is
 # news, not a fault, and amber for news is how an indicator gets ignored.
 
@@ -115,6 +126,11 @@ class Tray(QSystemTrayIcon):
         self.app = app
         self.proc = None
         self.seen: set = set()               # reasons already announced once
+        # Whether the run we last saw was the scheduled one, so its
+        # disappearance can be announced as "finished". False at
+        # startup on purpose: a tray launched midway through a nightly
+        # has no business claiming it watched it begin.
+        self.nightly_seen: bool = False
         self.setIcon(self.build_icon())
         self.setToolTip("Cachy-Void updater — checking…")
 
@@ -259,7 +275,22 @@ class Tray(QSystemTrayIcon):
                 lines.append("%d package%s to update%s"
                              % (n, "" if n == 1 else "s", hold))
         for r in reasons:
-            if r != "updates":
+            if r == "updates":
+                continue
+            # Two reasons carry live detail the CLI computed; render THAT
+            # rather than the generic string, but never recompute it here --
+            # a tray that derives its own answer is how two truths are born.
+            if r == "run-active":
+                holder = ((data.get("run") or {}).get("holder") or "").strip()
+                lines.append(holder + " is running" if holder
+                             else REASON_TEXT[r])
+            elif r == "nightly-kernel-soon":
+                mins = (data.get("nightly") or {}).get("minutes")
+                lines.append(
+                    "a kernel build starts in %d min — open the updater to "
+                    "skip it tonight" % mins if isinstance(mins, int)
+                    else REASON_TEXT[r])
+            else:
                 lines.append(REASON_TEXT[r])
         if not lines:
             lines.append("everything is up to date")
@@ -279,11 +310,27 @@ class Tray(QSystemTrayIcon):
         self.setToolTip("Cachy-Void updater\n" + "\n".join(lines))
         self.act_status.setText(lines[0])
 
+        # A scheduled run that has FINISHED is the one transition worth
+        # announcing on its way out. Everywhere else "a reason went away" is
+        # not news -- but an unattended run is invisible from start to end, so
+        # without this the only way to learn it had finished was to go looking
+        # for the silence. Manual runs are excluded: the window was open, it
+        # streamed the whole thing, and telling you what you just watched is
+        # how an indicator trains people to dismiss it.
+        active = bool((data.get("run") or {}).get("active"))
+        finished = self.nightly_seen and not active
+        self.nightly_seen = active and bool((data.get("run") or {}).get("nightly"))
+
         # Announce only what is NEW, once. A reason that goes away is forgotten,
         # so it can announce itself again if it comes back.
         fresh_reasons = [r for r in reasons if r not in self.seen]
         self.seen = set(reasons)
-        if fresh_reasons and self.supportsMessages():
+        if not self.supportsMessages():
+            return
+        if finished:
+            self.showMessage("Cachy-Void — nightly update finished",
+                             "\n".join(lines), self.build_icon(badge), 10000)
+        elif fresh_reasons:
             self.showMessage("Cachy-Void", "\n".join(lines),
                              self.build_icon(badge), 8000)
 

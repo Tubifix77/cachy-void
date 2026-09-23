@@ -1200,7 +1200,30 @@ def cmd_pending(config: Config, out=print, run=_run,
     """
     payload: dict = {"schema": 1, "fresh": False,
                      "upstream": {"updatable": 0, "held": 0},
-                     "kernel": {}, "attention": [], "notes": []}
+                     "kernel": {}, "run": {"active": False},
+                     "attention": [], "notes": []}
+
+    # Is a run happening right now, and whose? Cheap: one non-blocking flock
+    # attempt on a file. The tray asked "is anything waiting?" and could never
+    # answer "something is HAPPENING", which is why an owner watched a nightly
+    # kernel build with no indication anywhere that it was under way.
+    holder = read_lock_holder(config)
+    if holder:
+        payload["run"] = {"active": True, "holder": holder,
+                          "nightly": "nightly" in holder}
+        payload["attention"].append(ATTN_RUN_ACTIVE)
+
+    # Is an unattended kernel build about to start? Only worth saying when all
+    # of it is true: the service is on and running, its scope includes the
+    # kernel, the clock is inside the warning window, and there is actually a
+    # kernel to build. A countdown to a build that will not happen is the kind
+    # of false alarm that teaches people to ignore the real one.
+    _sf = schedule_facts(run=run)
+    _mins = minutes_until(_sf["hour"], _sf["minute"]) if (
+        _sf["enabled"] and _sf["running"] and _sf["kernel"]) else None
+    if _mins is not None:
+        payload["nightly"] = {"minutes": _mins, "kernel": True,
+                              "skipping": skip_kernel_active(config)}
 
     n, held, fresh, drivers = upstream_counts(run)
     payload["fresh"] = fresh
@@ -1275,6 +1298,19 @@ def cmd_pending(config: Config, out=print, run=_run,
     if _last:
         payload["last_run"] = _last
         payload["attention"].append(ATTN_RUN_FAILED)
+    # The pre-flight warning, emitted only once every part of it is true:
+    # the service is on and kernel-scoped, the clock is inside the window,
+    # tonight has not already been vetoed, and there IS a kernel to build --
+    # which is only knowable after the kernel block above has run. A countdown
+    # to a build that will not happen teaches people to ignore the real one.
+    _ni = payload.get("nightly") or {}
+    if (_ni.get("minutes") is not None
+            and _ni["minutes"] <= kernel_warn_minutes()
+            and not _ni.get("skipping")
+            and not payload["run"].get("active")
+            and ATTN_KERNEL_PORT in payload["attention"]):
+        payload["attention"].append(ATTN_NIGHTLY_KERNEL_SOON)
+
     _free = _free_gib("/", disk_usage)
     if _free is not None and _free < 1.0:
         payload["notes"].append(f"disk nearly full: {_free * 1024:.0f} MiB free")
@@ -1412,10 +1448,18 @@ ATTN_KERNEL_FROZEN = "kernel-frozen"
 ATTN_KERNEL_PORT = "kernel-port"
 ATTN_BORE_PIN_MISSING = "bore-pin-missing"
 ATTN_RUN_FAILED = "run-failed"
+# A run happening RIGHT NOW, and an unattended kernel build about to start.
+# Neither existed because neither was observable: a §4.9 run is a separate
+# process under runit, so it produces no output in the window, greys no button
+# and drives no progress bar -- the owner's words were "not even hovering on
+# the tray icon tells you nightly is running". The §4 lock gave the first one
+# something to look at; the schedule file gives the second.
+ATTN_RUN_ACTIVE = "run-active"
+ATTN_NIGHTLY_KERNEL_SOON = "nightly-kernel-soon"
 ATTENTION_TOKENS = frozenset({
     ATTN_UPDATES, ATTN_KERNEL_STAGED, ATTN_KERNEL_UNHEALTHY,
     ATTN_KERNEL_FROZEN, ATTN_KERNEL_PORT, ATTN_BORE_PIN_MISSING,
-    ATTN_RUN_FAILED,
+    ATTN_RUN_FAILED, ATTN_RUN_ACTIVE, ATTN_NIGHTLY_KERNEL_SOON,
 })
 
 
@@ -2560,6 +2604,145 @@ def _locked(holder: str, action: str, out) -> int:
         out("  to stop it running tonight:  cachy-void-update --schedule pause")
     out("  nothing was changed by this attempt.")
     return EXIT_LOCKED
+
+
+# -- @REF@4.9 as FACTS, not only as a rendered line ----------------------------
+#
+# scheduled_run_line() answers "what should a human read?". A front-end that
+# must decide "is a kernel build about to start unattended?" needs the same
+# information in parts, and parsing English back out of that line is how two
+# answers to one question get born (@REF@4.10). One reader, two renderings.
+KERNEL_WARN_ENV = "CACHY_NIGHTLY_WARN_MIN"
+KERNEL_WARN_DEFAULT_MIN = 10
+SKIP_KERNEL_NAME = "skip-kernel-tonight"
+
+
+def kernel_warn_minutes() -> int:
+    """How long before an unattended kernel build to warn. Default 10.
+
+    The owner asked for one minute. One minute is enough to be startled and
+    not enough to act: see the notification, read it, decide, run the command.
+    Ten leaves room to finish what you are doing, and the value is overridable
+    for anyone who disagrees -- it is a preference, not a correctness claim.
+    """
+    try:
+        v = int(os.environ.get(KERNEL_WARN_ENV, KERNEL_WARN_DEFAULT_MIN))
+    except ValueError:
+        return KERNEL_WARN_DEFAULT_MIN
+    return v if 0 < v <= 720 else KERNEL_WARN_DEFAULT_MIN
+
+
+def schedule_facts(*, link: pathlib.Path = SCHED_LINK,
+                   conf: pathlib.Path = SCHED_CONF, run=None) -> dict:
+    """The @REF@4.9 service in machine-readable parts.
+
+    ``kernel`` follows SCHEDULE_KERNEL and defaults to True, matching the
+    service's own `: "${SCHEDULE_KERNEL:=yes}"` -- a front-end must never be
+    more optimistic than the thing it describes.
+    """
+    facts = {"enabled": False, "running": False, "hour": None,
+             "minute": None, "kernel": True}
+    try:
+        if not link.exists():
+            return facts
+    except OSError:
+        return facts
+    facts["enabled"] = True
+    facts["running"] = _sv_state(link, run) != "down"
+    try:
+        text = conf.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return facts
+    for field, key in (("SNOOZE_HOUR", "hour"), ("SNOOZE_MINUTE", "minute")):
+        m = re.search(rf"^{field}=(\S+)", text, re.M)
+        if m:
+            v = m.group(1).strip().strip('"').strip("'")
+            # Only a plain number is a clock time; snooze also takes patterns
+            # like */6, and turning those into a countdown would be a lie.
+            facts[key] = int(v) if v.isdigit() else None
+    m = re.search(r"^SCHEDULE_KERNEL=(\S+)", text, re.M)
+    if m:
+        facts["kernel"] = m.group(1).strip().strip('"').strip("'").lower() \
+            not in ("no", "false", "0")
+    return facts
+
+
+def minutes_until(hour, minute, now=None) -> Optional[int]:
+    """Whole minutes until the next daily HH:MM, or None if not a clock time."""
+    if hour is None or minute is None:
+        return None
+    now = now or time.localtime()
+    mins_now = now.tm_hour * 60 + now.tm_min
+    target = int(hour) * 60 + int(minute)
+    delta = target - mins_now
+    return delta if delta >= 0 else delta + 24 * 60
+
+
+def skip_kernel_path(config: Config) -> Path:
+    return Path(config.log_root).parent / SKIP_KERNEL_NAME
+
+
+def skip_kernel_active(config: Config, now=None) -> bool:
+    """Is a one-shot "not tonight" veto still in force?
+
+    Stored as an expiry stamp rather than a bare flag, so a veto that is never
+    consumed (the machine was off at 01:00) cannot silently disable kernel
+    builds for ever. Forgetting to expire an opt-out is how a feature becomes
+    a mystery six months later.
+    """
+    try:
+        raw = skip_kernel_path(config).read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    try:
+        expiry = time.mktime(time.strptime(raw, "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return False
+    return (now if now is not None else time.time()) <= expiry
+
+
+def cmd_skip_kernel_tonight(config: Config, out=print, run=None,
+                            now=None, *, link: pathlib.Path = SCHED_LINK,
+                            conf: pathlib.Path = SCHED_CONF) -> int:
+    """Skip the kernel in the NEXT scheduled run only (@REF@4.9).
+
+    Deliberately not "cancel the nightly": userspace updates are minutes and
+    you probably still want them -- what is disruptive is a multi-hour compile
+    starting while you are using the machine. And deliberately one-shot: it
+    expires two hours after the run it vetoes, so it can never become a
+    permanent setting nobody remembers making. Turning the schedule off for
+    good is `--schedule pause`, which says so.
+    """
+    facts = schedule_facts(link=link, conf=conf, run=run or _run)
+    if not facts["enabled"]:
+        out("no scheduled run is enabled — there is nothing to skip.")
+        return EXIT_OK
+    if not facts["kernel"]:
+        out("the scheduled run is already userspace-only (SCHEDULE_KERNEL=no) "
+            "— it was never going to build a kernel.")
+        return EXIT_OK
+    mins = minutes_until(facts["hour"], facts["minute"],
+                         time.localtime(now) if now else None)
+    base = (now if now is not None else time.time())
+    # Expire two hours PAST the run it vetoes: long enough that a run starting
+    # late still sees it, short enough that it cannot outlive the night.
+    expiry = base + ((mins if mins is not None else 0) + 120) * 60
+    path = skip_kernel_path(config)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(time.strftime("%Y-%m-%dT%H:%M:%S",
+                                      time.localtime(expiry)) + chr(10),
+                        encoding="utf-8")
+    except OSError as exc:
+        out(f"error: could not record the skip: {exc}")
+        return EXIT_USAGE
+    when = f" ({mins} min away)" if mins is not None else ""
+    out("the next scheduled run" + when + " will SKIP the kernel build.")
+    out("  it will still apply upstream and overlay updates — those take "
+        "minutes, and the compile is the disruptive part.")
+    out("  one-shot: later runs build the kernel again as usual.")
+    out("  build it yourself whenever suits:  cachy-void-update --commit")
+    return EXIT_OK
 
 def prune_run_logs(config: Config, keep: int = 20) -> None:
     """Keep the newest ``keep`` run directories (§7.6: "keep 20").
@@ -4034,6 +4217,10 @@ def build_parser() -> argparse.ArgumentParser:
                        metavar="pause|resume",
                        help="report the §4.9 unattended run (time, scope, "
                             "state), or pause/resume it")
+    action.add_argument("--skip-kernel-tonight", dest="skip_kernel_tonight",
+                       action="store_true",
+                       help="let the next §4.9 scheduled run apply updates but "
+                            "SKIP the kernel build (one-shot)")
     action.add_argument("--build-space", dest="build_space", nargs="?",
                        const="", metavar="PATH",
                        help="show where kernel builds happen (§7.5), or "
@@ -4101,6 +4288,22 @@ def main(argv: Optional[Sequence[str]] = None, *,
     if getattr(args, "no_kernel", False):
         config.kernel_enable = False
 
+    # A "not tonight" veto binds the SCHEDULED run only. Pressing "Update
+    # kernel" by hand at 02:00 after skipping the nightly is an unambiguous
+    # request for the kernel, and a veto that silently overrode it would be
+    # the updater second-guessing a deliberate act. This is the second use of
+    # CACHY_RUN_ORIGIN: argv cannot tell these two apart.
+    if (getattr(args, "commit", False) and _origin() == "schedule"
+            and config.kernel_enable and skip_kernel_active(config)):
+        config.kernel_enable = False
+        out("kernel: skipped for this scheduled run on request "
+            "(--skip-kernel-tonight). Userspace updates proceed as usual; "
+            "later runs build the kernel again.")
+        try:
+            skip_kernel_path(config).unlink()      # one-shot: consume it
+        except OSError:
+            pass
+
     try:
         if args.pin_bore:
             return cmd_pin_bore(config, out=out, assume_yes=args.yes,
@@ -4146,6 +4349,11 @@ def main(argv: Optional[Sequence[str]] = None, *,
             rc = cmd_schedule(config, act, out=out)
             if act:
                 poke_tray()      # the badge's picture of the box changed
+            return rc
+        if args.skip_kernel_tonight:
+            # No solver: a note to the service, not a package question.
+            rc = cmd_skip_kernel_tonight(config, out=out)
+            poke_tray()          # the countdown badge should clear at once
             return rc
         if args.build_space is not None:
             # No solver: this is a directory question, not a package one.

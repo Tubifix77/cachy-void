@@ -652,6 +652,54 @@ exec snooze -H 5 -M 30 /usr/local/bin/cachy-void-update --yes
   multi-hour compile was disabling the service outright — a poor choice to force
   on someone who wants the base current nightly and the kernel built at a moment
   they pick.
+- **A scheduled run must be VISIBLE while it happens, and say when it is done.**
+  Being told the service exists is not the same as being able to see it work.
+  A §4.9 run is a separate process under runit: it writes to its own service
+  log, so the window shows nothing, greys no button and runs no progress bar,
+  and the tray — which could already say what was *waiting* — had no way to say
+  anything was *happening*. The owner's words: "not even hovering on the tray
+  icon tells you nightly is running". Three facts close it, all computed in the
+  CLI and merely rendered by the front-ends:
+  `--pending` gains `run` (`active`, `holder`, `nightly`) from the §4 lockfile
+  and the `run-active` token; `--status` prints `RUN IN PROGRESS`; and the tray
+  announces a *finished* scheduled run once, on the transition to inactive.
+  That last one is the only place a vanishing reason is announced — everywhere
+  else "it went away" is not news, but an unattended run is invisible from
+  start to end, so without it the only way to learn it had finished was to go
+  looking for the silence. A finished **manual** run is deliberately NOT
+  announced: the window streamed the whole thing, and narrating what someone
+  just watched is how an indicator teaches people to dismiss it.
+
+- **Auto-opening the window was considered and rejected.** The obvious idea —
+  have the nightly pop the updater up, show a normal-looking run, and close
+  itself afterwards — fails on a fact about the mechanism rather than on taste:
+  a runit service has no `DISPLAY`, no `XAUTHORITY`, and no way to know whether
+  an X session exists or which seat it belongs to. Reaching into a session from
+  a supervised daemon is guesswork that works on one testbed and breaks
+  elsewhere. Auto-closing compounds it, discarding whatever the window was
+  showing at the moment someone finally looked. The tray is a process that is
+  already *inside* the session, already polling, and already permitted to
+  speak — so the notification goes there.
+
+- **A kernel build may be waved off for one night (`--skip-kernel-tonight`).**
+  The disruptive thing the nightly does is not updating packages, it is
+  starting a multi-hour compile on a machine someone is using. `--pending`
+  emits `nightly-kernel-soon` when *every* clause holds — the service is
+  enabled AND running, its scope includes the kernel, the clock is inside the
+  warning window, tonight has not already been waved off, no run is already
+  going, and there is genuinely a kernel to build — because a countdown to a
+  build that will not happen is the false alarm that teaches people to ignore
+  the real one. The warning window is `CACHY_NIGHTLY_WARN_MIN`, **default 10
+  minutes**: one minute was requested and is enough to be startled but not to
+  act. The veto is one-shot and self-expiring (two hours past the run it
+  vetoes), so a machine that was off at 01:00 cannot silently have kernel
+  builds disabled for ever — forgetting to expire an opt-out is how a feature
+  becomes a mystery six months later. And it binds the **scheduled** run only,
+  keyed on `CACHY_RUN_ORIGIN`: pressing *Update kernel* by hand afterwards is
+  an unambiguous request for the kernel, and overriding it would be the
+  updater second-guessing a deliberate act. Skipping the whole service instead
+  is still `--schedule pause`, which says so.
+
 - **And opt-in is not enough on its own — being ON is normative to SAY.**
   `--status` prints a line naming the scheduled run whenever the service is
   enabled: that it runs `--sync` then `--commit --yes`, that the **kernel is

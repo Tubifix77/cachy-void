@@ -967,12 +967,26 @@ class Updater(QWidget):
                 "them.")
             act = box.addButton("Resume it" if paused else "Pause it",
                                 QMessageBox.AcceptRole)
+            # "Not tonight" is a smaller ask than pausing the whole service and
+            # is the one people actually want when a multi-hour compile is
+            # about to start on a machine they are using. Offered only when
+            # the run is live and kernel-scoped, read from the CLI's own
+            # report rather than guessed: a button that cannot do anything is
+            # worse than no button.
+            skip = None
+            if not paused and "kernel INCLUDED" in text:
+                skip = box.addButton("Skip tonight's kernel",
+                                     QMessageBox.ActionRole)
             box.addButton("Close", QMessageBox.RejectRole)
             box.exec_()
             if box.clickedButton() is act:
                 self._run(["--schedule", "resume" if paused else "pause"],
                           self.out, clear=False, done=lambda _c: self.check(),
                           activity="Changing the nightly run…")
+            elif skip is not None and box.clickedButton() is skip:
+                self._run(["--skip-kernel-tonight"], self.out, clear=False,
+                          done=lambda _c: self.check(),
+                          activity="Skipping tonight's kernel build…")
         self._run(["--schedule"], self.out, done=after,
                   activity="Reading the nightly-update settings…")
 
