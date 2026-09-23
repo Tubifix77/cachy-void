@@ -164,7 +164,7 @@ class HealthDaemon:
         if self._degraded():
             report = self._battery()
             self.out("health-daemon: virtualized/bootloader-less workspace — "
-                     "logging only, no supervisor or GRUB changes (§8.7).")
+                     "logging only, no supervisor or GRUB changes.")
             self.out(f"health metrics: ok={report.ok()} {report.checks}")
             return DEGRADED
 
@@ -196,7 +196,7 @@ class HealthDaemon:
                 self.out(f"health warning: {consecutive} consecutive failures "
                          f"({report.failures()}) — no kernel candidate is in "
                          "flight, so this is a health warning and NOT a kernel "
-                         "verdict; the kernel state is left untouched (§8.8). "
+                         "verdict; the kernel state is left untouched. "
                          "The health block in the state store is the record.")
                 consecutive = 0      # say it once per episode, keep watching
             ticks += 1
@@ -225,10 +225,10 @@ class HealthDaemon:
             self.out(f"watchdog: {consecutive} consecutive health failures — "
                      "this bootloader is not ours to drive (external/skip): "
                      "recorded CANDIDATE_UNHEALTHY; reboot and select the "
-                     "known-good kernel in the boot menu yourself (§8.7).")
+                     "known-good kernel in the boot menu yourself.")
             return 0
         self.out(f"watchdog: {consecutive} consecutive health failures — "
-                 "firing active rollback to the known-good kernel (§8.7).")
+                 "firing active rollback to the known-good kernel.")
         rc = self.rollback()
         self.out(f"rollback returned {rc}.")
         return rc
@@ -383,7 +383,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     import cachy_void_update as cli
 
     p = argparse.ArgumentParser(prog="cachy-health",
-                                description="Cachy-Void post-boot health daemon (§8.7).")
+                                description="Cachy-Void post-boot health daemon.")
     p.add_argument("--config", default=cli.DEFAULT_CONFIG)
     p.add_argument("--once", action="store_true",
                    help="run the confirm layer once and exit (boot-time use)")

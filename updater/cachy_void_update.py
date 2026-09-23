@@ -393,17 +393,16 @@ def _kernel_report(config: Config, xbps, out, run=_run) -> None:
         v = kernel_port_available(config, state, run, xbps.vercmp)
         if v.event == grub.EV_AWAIT_HUMAN_SERIES:
             out(f"kernel: tracked series linux{series} is gone upstream — "
-                "human decision required (§8.2).")
+                "human decision required.")
         elif v.available and v.source == "checkout":
             out(f"kernel: upstream linux{series} is at {v.upstream_version}; "
                 f"ported base is {v.ported_version or '<none>'} — port "
-                "linux-cachy (§2.6/§8.4).")
+                "linux-cachy.")
         elif v.available:
             # The repository answered where the checkout could not: say so, and
             # say how far behind the checkout is, since that is the reason.
             out(f"kernel: Void is shipping linux{series} {v.upstream_version}; "
-                f"ported base is {v.ported_version} — port linux-cachy "
-                "(§2.6/§8.4).")
+                f"ported base is {v.ported_version} — port linux-cachy.")
             age = _checkout_age_days(config.void_packages)
             if age >= 1:
                 out(f"  (found in the repository; the void-packages checkout "
@@ -445,14 +444,14 @@ def _kernel_synthesis(config: Config, xbps, out, *, fetcher=None) -> None:
     # night while its "frozen" kernel path sat in a file nobody enforced.
     if state.get("state") in FROZEN_STATES:
         out(f"kernel: state is {state['state']} — the kernel path is frozen until "
-            "a human acknowledges it (§8.8): no template regeneration and no "
+            "a human acknowledges it: no template regeneration and no "
             "build this run; userspace updates continue. Resume with: "
             "cachy-void-update --kernel-ack")
         return
     series = state.get("base_series") or ""
     if not series:
         out("kernel: no base_series tracked — synthesis needs a human to bootstrap "
-            "the tracked series in kernel-state.json (§8.2); skipping.")
+            "the tracked series in kernel-state.json; skipping.")
         return
 
     # §8.2 classify.
@@ -471,11 +470,11 @@ def _kernel_synthesis(config: Config, xbps, out, *, fetcher=None) -> None:
     if ev == grub.EV_AWAIT_HUMAN_SERIES:
         _record_kernel_state(config, {"state": "AWAIT_HUMAN_SERIES"}, out)
         out(f"kernel: tracked series linux{series} gone upstream — "
-            "AWAIT_HUMAN_SERIES (§8.2); kernel withheld, userspace continues.")
+            "AWAIT_HUMAN_SERIES; kernel withheld, userspace continues.")
         return
 
     # ev == BUMP_PATCHLEVEL — verify then regenerate.
-    out(f"kernel: upstream bump to {tmpl} detected (§8.2); verifying BORE patch (§8.3)")
+    out(f"kernel: upstream bump to {tmpl} detected; verifying BORE patch")
     _record_kernel_state(config, {"state": "PATCH_VERIFY"}, out)
     try:
         lock = trust.load_bore_lock(config.bore_lock_path)
@@ -486,23 +485,23 @@ def _kernel_synthesis(config: Config, xbps, out, *, fetcher=None) -> None:
     except trust.TrustConfigError as exc:
         _record_kernel_state(config, {"state": "AWAIT_HUMAN_PATCH"}, out)
         out(f"warning: bore.lock invalid ({exc}); kernel withheld "
-            "(AWAIT_HUMAN_PATCH, §8.3). Userspace updates continue.")
+            "(AWAIT_HUMAN_PATCH). Userspace updates continue.")
         return
     except trust.HashMismatch as exc:
         _record_kernel_state(config, {"state": "HALT_HASH_MISMATCH"}, out)
         out(f"warning: BORE patch integrity FAILED ({exc}); kernel withheld "
-            "(HALT_HASH_MISMATCH, §8.3 — possible tamper). Userspace continues.")
+            "(HALT_HASH_MISMATCH — possible tamper). Userspace continues.")
         return
     except trust.TrustError as exc:            # PatchUnavailable / NetworkError
         _record_kernel_state(config, {"state": "HALT_HASH_MISMATCH"}, out)
-        out(f"warning: BORE patch unavailable ({exc}); kernel withheld (§8.3). "
+        out(f"warning: BORE patch unavailable ({exc}); kernel withheld. "
             "Userspace updates continue.")
         return
     except OSError as exc:
         out(f"warning: patch trust step failed ({exc}); kernel withheld")
         return
 
-    out(f"kernel: patch trusted ({result.source}); regenerating template (§8.4)")
+    out(f"kernel: patch trusted ({result.source}); regenerating template")
     _record_kernel_state(config, {"state": "REGENERATE"}, out)
     try:
         fragment = config.fragment_path.read_text(encoding="utf-8")
@@ -513,17 +512,17 @@ def _kernel_synthesis(config: Config, xbps, out, *, fetcher=None) -> None:
     except template.TemplateSynthesisError as exc:
         _record_kernel_state(config, {"state": "AWAIT_HUMAN_TEMPLATE"}, out)
         out(f"warning: template synthesis FAILED ({exc}); kernel withheld "
-            "(AWAIT_HUMAN_TEMPLATE, §8.4). Userspace updates continue.")
+            "(AWAIT_HUMAN_TEMPLATE). Userspace updates continue.")
         return
     except OSError as exc:
         _record_kernel_state(config, {"state": "AWAIT_HUMAN_TEMPLATE"}, out)
         out(f"warning: template synthesis I/O error ({exc}); kernel withheld "
-            "(AWAIT_HUMAN_TEMPLATE, §8.4). Userspace updates continue.")
+            "(AWAIT_HUMAN_TEMPLATE). Userspace updates continue.")
         return
 
     _record_kernel_state(config, {"state": "READY"}, out)
     out(f"kernel: regenerated {KERNEL_TARGET} {res.pkgver} — entering the build "
-        "queue; the G2 gate (§8.5) runs before it compiles.")
+        "queue; the G2 gate runs before it compiles.")
 
 
 def _g2_gate(config: Config, xbps, out) -> bool:
@@ -533,7 +532,7 @@ def _g2_gate(config: Config, xbps, out) -> bool:
         fragment = config.fragment_path.read_text(encoding="utf-8")
     except OSError:
         out(f"warning: kernel fragment missing at {config.fragment_path}; "
-            "the G2 gate cannot run and is never skipped (§8.5)")
+            "the G2 gate cannot run and is never skipped")
         return False
     rc = xbps.configure(KERNEL_TARGET)
     if rc != 0:
@@ -668,7 +667,7 @@ def _stage_kernel(config: Config, xbps, out, run, layout=None) -> int:
         return EXIT_OK
     except grub.GrubError as exc:
         out(f"error: kernel staging failed: {exc} — the deploy itself is "
-            "intact; fall back to manual GRUB selection (§2.5)")
+            "intact; fall back to manual GRUB selection")
         return EXIT_KERNEL
     except (XbpsError, ParseError, OSError) as exc:
         out(f"error: kernel staging aborted: {exc}")
@@ -761,7 +760,7 @@ def cmd_check(xbps, config: Config, out=print) -> int:
     if order.second_pass:
         out(f"convergence pass: {' -> '.join(order.second_pass)}")
     if KERNEL_TARGET in plan.q_deploy:
-        out(f"note: {KERNEL_TARGET} is queued — a reboot will be required (§8.6).")
+        out(f"note: {KERNEL_TARGET} is queued — a reboot will be required.")
     _kernel_report(config, xbps, out)
     return EXIT_OK
 
@@ -1028,7 +1027,7 @@ def cmd_schedule(config: Config, action=None, out=print, run=_run,
     except OSError:
         enabled = False
 
-    out("Cachy-Void — unattended updates (§4.9)")
+    out("Cachy-Void — unattended updates")
     out("=" * 46)
     if not enabled:
         out("")
@@ -1377,7 +1376,7 @@ def cmd_snapshots(config: Config, out=print, run=_run) -> int:
         return EXIT_OK
     if not snaps:
         out(f"    none found under {snap_dir}")
-        out("    (pre-deploy snapshots need a btrfs root and the §9.5 snapshot "
+        out("    (pre-deploy snapshots need a btrfs root and the snapshot "
             "subvolume, which deploy.sh creates)")
         return EXIT_OK
 
@@ -1879,7 +1878,7 @@ def cmd_pin_bore(config: Config, out=print, *, assume_yes: bool = False,
         return EXIT_USAGE
     series = state.get("base_series") or ""
     if not series:
-        out("error: no tracked kernel series in kernel-state.json (§8.2) — "
+        out("error: no tracked kernel series in kernel-state.json — "
             "run bootstrap.sh, or set base_series manually, before pinning.")
         return EXIT_USAGE
 
@@ -2090,7 +2089,7 @@ def disk_lines(config: Config, disk_usage=shutil.disk_usage) -> list:
     key = "min_free_userspace_gib" if relocated else "min_free_gib"
     if free < floor:
         lines.append(f"  below the {floor} GiB needed here "
-                     f"([build] {key}) — the next build will refuse (§7.5)")
+                     f"([build] {key}) — the next build will refuse")
     for tree, size in _leftover_trees(config):
         lines.append(f"build tree left in masterdir: {tree.name} — {size / GIB:.1f} GiB "
                      "(the next build cleans it; reclaim now: "
@@ -2278,7 +2277,7 @@ def build_preflight(config: Config, build_list, out,
                 f"./xbps-src clean {_srcpkg_of_tree(tree.name)}")
     if not problems:
         return ""
-    return ("refusing to build (§7.5 preflight — nothing has been changed):\n  "
+    return ("refusing to build (preflight — nothing has been changed):\n  "
             + "\n  ".join(problems))
 
 
@@ -2307,7 +2306,7 @@ def frozen_explanation(state_name: str, candidate: str = "",
         # updater run demolishing the build tree mid-compile, and the build log
         # was the only place that was visible.
         lines = ["the last linux-cachy BUILD failed, so no kernel was produced "
-                 "(§8.5 G3). Nothing is wrong with the running kernel."]
+                 ". Nothing is wrong with the running kernel."]
         d = detail or {}
         what = " ".join(x for x in (d.get("pkgver") or "", d.get("ts") or "") if x)
         if what:
@@ -2369,7 +2368,7 @@ def _note_kernel_build_failure(config: Config, pkg: str, out, *,
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         },
     }, out)
-    out("kernel: G3 build failed → AWAIT_HUMAN_BUILD (§8.5). Kernel updates pause "
+    out("kernel: G3 build failed → AWAIT_HUMAN_BUILD. Kernel updates pause "
         "until a human has looked; userspace updates continue on later runs. "
         "Resume with: cachy-void-update --kernel-ack")
 
@@ -2436,7 +2435,7 @@ LOCK_NAME = "update.lock"
 ORIGIN_ENV = "CACHY_RUN_ORIGIN"
 
 _ORIGIN_TEXT = {
-    "schedule": "the scheduled nightly run (§4.9)",
+    "schedule": "the scheduled nightly run",
     "gui": "the updater window",
     "manual": "another run",
 }
@@ -2839,7 +2838,7 @@ def last_run_summary(config: Config, now=None) -> str:
         when = f"in run {f['run_id']}"
     if f["exit"] == EXIT_PREFLIGHT:
         head = f"last update run was REFUSED before building, {when}:"
-        detail = f["reason"] or "the §7.5 preflight check failed"
+        detail = f["reason"] or "the preflight check failed"
     else:
         head = f"last update run FAILED {when}:"
         what = f"{f['pkg']}: " if f["pkg"] else ""
@@ -2979,10 +2978,10 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
         if frozen:
             build_list, q_deploy = _withhold(
                 f"warning: {KERNEL_TARGET} withheld from this run — kernel "
-                f"state is {frozen} (frozen, §8.8); resume with "
+                f"state is {frozen} (frozen); resume with "
                 "`cachy-void-update --kernel-ack`. Userspace updates continue.")
     if not build_list and not q_deploy:
-        out("queue empty after kernel withhold — the system pass still runs (§4.5a).")
+        out("queue empty after kernel withhold — the system pass still runs.")
         if dry_run:
             return EXIT_OK
         return _system_update(config, xbps, out, run, confirm, assume_yes,
@@ -3007,10 +3006,10 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
             _record_kernel_state(config, {"state": "AWAIT_HUMAN_TEMPLATE"}, out)
             build_list, q_deploy = _withhold(
                 f"warning: {KERNEL_TARGET} withheld from this run "
-                "(AWAIT_HUMAN_TEMPLATE, §8.5); userspace updates continue.")
+                "(AWAIT_HUMAN_TEMPLATE); userspace updates continue.")
             if not build_list and not q_deploy:
                 out("queue empty after kernel withhold — the system pass still "
-                    "runs (§4.5a).")
+                    "runs.")
                 return _system_update(config, xbps, out, run, confirm, assume_yes,
                                       service_root=service_root)
 
@@ -3126,7 +3125,7 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
             # §7.3 K-exemption completes here — the single sanctioned widen:
             # the kernel is INTRODUCED, with headers (§2.5) so dkms modules
             # (nvidia) build against it during install.
-            out(f"kernel: first install of {KERNEL_TARGET} + headers (§8.6)")
+            out(f"kernel: first install of {KERNEL_TARGET} + headers")
             repo_args = [f"--repository={r}" for r in config.repos]
             cp = run(["sudo", "xbps-install", "-y", *repo_args,
                       KERNEL_TARGET, f"{KERNEL_TARGET}-headers"])
@@ -3146,7 +3145,7 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
         return rc_kernel
     if rc_services != EXIT_OK:
         out("commit complete — deployed & staged; some services need a manual "
-            "restart or relogin (§4.7).")
+            "restart or relogin.")
         return rc_services
     if rc_flatpak != EXIT_OK:
         out("commit complete — system deployed; some Flatpak updates did NOT apply "
@@ -3251,7 +3250,7 @@ def old_kernel_lines(items: Sequence[OldKernel]) -> list[str]:
         lines.append(
             f"warning: {len(spare)} superseded kernels are piling up"
             + (f" (~{total} MB)" if total else "")
-            + " — one spare is enough. Purges stay manual (§2.5/§4.7); "
+            + " — one spare is enough. Purges stay manual; "
               "remove the oldest first.")
     return lines
 
@@ -3374,8 +3373,8 @@ def cmd_clean(config: Config, *, assume_yes: bool, dry_run: bool = False,
     # old kernels — SUGGEST ONLY (never purge; §2.5/§4.7)
     inv = _kernel_inventory(config, run)
     if inv:
-        out("\nold kernel files present (NOT removed — kernel purges are manual, "
-            "§2.5/§4.7):")
+        out("\nold kernel files present (NOT removed — kernel purges "
+            "are manual):")
         for line in old_kernel_lines(inv):
             out(f"    {line}")
 
@@ -3554,7 +3553,7 @@ def _nvidia_swap_advice(out, installed, want: str, family: str = "") -> None:
     out("      then REBOOT: the running kernel keeps the old module loaded "
         "until you do.")
     out("      This is a driver swap, so it is yours to run: the updater never "
-        "installs a package that is not already installed (§7.1 no-widen), and "
+        "installs a package that is not already installed (the no-widen rule), and "
         "a half-finished swap leaves the card on nouveau.")
 
 
@@ -3833,7 +3832,7 @@ def _system_update(config: Config, xbps, out, run, confirm, assume_yes,
             journal.finish()
         return rc_flatpak
 
-    out(f"system: {n} upstream update(s) pending — applying (§4.5a)."
+    out(f"system: {n} upstream update(s) pending — applying."
         + (f"   ({held} held back)" if held else ""))
     if not assume_yes:
         ans = confirm("apply upstream system updates now? [y/N] ").strip().lower()
@@ -3866,7 +3865,7 @@ def _system_update(config: Config, xbps, out, run, confirm, assume_yes,
     rc_flatpak = _update_flatpak(config, out, run)
     if rc_services != EXIT_OK:
         out("system update complete — some services need a manual restart "
-            "or relogin (§4.7).")
+            "or relogin.")
         journal.finish()      # the update itself succeeded; §4.7 is advisory
         return rc_services
     if rc_flatpak != EXIT_OK:
@@ -3967,7 +3966,7 @@ def _deploy(config: Config, deploy_bins, xbps, out, run) -> int:
     out("downloading & installing (xbps output follows) …")
     if _stream_run(["sudo", "xbps-install", "-Suy", *repo_args],
                    out, run).returncode != 0:
-        out("error: xbps-install -Su failed (see §5; possible shlib rejection)")
+        out("error: xbps-install -Su failed (see; possible shlib rejection)")
         return EXIT_INSTALL
     # §4.6 same-version takeover for binpkgs still on a non-overlay origin
     repo_paths = set(config.repo_strs)
@@ -3996,13 +3995,13 @@ def _post_verify(deploy_bins, xbps, repo_paths, out) -> int:
         origin = xbps.origin(b)
         if origin not in repo_paths:
             out(f"error: post-verify: {b} still originates from {origin} — "
-                "takeover did not converge (exit 52, §7.7).")
+                "takeover did not converge (exit 52).")
             return EXIT_VERIFY
         rv = xbps.repo_ver(b)
         if rv is None or xbps.vercmp(split_pkgver(xbps.inst_pkgver(b))[1],
                                      split_pkgver(rv)[1]) != 0:
             out(f"error: post-verify: {b} installed pkgver != overlay pkgver "
-                "(exit 52, §7.7).")
+                "(exit 52).")
             return EXIT_VERIFY
     targets: set[str] = set()
     for b in vbins:
@@ -4018,10 +4017,10 @@ def _post_verify(deploy_bins, xbps, repo_paths, out) -> int:
         n = len(versions[t])
         if n != 1:
             out(f"error: post-verify: {t} resolves to {n} installed version(s) "
-                "— partial/non-convergent deploy (exit 52, §7.7).")
+                "— partial/non-convergent deploy (exit 52).")
             return EXIT_VERIFY
     if vbins:
-        out("post-verify: userspace deploy converged (§7.7).")
+        out("post-verify: userspace deploy converged.")
     return EXIT_OK
 
 
@@ -4083,11 +4082,11 @@ def _cycle_services(config: Config, out, run,
     probe = run(["sudo", "xcheckrestart"])
     if probe.returncode != 0:
         out("warning: xcheckrestart unavailable/failed — cannot cycle services; "
-            "restart anything using replaced libraries manually (§4.7).")
+            "restart anything using replaced libraries manually.")
         return EXIT_SERVICES
     flagged = _parse_xcheckrestart(probe.stdout)
     if not flagged:
-        out("services: none running replaced binaries (§4.7).")
+        out("services: none running replaced binaries.")
         return EXIT_OK
 
     pid_to_svc = _service_pids(service_root, run)
@@ -4116,7 +4115,7 @@ def _cycle_services(config: Config, out, run,
         (restarted if ok else incomplete).append(svc)
 
     if restarted:
-        out(f"services restarted (§4.7): {', '.join(restarted)}")
+        out(f"services restarted: {', '.join(restarted)}")
     if skipped:
         out("services NOT auto-restarted (in restart_skip — session-fatal; "
             f"relogin/reboot to apply): {', '.join(skipped)}")
@@ -4202,28 +4201,28 @@ def _emit_tail(path: str, out, lines: int = 60) -> None:
 # ==========================================================================
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="cachy-void-update",
-                                description="Cachy-Void system updater (§4/§7/§8).")
+                                description="Cachy-Void system updater.")
     action = p.add_mutually_exclusive_group(required=True)
     action.add_argument("--sync", action="store_true", help="Stage 1: rebase onto upstream")
     action.add_argument("--check", action="store_true", help="Stage 2: print the queue (read-only)")
     action.add_argument("--status", action="store_true", help="read-only overview of all update tiers")
     action.add_argument("--kernel-ack", dest="kernel_ack", action="store_true",
-                       help="§8.8: acknowledge a frozen kernel state "
+                       help="acknowledge a frozen kernel state "
                             "(CANDIDATE_UNHEALTHY etc.) and resume kernel updates")
     action.add_argument("--snapshots", action="store_true",
                        help="list pre-deploy snapshots and how to restore one "
                             "on this host (read-only)")
     action.add_argument("--schedule", dest="schedule", nargs="?", const="",
                        metavar="pause|resume",
-                       help="report the §4.9 unattended run (time, scope, "
+                       help="report the unattended run (time, scope, "
                             "state), or pause/resume it")
     action.add_argument("--skip-kernel-tonight", dest="skip_kernel_tonight",
                        action="store_true",
-                       help="let the next §4.9 scheduled run apply updates but "
+                       help="let the next scheduled run apply updates but "
                             "SKIP the kernel build (one-shot)")
     action.add_argument("--build-space", dest="build_space", nargs="?",
                        const="", metavar="PATH",
-                       help="show where kernel builds happen (§7.5), or "
+                       help="show where kernel builds happen, or "
                             "validate and set a new location on a roomier disk")
     action.add_argument("--pending", action="store_true",
                        help="fast machine-readable probe (JSON): what is waiting, "
@@ -4235,11 +4234,11 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--gpu", action="store_true",
                         help="read-only GPU/driver advisory (card, driver, DKMS)")
     action.add_argument("--pin-bore", dest="pin_bore", action="store_true",
-                        help="assisted §8.3 pin: fetch+hash the BORE patch for the "
+                        help="assisted pin: fetch+hash the BORE patch for the "
                              "tracked series, show it, and write bore.lock on your "
                              "explicit approval (--dry-run previews)")
     action.add_argument("--health-daemon", dest="health_daemon", action="store_true",
-                        help="§8.7: run the post-boot health watchdog loop")
+                        help="run the post-boot health watchdog loop")
     p.add_argument("--config", default=DEFAULT_CONFIG, help=f"config path (default {DEFAULT_CONFIG})")
     p.add_argument("--dry-run", action="store_true", help="plan only; make no changes")
     p.add_argument("--yes", action="store_true", help="assume yes; run unattended")

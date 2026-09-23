@@ -55,14 +55,14 @@ def pre_deploy_snapshot(*, enable, subvol: str, snap_dir: str, keep: int,
             raise SnapshotUnavailable(
                 f"[snapshot] enable=true but {subvol} is "
                 f"{fstype or 'not a mountpoint'}, not btrfs")
-        out(f"snapshot: {subvol} is not btrfs — skipping pre-deploy snapshot (§9.5 auto).")
+        out(f"snapshot: {subvol} is not btrfs — skipping pre-deploy snapshot.")
         return None
     dest = f"{snap_dir.rstrip('/')}/deploy-{run_id}"
     cp = run(["sudo", "btrfs", "subvolume", "snapshot", "-r", subvol, dest])
     if cp.returncode != 0:
         raise SnapshotFailed(
             f"btrfs snapshot of {subvol} -> {dest} failed: {(cp.stderr or '').strip()}")
-    out(f"snapshot: created read-only {dest} (§9.5)")
+    out(f"snapshot: created read-only {dest}")
     _prune(snap_dir, keep, run, out)
     return dest
 

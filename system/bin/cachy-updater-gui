@@ -1126,7 +1126,7 @@ class Updater(QWidget):
             if code != 0:
                 self._append_tail(self.out,
                     "[could not locate the BORE patch — see above; you can "
-                    "pin manually per INSTALL.md §6.2]")
+                    "pin manually per INSTALL.md]")
                 return
             text = self.out.toPlainText()
             proposal = text[text.rfind("Proposed BORE pin"):].strip() or text

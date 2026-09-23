@@ -334,7 +334,7 @@ ensure_pkg() {
     local pkg="$1" optional="${2:-}"
     if [ -n "$ROOT" ]; then
         warn "offline mode: package '$pkg' skipped — install it from a chroot"
-        warn "  (see INSTALL.md §11); files/services below are still provisioned"
+        warn "  (see INSTALL.md); files/services below are still provisioned"
         return 0
     fi
     if xbps-query -- "$pkg" >/dev/null 2>&1; then
@@ -535,13 +535,13 @@ install_schedule_service() {
         # the branch that makes the machine build and deploy on its own. The
         # QUIET branch used to be this one and the explaining branch was the
         # harmless one -- backwards, and it cost an owner a 3am mystery compile.
-        warn "unattended updates are now ENABLED (§4.9): this box will run"
+        warn "unattended updates are now ENABLED: this box will run"
         warn "  --sync + --commit --yes on its own, KERNEL INCLUDED, which can"
         warn "  start a multi-hour build without anyone pressing anything."
         warn "  Time: /etc/sv/cachy-void-update/conf (SNOOZE_HOUR/MINUTE, default 05:30)"
         warn "  Undo: sudo rm /var/service/cachy-void-update"
     else
-        log "cachy-void-update provisioned but NOT enabled (pass --with-schedule for unattended §4.9 runs)"
+        log "cachy-void-update provisioned but NOT enabled (pass --with-schedule for unattended runs)"
     fi
 }
 
@@ -1163,37 +1163,37 @@ install_snapshot_subvol() {
     local enable snapdir subvol fstype pdir
     enable="$(resolve_snapshot_enable)"
     if [ "$enable" = false ] || [ "$enable" = "\"false\"" ]; then
-        log "pre-deploy snapshots disabled in updater.toml — skipping subvol (§9.5)"
+        log "pre-deploy snapshots disabled in updater.toml — skipping subvol"
         return 0
     fi
     snapdir="$(resolve_snapshot_dir)"
     subvol="$(resolve_snapshot_subvol)"
     if [ -n "$ROOT" ]; then
-        warn "offline mode: §9.5 snapshot subvol '$snapdir' not created — after"
+        warn "offline mode: snapshot subvol '$snapdir' not created — after"
         warn "  booting Void run: sudo btrfs subvolume create $snapdir (if on btrfs)"
         return 0
     fi
     if $SIMULATE; then
-        log "[simulate] would create btrfs subvol $snapdir when '$subvol' is btrfs (§9.5)"
+        log "[simulate] would create btrfs subvol $snapdir when '$subvol' is btrfs"
         return 0
     fi
     fstype="$(findmnt -no FSTYPE -T "$(rp "$subvol")" 2>/dev/null || true)"
     if [ "$fstype" != "btrfs" ]; then
-        log "'$subvol' is ${fstype:-unknown} (not btrfs) — skipping §9.5 snapshot subvol (auto-mode disables snapshots there)"
+        log "'$subvol' is ${fstype:-unknown} (not btrfs) — skipping snapshot subvol (auto-mode disables snapshots there)"
         return 0
     fi
     pdir="$(rp "$snapdir")"
     if [ -e "$pdir" ]; then
-        log "§9.5 snapshot subvol $snapdir already present"
+        log "snapshot subvol $snapdir already present"
         manifest_add SUBVOL "$snapdir" "-"
         return 0
     fi
     if $DRY_RUN; then log "[dry-run] btrfs subvolume create $snapdir"; return 0; fi
     if btrfs subvolume create "$pdir" >/dev/null; then
         manifest_add SUBVOL "$snapdir" "-"
-        ok "created btrfs subvol $snapdir (§9.5 pre-deploy snapshot target)"
+        ok "created btrfs subvol $snapdir"
     else
-        warn "could not create btrfs subvol $snapdir — §9.5 snapshots will fail until"
+        warn "could not create btrfs subvol $snapdir — snapshots will fail until"
         warn "  it exists; create it manually: sudo btrfs subvolume create $snapdir"
     fi
 }
@@ -1253,7 +1253,7 @@ install_updater_config() {
     fi
     if [ -z "$VOID_PACKAGES" ]; then
         warn "void-packages path unknown — NOT generating $dest."
-        warn "  Write it by hand (INSTALL.md §6.1) or re-run with --void-packages;"
+        warn " Write it by hand (see INSTALL.md) or re-run with --void-packages;"
         warn "  cachy-health and the updater cannot run without it."
         return 0
     fi
@@ -1270,7 +1270,7 @@ install_updater_config() {
 #     staging as "manual-unsafe" (§8.6). This edit belongs HERE (root, backed
 #     up, ledger-tracked, reversible), never in the updater process.
 install_grub_settings() {
-    $WITH_GRUB || { log "GRUB edits skipped (pass --with-grub for §3.3 autosuspend + §8.6 GRUB_DEFAULT=saved)"; return 0; }
+    $WITH_GRUB || { log "GRUB edits skipped (pass --with-grub for autosuspend + GRUB_DEFAULT=saved)"; return 0; }
     local grubcfg="/etc/default/grub" param="usbcore.autosuspend=-1"
     local pgrub; pgrub="$(rp "$grubcfg")"
     [ -f "$pgrub" ] || { warn "$grubcfg not found — skipping GRUB edits"; return 0; }
@@ -1316,7 +1316,7 @@ install_grub_settings() {
         else
             printf 'GRUB_DEFAULT=saved\n' >> "$pgrub"
         fi
-        ok "GRUB_DEFAULT=saved (§8.6 one-shot staging prerequisite)"
+        ok "GRUB_DEFAULT=saved (one-shot staging prerequisite)"
     fi
     if $need_osprober; then
         if grep -q '^GRUB_DISABLE_OS_PROBER=' "$pgrub"; then
@@ -1376,7 +1376,7 @@ do_install() {
     $DRY_RUN && warn "dry-run: no changes will be made"
     $SIMULATE && [ -z "$ROOT" ] && warn "simulate: runit service enablement will be skipped"
 
-    log "[1/10] sysctl, udev, modprobe, module-load profiles (§3.1, §3.3)"
+    log "[1/10] sysctl, udev, modprobe, module-load profiles"
     install_file "$SYS_DIR/sysctl.d/99-cachy-gaming.conf"   /etc/sysctl.d/99-cachy-gaming.conf   0644 root root
     install_file "$SYS_DIR/udev/60-ioschedulers.rules"      /etc/udev/rules.d/60-ioschedulers.rules 0644 root root
     install_file "$SYS_DIR/modprobe.d/99-gaming-input.conf" /etc/modprobe.d/99-gaming-input.conf 0644 root root
@@ -1391,20 +1391,20 @@ do_install() {
     ensure_pkg pciutils    # setpci for the §3.1b PCI-latency step (tiny, often present)
     install_rclocal_tuning # §3.1b THP knobs + PCI latency (beyond sysctl.d/udev)
 
-    log "[2/10] updater privilege boundary (§4.1)"
+    log "[2/10] updater privilege boundary"
     install_sudoers
 
-    log "[3/10] kernel state dir + G2 config fragment (§8.1, §8.5)"
+    log "[3/10] kernel state dir + G2 config fragment"
     install_kernel_state
 
-    log "[4/10] compiler profile + overlay repository + updater config (§1.1, §4.1, §4.6, §7.2)"
+    log "[4/10] compiler profile + overlay repository + updater config"
     install_compiler_profile
     install_updater_config
 
-    log "[5/10] mirror the updater engine into $CACHY_ENGINE (§6/§8.9)"
+    log "[5/10] mirror the updater engine into $CACHY_ENGINE"
     install_engine
 
-    log "[6/10] packages: zram (§3.2) + xtools (§4.7 cycling) + snooze (§4.9 timer)"
+    log "[6/10] packages: zram + xtools + snooze"
     ensure_pkg "$PKG_ZRAM"
     ensure_pkg "$PKG_EARLYOOM"   # §3.2: the swappiness=100+zram posture's safety valve
     ensure_pkg "$PKG_XTOOLS"
@@ -1413,14 +1413,14 @@ do_install() {
     # manual `ln -s` (the run script documents that path). It is tiny.
     ensure_pkg "$PKG_SNOOZE"
 
-    log "[7/10] runit services: zram + earlyoom (§3.2), cachy-health (§8.7), cachy-void-update (§4.9)"
+    log "[7/10] runit services: zram + earlyoom, cachy-health, cachy-void-update"
     install_file "$SYS_DIR/sv/zramen/conf" /etc/sv/zramen/conf 0644 root root
     enable_service "$PKG_ZRAM"
     enable_service "$PKG_EARLYOOM"   # package defaults; the value is that it exists
     install_health_service
     install_schedule_service
 
-    log "[8/10] gaming userspace layer: gamemode + MangoHud + cachy-game (§3.4)"
+    log "[8/10] gaming userspace layer: gamemode + MangoHud + cachy-game"
     install_gaming_userspace
 
     install_updater_gui
@@ -1441,7 +1441,7 @@ do_install() {
         install_networkmanager
     fi
 
-    log "[9/10] pre-deploy snapshot subvol (§9.5, btrfs hosts only)"
+    log "[9/10] pre-deploy snapshot subvol (btrfs hosts only)"
     install_snapshot_subvol
 
     log "[10/10] apply runtime state"
@@ -1477,11 +1477,11 @@ Next steps / notes:
   * The health daemon runs as: chpst -u $UPDATER_USER $CACHY_ENGINE/cachy_void_update.py --health-daemon
   * zram conf uses the verified zramen-1.0.1 names (ZRAM_COMP_ALGORITHM,
     ZRAM_SIZE=percent, ZRAM_MAX_SIZE, ZRAM_PRIORITY) — see /etc/sv/zramen/conf.
-  * -march was '$MARCH' (auto-detected via the §1.2 ladder unless --march was given).
-  * USB autosuspend (§3.3) is opt-in: re-run with --with-grub to apply it.
-  * Unattended updates (§4.9) are opt-in: re-run with --with-schedule to enable the
+  * -march was '$MARCH' (auto-detected from this CPU unless --march was given).
+  * USB autosuspend is opt-in: re-run with --with-grub to apply it.
+  * Unattended updates are opt-in: re-run with --with-schedule to enable the
     daily cachy-void-update timer (edit /etc/sv/cachy-void-update/conf for the time).
-  * Pre-deploy snapshots (§9.5) auto-arm on btrfs. If you convert to btrfs LATER,
+  * Pre-deploy snapshots auto-arm on btrfs. If you convert to btrfs LATER,
     re-run deploy.sh once so it creates the $SNAP_DIR_DEFAULT subvol.
   * Desktops on this box: run  cachy-de-detect --summary  to see what was found and
     which of them the branding applies to (recorded in $BRANDING_TARGETS).
@@ -1491,7 +1491,7 @@ Next steps / notes:
   * Desktop branding (void-tactical LXQt) is opt-in: re-run with --with-branding to
     install the toolkit, then apply the look as your user:  cachy-branding
     (revert with: cachy-branding --remove).
-  * Laptop WiFi picker (§network) is opt-in: re-run with --with-networkmanager to
+  * Laptop WiFi picker is opt-in: re-run with --with-networkmanager to
     install NetworkManager + nm-tray (Qt tray applet whose icon themes correctly),
     enable NM and disable dhcpcd. Reboot/re-login for the tray applet.
   * Inspect the change ledger any time:  sudo $0 --log
@@ -1587,7 +1587,7 @@ uninstall_subvol() {  # subvol path (logical) — NEVER nuke rollback nets silen
     [ -e "$pd" ] || { ok "subvol $d already gone"; return; }
     if ls -1d "$pd"/deploy-* >/dev/null 2>&1; then
         warn "subvol $d still holds pre-deploy snapshot(s) — LEFT IN PLACE"
-        warn "  (a §9.5 rollback net; remove manually when sure:"
+        warn "  (a rollback net; remove manually when sure:"
         warn "   sudo btrfs subvolume delete $d/deploy-* && sudo btrfs subvolume delete $d)"
         return
     fi

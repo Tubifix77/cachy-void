@@ -160,7 +160,7 @@ def crash_report(journal_path: str | Path) -> CrashReport:
     except (ValueError, OSError):
         return CrashReport(True, None, None, None, [], [], None,
                            "journal is corrupt; ignoring it and recomputing "
-                           "the queue from live state (§7.6)")
+                           "the queue from live state")
 
     phase = data.get("phase")
     pkgs = data.get("pkgs", {})
@@ -175,10 +175,10 @@ def crash_report(journal_path: str | Path) -> CrashReport:
     elif building:
         note = (f"previous run was interrupted while building {building!r}; "
                 "recomputing the queue from live state — the P term will "
-                "re-pick up any built-but-undeployed packages (§7.3/§7.6)")
+                "re-pick up any built-but-undeployed packages")
     else:
         note = ("previous run was interrupted; recomputing the queue from live "
-                "state (§7.6). No journal-driven resume is performed.")
+                "state. No journal-driven resume is performed.")
 
     return CrashReport(interrupted, phase, data.get("run_id"),
                        building, built, pending, data.get("failure"), note)

@@ -181,7 +181,7 @@ def synthesize(*, void_packages: str | os.PathLike, series: str,
             f"upstream template not found: {upstream / 'template'} "
             "(series removed upstream? -> AWAIT_HUMAN_SERIES)")
     if not patch_bytes:
-        raise TemplateSynthesisError("no verified BORE patch supplied (§8.3)")
+        raise TemplateSynthesisError("no verified BORE patch supplied")
 
     upstream_template = (upstream / "template").read_text(encoding="utf-8")
     upstream_editor = XbpsTemplateEditor(upstream_template)

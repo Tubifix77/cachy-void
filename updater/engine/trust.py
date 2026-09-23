@@ -293,7 +293,7 @@ def select_bore_patch(names: list[str], *, series: str = "?",
     raise PatchUnavailable(
         f"ambiguous BORE patch layout for series {series} "
         f"({len(names)} .patch files, {len(bore)} matching 'bore', in {subdir}) "
-        "— pin manually (INSTALL §6.2)")
+        "— pin manually (see INSTALL.md)")
 
 
 @dataclass(frozen=True)
@@ -371,7 +371,7 @@ def append_pin(lock_path: str | Path, proposal: PinProposal, approved: str) -> N
     if proposal.series in lock.patches:
         raise TrustConfigError(
             f"series {proposal.series} is already pinned in {p} — replacing an "
-            "existing pin is a manual edit (INSTALL §6.2)")
+            "existing pin is a manual edit (see INSTALL.md)")
 
     original = p.read_text(encoding="utf-8")
     block = (
