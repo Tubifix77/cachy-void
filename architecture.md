@@ -434,7 +434,37 @@ A standalone Python 3 script (stdlib only: `subprocess`, `tomllib`, `logging`). 
 
 Operational frame:
 
-- **Locking:** `flock` on a lockfile; a second concurrent run exits immediately (code 10).
+- **Locking:** `flock` on `~/.local/state/cachy-void/update.lock`; a second
+  concurrent **mutating** run (`--commit`, `--sync`) exits immediately (code 10).
+  Read-only actions (`--status`, `--pending`, `--check`, `--gpu`) and
+  `--commit --dry-run` deliberately take **no** lock: the tray polls `--pending`
+  on a timer and the window reads `--status` while a build runs, so locking them
+  would break both to prevent nothing. The lockfile records `pid`, `origin`,
+  `what` and `started`, and the refusal **names the holder** — `CACHY_RUN_ORIGIN`
+  is set to `schedule` by the §4.9 service `run` and to `gui` by the window,
+  because argv cannot tell them apart (both press `--commit --yes`).
+  `read_lock_holder()` is the non-blocking read used by `--status` to report
+  `RUN IN PROGRESS`.
+
+  **This was specified from the first draft and implemented by nothing until
+  2026-09-23**, `EXIT_LOCKED` defined and referenced nowhere — the same shape as
+  the §7.5 preflight. It cost a real build: a manual *Update kernel* at 00:56
+  and the §4.9 nightly at 01:00 built the same package in the same chroot, and
+  the first died three seconds after the second began, reporting that source
+  headers it had been compiling against moments earlier did not exist — one
+  run's `xbps-src` had removed the build tree under the other. Nothing in that
+  error suggested a second updater; it read as a corrupt kernel tree and
+  recorded `AWAIT_HUMAN_BUILD`, freezing a kernel path that was never broken.
+  Note what the failure mode was **not**: not a crash, not a deadlock, not a
+  wrong number — a plausible, specific, entirely misleading error. That is the
+  argument for the lock being a refusal rather than a wait: the loser of a race
+  does not report the race.
+
+  Refusing rather than queueing is also deliberate. Making the nightly *wait* on
+  a six-hour interactive kernel build would park a runit service for hours in a
+  state indistinguishable from a hang. Because the service chains
+  `--sync && --commit`, a refused `--sync` short-circuits the whole run: the
+  nightly skips exactly one night, logs why, and snooze re-arms for tomorrow.
 - **Logging:** per-run directory `~/.local/state/cachy-void/log/run-<timestamp>/` with one log per stage and one per package build. Keep the last 20 runs.
 - **Modes:** `--dry-run` (print the queue and exit after Stage 2), `--yes` (unattended), default is interactive confirmation before Stage 3.
 
@@ -1216,6 +1246,18 @@ Failures raise `TemplateSynthesisError` (a missing upstream template, a missing 
 | **G1 apply** | `./xbps-src patch linux-cachy` | BORE patch no longer applies to the bumped tree. Runs fetch/extract/patch phases only — minutes, no compilation. Fail → §8.3 step 3 (AWAIT_HUMAN_PATCH). |
 | **G2 config** | `./xbps-src configure linux-cachy`, then assert every symbol of the §2.4 fragment in `masterdir*/builddir/linux*/.config` (the glob MUST match **exactly one** file — zero or several is itself a gate failure, since stale builddirs could feed the wrong config; `CONFIG_X=v` lines must appear literally; `# CONFIG_X is not set` lines must appear literally or the symbol must be absent) | **Silent oldconfig drops.** If the BORE patch failed to introduce `SCHED_BORE`'s Kconfig entry, `oldconfig` deletes the unknown symbol *without any error* and you ship a stock-scheduler kernel that "built fine". This gate is the only defense against that outcome; it is not optional. Fail → AWAIT_HUMAN_TEMPLATE. |
 | **G3 build** | ordinary DDRE Stage 3 (`pkg linux-cachy`) | `-O3`/codegen/toolchain breakage; §7 semantics apply (exit 40 → AWAIT_HUMAN_BUILD). |
+
+**A G3 freeze carries its evidence (normative).** `AWAIT_HUMAN_BUILD` asks a
+human to look at something, so the state must name something to look *at*:
+`build_failure` records `reason`, `log`, `pkgver` and `ts`, and
+`frozen_explanation()` reads them back — including the hint that a log which
+stops mid-compile, or complains that source files it was just using have
+vanished, means the build was **interrupted rather than broken**. Until
+2026-09-23 the state recorded the verdict alone and pointed at the last-run
+notice, which said `xbps-src exited 1`; that is a cause of death in the sense
+that "cardiac arrest" is one. The state also outlives the run that wrote it —
+run logs rotate after 20 runs, so whoever reads the freeze tomorrow was not
+watching the terminal today.
 
 On G1+G2 pass the template commit stands and `linux-cachy` enters the §7 queue organically (its template version now exceeds the local repo's). `ported_version` is **not** yet advanced — only PROMOTED advances it (§8.8): the tracked base moves when a kernel *boots healthy*, not when it compiles.
 

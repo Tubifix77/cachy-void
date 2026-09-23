@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import contextlib
 import json
 import os
 import pathlib
@@ -36,6 +37,11 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Sequence
+
+try:
+    import fcntl
+except ImportError:      # non-POSIX dev host; see run_lock()
+    fcntl = None         # type: ignore[assignment]
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -363,7 +369,8 @@ def _kernel_report(config: Config, xbps, out, run=_run) -> None:
             # freeze is the thing worth reporting, and it can outlive (or never
             # have had) a candidate at all.
             out(f"kernel path FROZEN ({name})")
-            for line in frozen_explanation(name, cand or ""):
+            for line in frozen_explanation(name, cand or "",
+                                           state.get("build_failure")):
                 out(f"      {line}")
             out("      Userspace updates are unaffected.")
             out("      resume kernel updates with:  cachy-void-update --kernel-ack")
@@ -1530,7 +1537,8 @@ def cmd_kernel_ack(config: Config, out=print, *, assume_yes: bool = False,
 
     cand = (state.get("candidate") or {}).get("kver")
     out(f"kernel state: {name}")
-    for line in frozen_explanation(name, cand or ""):
+    for line in frozen_explanation(name, cand or "",
+                                   state.get("build_failure")):
         out(f"  {line}")
     health = state.get("health") or {}
     if health:
@@ -1605,6 +1613,19 @@ def cmd_status(xbps, config: Config, out=print, run=_run,
     _sched = scheduled_run_line(run=run)
     if _sched:
         out(_sched)
+        out("")
+    # And whether one is happening AT THIS MOMENT. "Is it on, and when?" is a
+    # different question from "is it running now?", and only the second one
+    # explains why Update just refused, or why the machine is busy. A
+    # scheduled run is invisible in the window by construction -- it is a
+    # separate process under runit, so it produces no output there, greys no
+    # button and drives no progress bar -- and before the §4 lock existed
+    # there was nothing for a front-end to even look at.
+    _holder = read_lock_holder(config)
+    if _holder:
+        out("RUN IN PROGRESS: " + _holder + " holds the update lock.")
+        out("  its output goes to that run's own log, not to this window; "
+            "building or deploying now would collide with it and is refused.")
         out("")
     # And whether the newest run FAILED. The 3am failure was visible only in
     # a runit log directory; the window that people actually look at said
@@ -2217,7 +2238,8 @@ def build_preflight(config: Config, build_list, out,
             + "\n  ".join(problems))
 
 
-def frozen_explanation(state_name: str, candidate: str = "") -> list:
+def frozen_explanation(state_name: str, candidate: str = "",
+                       detail: Optional[dict] = None) -> list:
     """Why the kernel path is frozen, in the reader's terms. One implementation.
 
     There were two, and they disagreed. `--status` and `--kernel-ack` both
@@ -2233,9 +2255,33 @@ def frozen_explanation(state_name: str, candidate: str = "") -> list:
         return [f"{candidate} did NOT pass — the kernel path stays frozen until "
                 "you acknowledge it."]
     if state_name == "AWAIT_HUMAN_BUILD":
-        return ["the last linux-cachy BUILD failed, so no kernel was produced "
-                "(§8.5 G3). Nothing is wrong with the running kernel.",
-                "the last-run notice in --status says why the build failed."]
+        # Carry the EVIDENCE, not just the verdict. "AWAIT_HUMAN_BUILD" asks a
+        # human to look at something while naming nothing to look at, and the
+        # old pointer -- "the last-run notice in --status says why" -- led to
+        # "xbps-src exited 1", which says why in the sense that a coroner's
+        # "cardiac arrest" says why. On 2026-09-23 the real cause was a second
+        # updater run demolishing the build tree mid-compile, and the build log
+        # was the only place that was visible.
+        lines = ["the last linux-cachy BUILD failed, so no kernel was produced "
+                 "(§8.5 G3). Nothing is wrong with the running kernel."]
+        d = detail or {}
+        what = " ".join(x for x in (d.get("pkgver") or "", d.get("ts") or "") if x)
+        if what:
+            lines.append("it was " + what + ".")
+        if d.get("reason"):
+            lines.append("the build reported: " + d["reason"] + ".")
+        if d.get("log"):
+            lines.append("the full build log is at " + d["log"] + " — read the "
+                         "END of it first.")
+            lines.append("if that log stops mid-compile, or complains that "
+                         "source files it was just using have vanished, the "
+                         "build was INTERRUPTED rather than broken: something "
+                         "took the build tree away. Re-run it before assuming "
+                         "the kernel is at fault.")
+        else:
+            lines.append("the last-run notice in --status says why the build "
+                         "failed.")
+        return lines
     if state_name in ("AWAIT_HUMAN_TEMPLATE", "AWAIT_HUMAN_PATCH",
                       "AWAIT_HUMAN_SERIES", "HALT_HASH_MISMATCH"):
         return [f"the kernel path stopped at a human gate ({state_name}) before "
@@ -2254,7 +2300,9 @@ def _frozen_kernel_state(config: Config) -> str:
     return name if name in FROZEN_STATES else ""
 
 
-def _note_kernel_build_failure(config: Config, pkg: str, out) -> None:
+def _note_kernel_build_failure(config: Config, pkg: str, out, *,
+                               reason: str = "", log: str = "",
+                               pkgver: str = "") -> None:
     """G3 (§8.5): a failed linux-cachy build freezes the kernel path.
 
     Normative in the gate table ("exit 40 → AWAIT_HUMAN_BUILD") and never
@@ -2264,7 +2312,19 @@ def _note_kernel_build_failure(config: Config, pkg: str, out) -> None:
     """
     if pkg != KERNEL_TARGET or not config.kernel_enable:
         return
-    _record_kernel_state(config, {"state": "AWAIT_HUMAN_BUILD"}, out)
+    # Persist WHAT failed alongside the fact that something did. The state
+    # outlives the run that wrote it -- whoever reads "AWAIT_HUMAN_BUILD"
+    # tomorrow was not watching the terminal today, and the run logs rotate
+    # after 20 runs (§4).
+    _record_kernel_state(config, {
+        "state": "AWAIT_HUMAN_BUILD",
+        "build_failure": {
+            "reason": reason,
+            "log": log,
+            "pkgver": pkgver,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        },
+    }, out)
     out("kernel: G3 build failed → AWAIT_HUMAN_BUILD (§8.5). Kernel updates pause "
         "until a human has looked; userspace updates continue on later runs. "
         "Resume with: cachy-void-update --kernel-ack")
@@ -2308,6 +2368,198 @@ def poke_tray(sockdir: str = "/tmp") -> bool:
     except (OSError, AttributeError):
         return False
 
+
+
+# -- §4 "Locking": one mutating run at a time ------------------------------
+#
+# The spec has required this since its first draft -- "flock on a lockfile; a
+# second concurrent run exits immediately (code 10)" -- and EXIT_LOCKED sat
+# defined and referenced by nothing for the project's whole life, exactly like
+# the §7.5 preflight before it. It cost a real build on 2026-09-23: the owner
+# pressed "Update kernel" at 00:56 and the §4.9 nightly service fired at 01:00
+# and began building the SAME package in the SAME chroot. The first build died
+# three seconds later, reporting that source headers it had been compiling
+# against moments earlier did not exist -- because the other run's xbps-src had
+# torn the build tree out from under it. Nothing in that error said "something
+# else is building": it read as a corrupt kernel tree, and it recorded
+# AWAIT_HUMAN_BUILD, freezing a kernel path that was never actually broken.
+#
+# flock is the right primitive and the spec named it for a reason: the lock is
+# held by the kernel against an open descriptor, so a run that is killed, dies
+# or has its machine powered off releases it automatically. A pidfile needs
+# stale-entry reasoning, which is the part that is always got wrong.
+LOCK_NAME = "update.lock"
+ORIGIN_ENV = "CACHY_RUN_ORIGIN"
+
+_ORIGIN_TEXT = {
+    "schedule": "the scheduled nightly run (§4.9)",
+    "gui": "the updater window",
+    "manual": "another run",
+}
+
+
+def lock_path(config: Config) -> Path:
+    """Where the run lock lives.
+
+    Beside the per-run logs, NOT under ``state_dir``: /var/lib/cachy-void is
+    root-owned and every mutating run is unprivileged by design (I4). The
+    scheduled service runs as the same CACHY_USER as the GUI, so this one path
+    is genuinely shared between them -- which is the entire point.
+    """
+    return Path(config.log_root).parent / LOCK_NAME
+
+
+def _origin() -> str:
+    """Who started this run: 'schedule', 'gui' or 'manual'.
+
+    Taken from the environment because argv cannot tell them apart -- the
+    §4.9 service and the GUI's "Update kernel" button both run
+    `--commit --yes`. Naming the holder is most of the lock's value: the
+    owner's complaint was not "a run failed", it was "I had no idea anything
+    else was running".
+    """
+    v = (os.environ.get(ORIGIN_ENV) or "").strip().lower()
+    return v if v in _ORIGIN_TEXT else "manual"
+
+
+def describe_holder(text: str) -> str:
+    """Render lockfile contents as one human sentence."""
+    fields = {}
+    for line in (text or "").splitlines():
+        k, _, v = line.partition("=")
+        if v:
+            fields[k.strip()] = v.strip()
+    who = _ORIGIN_TEXT.get(fields.get("origin", ""), "another run")
+    bits = []
+    if fields.get("pid"):
+        bits.append("pid " + fields["pid"])
+    if fields.get("what"):
+        bits.append("running " + fields["what"])
+    if fields.get("started"):
+        bits.append("since " + fields["started"])
+    return who + (" (" + ", ".join(bits) + ")" if bits else "")
+
+
+def read_lock_holder(config: Config) -> str:
+    """Describe the run holding the lock, or "" if it is free.
+
+    Read-only and non-blocking, for front-ends: the GUI and tray must be able
+    to SEE that a scheduled run is under way without taking the lock or
+    waiting on it. The window could already refuse to launch a second run of
+    its OWN, but had no way to notice one started by runit -- a scheduled run
+    produces no output in the window, greys no button, and never did. Never
+    raises.
+    """
+    if fcntl is None:
+        return ""
+    path = lock_path(config)
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return ""
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                return describe_holder(fh.read()) or "another run"
+        fcntl.flock(fd, fcntl.LOCK_UN)   # we got it: nobody holds it
+        return ""
+    except OSError:
+        return ""
+    finally:
+        os.close(fd)
+
+
+@contextlib.contextmanager
+def run_lock(config: Config, what: str):
+    """Hold the §4 run lock for the duration of a mutating run.
+
+    Yields "" when this process owns the lock, else a description of the run
+    that already holds it -- the caller reports that and returns EXIT_LOCKED.
+
+    Non-blocking on purpose (the spec says "exits immediately"): making the
+    nightly WAIT on a six-hour interactive kernel build would park a runit
+    service for hours in a state indistinguishable from a hang. Refusing is
+    also the honest answer, because the work is not lost -- whichever run is
+    already going is doing it.
+    """
+    if fcntl is None:            # non-POSIX dev host: nothing to serialise
+        yield ""
+        return
+    path = lock_path(config)
+    fd = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError:
+        # A lock we cannot even create must never block updating the machine:
+        # that would promote a permissions problem into an unusable updater.
+        yield ""
+        return
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    holder = describe_holder(fh.read())
+            except OSError:
+                holder = ""
+            yield holder or "another run"
+            return
+        try:
+            os.ftruncate(fd, 0)
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            os.write(fd, ("pid=@N@@LF@origin=@O@@LF@what=@W@@LF@started=@S@@LF@")
+                     .replace("@N@", str(os.getpid()))
+                     .replace("@O@", _origin())
+                     .replace("@W@", what)
+                     .replace("@S@", stamp)
+                     .replace("@LF@", chr(10))
+                     .encode("utf-8"))
+            os.fsync(fd)
+        except OSError:
+            pass                 # the lock is what matters; the label is a courtesy
+        yield ""
+    finally:
+        if fd is not None:
+            os.close(fd)         # releases the flock
+
+
+def _lock_label(args) -> str:
+    """The argv summary recorded in the lockfile, so a blocked run can say
+    what the holder is actually doing -- "--commit --yes" and
+    "--commit --yes --no-kernel" are very different waits."""
+    bits = ["--commit"]
+    if getattr(args, "yes", False):
+        bits.append("--yes")
+    if getattr(args, "no_kernel", False):
+        bits.append("--no-kernel")
+    if getattr(args, "dry_run", False):
+        bits.append("--dry-run")
+    return " ".join(bits)
+
+
+def _locked(holder: str, action: str, out) -> int:
+    """Report a refused concurrent run (exit 10).
+
+    Says who holds it and what to do, because the failure this replaces gave
+    neither: a build that collided with the nightly died complaining about
+    missing kernel headers, which sent its owner looking for a corrupt source
+    tree instead of a second updater.
+    """
+    out("refusing to start " + action + ": " + holder + " is already running.")
+    out("  only one run may build or deploy at a time -- two runs share one "
+        "build tree and one package database, and the loser usually fails "
+        "with an error that looks like something else entirely.")
+    if "nightly" in holder:
+        out("  it will finish on its own. To watch it:  sv status "
+            "cachy-void-update   (its output goes to the service log, not "
+            "this window)")
+        out("  to stop it running tonight:  cachy-void-update --schedule pause")
+    out("  nothing was changed by this attempt.")
+    return EXIT_LOCKED
 
 def prune_run_logs(config: Config, keep: int = 20) -> None:
     """Keep the newest ``keep`` run directories (§7.6: "keep 20").
@@ -2620,14 +2872,18 @@ def cmd_commit(xbps, config: Config, *, assume_yes: bool, dry_run: bool,
             if getattr(exc, "errno", None) == 28 or "No space left" in str(exc):
                 for line in disk_lines(config):
                     out("  " + line)
-            _note_kernel_build_failure(config, pkg, out)
+            _note_kernel_build_failure(config, pkg, out,
+                                       reason=f"build environment failure: {exc}",
+                                       log=log_path)
             return EXIT_BUILD
         if rc != 0:
             journal.set_pkg_status(pkg, "failed", log=log_path)
             journal.fail(pkg, EXIT_BUILD, reason=f"xbps-src exited {rc}")
             out(f"error: build failed for {pkg} (rc={rc}); see {log_path}")
             _emit_tail(log_path, out)
-            _note_kernel_build_failure(config, pkg, out)
+            _note_kernel_build_failure(config, pkg, out,
+                                       reason=f"xbps-src exited {rc}",
+                                       log=log_path)
             return EXIT_BUILD
         journal.set_pkg_status(pkg, "built", log=log_path)
         # The kernel template hand-builds a -dbg package (see
@@ -3907,16 +4163,30 @@ def main(argv: Optional[Sequence[str]] = None, *,
             return cmd_status(xbps, config, out=out)
         if args.gpu:
             return cmd_gpu(xbps, config, out=out)
+        # -- the two mutating actions, serialised (§4 "Locking") -----------
+        # Read-only actions above deliberately take NO lock: the tray polls
+        # --pending on a timer and the window reads --status while a build
+        # runs, and blocking those would break both to prevent nothing.
         if args.sync:
-            return cmd_sync(config, out=out)
+            with run_lock(config, "--sync") as holder:
+                if holder:
+                    return _locked(holder, "--sync", out)
+                return cmd_sync(config, out=out)
         if args.commit:
-            rc = cmd_commit(xbps, config, assume_yes=args.yes,
-                            dry_run=args.dry_run, out=out)
-            if not args.dry_run:
-                # Whatever the outcome, the tray's picture of the world moved:
-                # packages deployed, a kernel staged, or a freeze recorded.
-                poke_tray()
-            return rc
+            # --dry-run prints the queue and mutates nothing, so it is allowed
+            # alongside a running build -- "what would this do?" is a question
+            # you most want to ask WHILE something is happening.
+            with run_lock(config, _lock_label(args)) as holder:
+                if holder and not args.dry_run:
+                    return _locked(holder, "--commit", out)
+                rc = cmd_commit(xbps, config, assume_yes=args.yes,
+                                dry_run=args.dry_run, out=out)
+                if not args.dry_run:
+                    # Whatever the outcome, the tray's picture of the world
+                    # moved: packages deployed, a kernel staged, or a freeze
+                    # recorded.
+                    poke_tray()
+                return rc
         return EXIT_USAGE  # unreachable (group is required)
     except Exception as exc:  # last-resort boundary (§4.8: no tracebacks)
         out(f"fatal: unhandled {type(exc).__name__}: {exc}")

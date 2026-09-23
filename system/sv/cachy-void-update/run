@@ -46,6 +46,13 @@ case "$SCHEDULE_KERNEL" in
     *)             _scope="" ;;
 esac
 
+# Identify this run in the §4 lockfile. argv cannot distinguish the
+# scheduled run from the window's "Update kernel" button -- both are
+# `--commit --yes` -- so when one blocks the other, this is what lets the
+# refusal say WHICH, and point at `--schedule pause` rather than leaving
+# someone hunting a phantom.
+export CACHY_RUN_ORIGIN=schedule
+
 exec chpst -u "$CACHY_USER" \
     snooze -H "$SNOOZE_HOUR" -M "$SNOOZE_MINUTE" \
     sh -c 'python3 "$1" --config "$2" --sync && exec python3 "$1" --config "$2" --commit --yes $3' \

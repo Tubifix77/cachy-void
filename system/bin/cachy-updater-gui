@@ -35,7 +35,7 @@ import shutil
 import sys
 import time
 
-from PyQt5.QtCore import QProcess, Qt, QTimer
+from PyQt5.QtCore import QProcess, QProcessEnvironment, Qt, QTimer
 from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QFileDialog, QFrame, QGroupBox, QHBoxLayout, QLabel,
@@ -629,6 +629,13 @@ class Updater(QWidget):
         self._busy(True)
         self._activity(activity or "Working…")
         self.proc = QProcess(self)
+        # Label this run in the §4 lockfile. The CLI cannot tell the window
+        # apart from the scheduled service by argv alone -- both press
+        # `--commit --yes` -- and when one refuses to start because the other
+        # is running, naming the holder is the whole point of the refusal.
+        _env = QProcessEnvironment.systemEnvironment()
+        _env.insert("CACHY_RUN_ORIGIN", "gui")
+        self.proc.setProcessEnvironment(_env)
         self.proc.setProcessChannelMode(QProcess.MergedChannels)
         self.proc.readyRead.connect(lambda: self._drain(target))
 
