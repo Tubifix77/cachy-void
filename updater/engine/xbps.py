@@ -90,6 +90,47 @@ def _default_runner(args: Sequence[str], cwd: Optional[str]) -> "subprocess.Comp
     return subprocess.run(list(args), cwd=cwd, capture_output=True, text=True)
 
 
+def _stream_to_log(args: Sequence[str], cwd: Optional[str],
+                   log_path: str) -> int:
+    """Run a command, writing its combined output to ``log_path`` live.
+
+    The default build runner. It exists because the previous one captured the
+    whole build in memory and wrote the file only after the compiler exited,
+    which had three consequences and all of them bit:
+
+    * **Nothing to watch.** A kernel build is hours long and produced no file
+      at all until it was over, so neither a person nor the tray nor the
+      window could see progress. Asked "is it nearly done?", the only honest
+      answer was to count object files over SSH.
+    * **A killed run lost its log entirely.** Only a clean exit wrote one. The
+      build most worth reading afterwards -- interrupted, out of disk, killed
+      by a second run -- is exactly the one that left nothing behind, which
+      sits badly beside the rule of deliberately KEEPING failed build trees
+      for forensics.
+    * The whole output (2.2 MB for this kernel) sat in the process's memory.
+
+    Flushed per line on purpose: the point is that the bytes are on disk
+    before the next line is compiled, so `tail -f` works and a kill loses
+    nothing. 41k flushed writes over an hour costs nothing measurable.
+    """
+    with open(log_path, "w", encoding="utf-8", errors="replace",
+              newline="\n") as fh:
+        proc = subprocess.Popen(
+            list(args), cwd=cwd, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, errors="replace", bufsize=1)
+        try:
+            for line in proc.stdout:
+                fh.write(line)
+                fh.flush()
+        finally:
+            # Whatever happened, do not leave the child running and do not
+            # lose what it already said; the with-block closes the log either
+            # way.
+            proc.stdout.close()
+            rc = proc.wait()
+    return rc
+
+
 @dataclass
 class Xbps:
     """Facade over xbps / xbps-src (§7.2 live-query primitives).
@@ -118,6 +159,9 @@ class Xbps:
     repos: Sequence[Path] = field(default_factory=list)
     run: Runner = _default_runner
     masterdir: Optional[Path] = None
+    #: injectable ``(args, cwd, log_path) -> returncode`` used by ``build()``
+    #: when a log path is given, so the log is written while the build runs.
+    stream: Optional[Callable[..., int]] = None
 
     def __post_init__(self) -> None:
         self.void_packages = Path(self.void_packages)
@@ -253,16 +297,16 @@ class Xbps:
     def build(self, srcpkg: str, jobs: int = 1, log_path: Optional[str] = None) -> int:
         """Build one template (``./xbps-src -jN pkg``); returns its exit code.
 
-        Combined output is written to ``log_path`` when given, so the caller can
-        emit the tail on failure (§7.5).
+        Combined output is written to ``log_path`` when given -- LIVE, as the
+        build runs (see ``_stream_to_log``), so progress is visible and a
+        killed build still leaves its log behind. Without a log path this is
+        an ordinary captured run, which is what the tests use.
         """
-        cp = self.run(self.xbps_src_argv(f"-j{jobs}", "pkg", srcpkg),
-                      str(self.void_packages))
-        if log_path is not None:
-            with open(log_path, "w", encoding="utf-8") as fh:
-                fh.write(cp.stdout or "")
-                fh.write(cp.stderr or "")
-        return cp.returncode
+        argv = self.xbps_src_argv(f"-j{jobs}", "pkg", srcpkg)
+        cwd = str(self.void_packages)
+        if log_path is None:
+            return self.run(argv, cwd).returncode
+        return (self.stream or _stream_to_log)(argv, cwd, log_path)
 
     def clean(self, srcpkg: str) -> None:
         """Purge a template's stale work directory (idempotent, §7.5)."""
