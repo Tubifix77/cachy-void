@@ -25,6 +25,13 @@ try:
 except ImportError:              # pragma: no cover - environment dependent
     HAVE_QT = False
 
+# The whole module is about a Qt front-end: with no PyQt5 there is nothing
+# here to test, and saying so as a SKIP is the difference between "this
+# suite needs an optional package" and "this suite is broken". Both unittest
+# and pytest honour SkipTest raised at import time.
+if not HAVE_QT:                  # pragma: no cover - environment dependent
+    raise unittest.SkipTest("PyQt5 not installed; Qt front-end tests skipped")
+
 PINNED = ("[3] Kernel (linux-cachy / BORE)\n"
           "    BORE pin: series 6.12 pinned (BORE 6.6.3) - 2026-07-15 boas\n")
 MISSING = ("[3] Kernel (linux-cachy / BORE)\n"

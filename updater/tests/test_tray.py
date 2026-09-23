@@ -19,7 +19,23 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtWidgets import QApplication          # noqa: E402
+# Guarded exactly like test_gui.py. An unguarded import here does not make
+# ONE module fail -- pytest aborts the entire run at collection
+# ("Interrupted: 1 error during collection"), so a container simply missing an
+# optional GUI dependency looks like a broken test suite. The Qt tests are not
+# required to run the engine's tests, and should say so by skipping.
+try:
+    from PyQt5.QtWidgets import QApplication      # noqa: E402
+    HAVE_QT = True
+except ImportError:              # pragma: no cover - environment dependent
+    HAVE_QT = False
+
+# The whole module is about a Qt front-end: with no PyQt5 there is nothing
+# here to test, and saying so as a SKIP is the difference between "this
+# suite needs an optional package" and "this suite is broken". Both unittest
+# and pytest honour SkipTest raised at import time.
+if not HAVE_QT:                  # pragma: no cover - environment dependent
+    raise unittest.SkipTest("PyQt5 not installed; Qt front-end tests skipped")
 
 TRAY_PATH = pathlib.Path(__file__).resolve().parents[2] / "system" / "bin" / "cachy-updater-tray"
 
@@ -31,6 +47,7 @@ def _payload(**over):
     return d
 
 
+@unittest.skipUnless(HAVE_QT, "PyQt5 not installed")
 class TrayLogicTests(unittest.TestCase):
 
     app = None

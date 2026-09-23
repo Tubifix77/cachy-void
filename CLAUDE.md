@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Done — installed, live, and in continuous daily use** (this was the vacation
 machine). The distro overlay, branding, runit services, and the Python updater engine
 (`updater/engine/`: xbps, grub, snapshot, trust, journal, health, health_daemon) are all
-built and covered by a real test suite (`updater/tests/`, 20 files + a shell harness; 748 tests). `architecture.md`
+built and covered by a real test suite (`updater/tests/`, 21 files + a shell harness; 751 tests). `architecture.md`
 remains the authoritative spec for anything new; if anything disagrees with it, the spec
 wins.
 
@@ -81,6 +81,15 @@ runs the shared half always and the appliers only for resolved targets.
 `--desktop|--de lxqt,plasma,xfce|auto` overrides,
 and `--dry-run` reports what would be applied and *why* without writing anything
 (it is allowed as root precisely so it works in a container).
+
+**Running the suite.** From anywhere, `python3 -m pytest updater/tests -q`;
+`conftest.py` puts `updater/` on `sys.path` so `from engine.xbps import ...`
+resolves regardless of the working directory. For `unittest` (which does not
+read conftest.py) use `cd updater && python3 -m unittest discover -s tests`, or
+`PYTHONPATH=updater` from the root. **PyQt5 is optional**: without it the two
+Qt front-end modules skip themselves and the other ~633 tests still run — an
+unguarded Qt import is fatal to the WHOLE run at collection, so
+`test_suite_hygiene.py` lints for it. Nothing else needs installing.
 
 **Test it without hardware** — three layers, only one of which needs a machine:
 the decision (`test_de_detect.py`, `test_branding_dispatch.py`, `--dry-run`), the

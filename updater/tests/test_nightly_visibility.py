@@ -23,6 +23,15 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import cachy_void_update as cvu  # noqa: E402
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# Same guard as test_gui/test_tray: the tray-rendering tests below need Qt,
+# the CLI-side tests in this module do not, and a missing optional dependency
+# must not take the whole file down with it.
+try:
+    from PyQt5.QtWidgets import QApplication      # noqa: E402
+    HAVE_QT = True
+except ImportError:              # pragma: no cover - environment dependent
+    HAVE_QT = False
 TRAY_PATH = (pathlib.Path(__file__).resolve().parents[2]
              / "system" / "bin" / "cachy-updater-tray")
 
@@ -212,12 +221,12 @@ class SkipAppliesToTheServiceOnlyTests(unittest.TestCase):
                         "a manual run consumed the nightly's veto")
 
 
+@unittest.skipUnless(HAVE_QT, "PyQt5 not installed")
 class TrayNightlyRenderingTests(unittest.TestCase):
     """The tray renders the CLI's facts; it must not invent them."""
 
     @classmethod
     def setUpClass(cls):
-        from PyQt5.QtWidgets import QApplication
         loader = importlib.machinery.SourceFileLoader("cachytray2", str(TRAY_PATH))
         spec = importlib.util.spec_from_loader("cachytray2", loader)
         cls.mod = importlib.util.module_from_spec(spec)
