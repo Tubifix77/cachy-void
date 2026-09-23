@@ -33,6 +33,24 @@ probes were structurally always-false unprivileged (`sv status`/`dmesg` denied) 
 fixed (new §8.6 `external` class, confirm-before-watchdog made normative, narrow sudo
 fallbacks), and verified live: STAGED → CONFIRMING → battery green → **PROMOTE**,
 `ported_version` advanced to the self-built kernel, state TRACKING.
+**Not yet run on hardware (2026-09-24).** Four commits are pushed, unit-tested
+(748 tests) and exercised in the Void WSL sandbox, but have never executed on the
+testbed, because the box was mid-kernel-build when they were written and swapping
+the engine under a running compile is the very class of thing the first of them
+fixes: the §4 run lock, the nightly-visibility surfaces (`run-active`,
+`nightly-kernel-soon`, the finished-run notice), `--skip-kernel-tonight`, and the
+live build log. Specifically unproven on metal: that `CACHY_RUN_ORIGIN=schedule`
+survives `chpst -u ... snooze ... sh -c` to reach the CLI; that the tray renders
+the two new tokens on a real desktop; that the window's "Skip tonight's kernel"
+button actually appears (it keys off the phrase "kernel INCLUDED" in the CLI's own
+output, which a test pins but no login has confirmed); and **whether the streamed
+build log is genuinely line-timely under `xbps-src`** -- Python now flushes per
+line, but a child that block-buffers its own stdout into the pipe will still
+arrive in chunks, which would make the log lag without making it wrong. Failure
+mode of the lock is deliberately benign: it yields "proceed" on any error creating
+the lockfile, so a broken lock degrades to no locking rather than to an updater
+that refuses to update.
+
 **Still genuinely untested:** the Void-owned-GRUB one-shot boot-test + auto-rollback
 (§8.6 oneshot choreography — this box's GRUB is Debian's, so it runs the external
 class; the oneshot path remains code-reviewed + mock-tested only).
