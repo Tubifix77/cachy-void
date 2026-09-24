@@ -175,16 +175,27 @@ That first live kernel cycle earned its keep by exposing a family of **state-boo
 
 What came out of it is a capability rather than a patch. `linux-cachy` 6.12.108 was regenerated, gated, **built on an external USB drive**, packaged, installed, staged, booted, health-checked and promoted — unattended, in 37 minutes with a warm ccache against 5h46m cold — and the state survived a later reboot. The root partition never rose above 68% used.
 
-**Four fixes from 2026-09-24 are pushed but not yet hardware-tested.** A manual
-kernel build and the nightly service collided on the testbed, each compiling the
-same package in the same chroot; the loser died reporting source headers missing
-that were present on disk, and recorded a kernel freeze for a kernel that was
-never broken. The loser of a race does not report the race. What came out of it --
-the run lock, the surfaces that let you *see* an unattended run happening and
-finishing, a one-night opt-out from the kernel compile, and a build log written
-while the build runs rather than after it exits -- is unit-tested and exercised in
-a Void WSL sandbox, and has not executed on the machine, because that machine was
-in the middle of a kernel build the whole time.
+**September 2026, part two: a collision, and the lock that should always have
+existed.** A manual kernel build and the nightly service ran at once, each
+compiling the same package in the same chroot. The loser died reporting that
+source headers were missing which were present on disk, and recorded a kernel
+freeze for a kernel that was never broken. *The loser of a race does not report
+the race* -- and when a failure names a cause that is physically impossible,
+suspect a second writer before debugging the reported cause. The spec had
+required `flock` on a lockfile since its first draft; `EXIT_LOCKED` had been
+defined and referenced by nothing for the project's entire life.
+
+What came out of it is now **verified on the machine**, not merely shipped: the
+run lock refuses a second mutating run with exit 10 and *names the holder*;
+an unattended run is finally visible while it happens and says so when it
+finishes (a scheduled run is a separate runit process -- it had never produced
+a single character in the window, greyed a button, or moved a progress bar);
+a multi-hour compile can be waved off for one night without disabling the
+schedule; and the spec's section numbers no longer appear in anything a person
+reads, because "§4.9" in a message implies a document the reader should have
+without saying which one. The same run closed the kernel circuit again on the
+relocated build space: 6.12.111 built on an external drive, staged, booted and
+promoted, with BORE live and the legacy nvidia driver rebuilt and loaded.
 
 **Honest caveats — please report back if you try these:**
 - Real-hardware testing so far is on **one** profile: `x86-64-v2` CPU, legacy `nvidia470`, and a *foreign*-owned GRUB (the `external` class above). The `x86-64-v3`/`v4` build path, **modern NVIDIA** GPUs, and a **Void-owned GRUB** (which activates the GRUB **one-shot** boot-test + automatic rollback for the first time) are **code-reviewed and audited but not yet run on metal**. **And to be blunt about the significance rather than burying it: `void-installer` defaults to GRUB, so a standard single-OS Void install lands in exactly that untested `oneshot` class.** It is the common case, not an exotic corner — this project's testbed is the unusual one, because Debian owns the bootloader there (it has no `grub` package at all). What that means in practice: on a normal Void box the kernel staging and automatic rollback described in §8.6 are running code that has never been exercised on metal, only unit-tested. Treat a self-built kernel's first boot accordingly, and keep a known-good entry reachable. To be clear about what the test is waiting for rather than leaving it as vague debt: the one-shot path only exists when Void owns the bootloader, so it cannot run on a multi-boot testbed where another distro's GRUB is in charge — the kernel there arrives via an evergreen `/boot/vmlinuz-current` symlink — which is worth knowing is an *operator convention on that box*, not a Void mechanism: nothing in Void's packaging creates or repoints such a link, so the updater verifies what it can observe (§8.6b) instead of assuming it exists — and nothing is staged. It becomes testable the day Void owns GRUB on a real install (`deploy.sh --with-grub`), and the case worth exercising then is the *unhappy* one: stage a kernel that will not boot and confirm the next power cycle lands back on the known-good one unattended. A VM with its own GRUB would do it sooner, since the whole mechanism is about reboots. **September 2026 gave that caveat empirical weight rather than modesty:** the kernel *failure* path was code-reviewed and mock-tested in exactly the same way, and its first real traversal produced roughly seventeen bugs in sequence. Expect the `oneshot` path to behave the same on its first genuine run, and treat a self-built kernel's first boot accordingly.

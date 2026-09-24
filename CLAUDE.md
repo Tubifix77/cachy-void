@@ -33,23 +33,50 @@ probes were structurally always-false unprivileged (`sv status`/`dmesg` denied) 
 fixed (new §8.6 `external` class, confirm-before-watchdog made normative, narrow sudo
 fallbacks), and verified live: STAGED → CONFIRMING → battery green → **PROMOTE**,
 `ported_version` advanced to the self-built kernel, state TRACKING.
-**Not yet run on hardware (2026-09-24).** Four commits are pushed, unit-tested
-(748 tests) and exercised in the Void WSL sandbox, but have never executed on the
-testbed, because the box was mid-kernel-build when they were written and swapping
-the engine under a running compile is the very class of thing the first of them
-fixes: the §4 run lock, the nightly-visibility surfaces (`run-active`,
-`nightly-kernel-soon`, the finished-run notice), `--skip-kernel-tonight`, and the
-live build log. Specifically unproven on metal: that `CACHY_RUN_ORIGIN=schedule`
-survives `chpst -u ... snooze ... sh -c` to reach the CLI; that the tray renders
-the two new tokens on a real desktop; that the window's "Skip tonight's kernel"
-button actually appears (it keys off the phrase "kernel INCLUDED" in the CLI's own
-output, which a test pins but no login has confirmed); and **whether the streamed
-build log is genuinely line-timely under `xbps-src`** -- Python now flushes per
-line, but a child that block-buffers its own stdout into the pipe will still
-arrive in chunks, which would make the log lag without making it wrong. Failure
-mode of the lock is deliberately benign: it yields "proceed" on any error creating
-the lockfile, so a broken lock degrades to no locking rather than to an updater
-that refuses to update.
+**2026-09-24 -- deployed and verified on the testbed.** The disk-full cascade's
+successor work is no longer theoretical. Proven on metal, each by observation
+rather than inference:
+
+- **The §4 run lock, with two real processes.** A manual `--sync` launched while
+  another run held the lock was refused with **exit 10**, naming the holder --
+  *"the scheduled nightly run (pid 5831, running --commit --yes, since ...)"* --
+  and changed nothing. That is precisely the collision that destroyed a
+  six-hour build on 2026-09-23.
+- **`CACHY_RUN_ORIGIN=schedule` reaches the CLI through the whole service
+  chain**, confirmed by reading `/proc/<snooze-pid>/environ` for a process
+  *started by runit at boot*, not by a hand restart. This was the one plumbing
+  question that could not be answered from WSL.
+- **The tray's two new surfaces fire**: the run-in-progress notice (seen on
+  screen AND on the D-Bus wire) and the nightly-finished notice (on the wire).
+  Note the method: screenshots kept MISSING the second one because
+  xfce4-notifyd expires notifications on its own schedule, and a
+  `dbus-monitor` trace of `org.freedesktop.Notifications.Notify` settled it.
+  A screenshot proves presence, never absence.
+- **No spec section numbers** in `--status`, `--schedule`, `--pending` or
+  `--gpu`, nor in the window (checked against a real screenshot).
+- **The kernel circuit, end to end, on the relocated build space.**
+  `linux-cachy` 6.12.111 regenerated, gated, built on the external drive in
+  6h16m, packaged, installed, staged, booted and **PROMOTED**: state
+  `TRACKING`, `ported_version` advanced to 6.12.111_1, `known_good` now the new
+  kernel, all five health checks green. BORE live (`kernel.sched_bore=1`),
+  1000 Hz, full preempt, nvidia470 DKMS rebuilt and loaded.
+- **A freeze clears itself when the work finally succeeds.** The stale
+  `AWAIT_HUMAN_BUILD` from the collided build was overwritten by `STAGED` with
+  no `--kernel-ack`, because staging does not consult the frozen state.
+
+**Still unproven, and worth saying so:** the window's "Skip tonight's kernel"
+button has never been *clicked* (the phrase it keys off, "kernel INCLUDED", is
+confirmed present in the live CLI output, but that is an evidence chain, not a
+press); the veto being consumed by a genuine scheduled run is WSL-tested only;
+`--status`'s `RUN IN PROGRESS` line is test-covered but was never observed on
+the box; and **the streamed build log remains untested in anger** -- the
+6.12.111 build predated the deploy, so it still wrote its log at exit. Whether
+per-line flushing is genuinely timely under `xbps-src`, or arrives in chunks
+because `make` block-buffers into the pipe, waits for the next kernel build.
+
+The lock's failure mode is deliberately benign: it yields "proceed" when it
+cannot create the lockfile, so a broken lock degrades to no locking rather than
+to an updater that refuses to update.
 
 **Still genuinely untested:** the Void-owned-GRUB one-shot boot-test + auto-rollback
 (§8.6 oneshot choreography — this box's GRUB is Debian's, so it runs the external
